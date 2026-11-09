@@ -18,10 +18,10 @@
 //
 //  HILOS: Present corre en el hilo de render del juego y los mensajes de la
 //  ventana en otro hilo. Ambos tocan ImGui, que NO está pensado para usarse
-//  desde dos hilos a la vez, así que todo acceso pasa por g_mutex.
-//  Regla para evitar bloqueos: nunca tener g_mutex tomado mientras se llama a
-//  una función original del juego o de DirectX que podría mandar mensajes a
-//  la ventana.
+//  desde dos hilos a la vez, así que todo acceso pasa por luma::StateMutex().
+//  Regla para evitar bloqueos: nunca tenerlo tomado mientras se llama a una
+//  función original del juego o de DirectX que podría mandar mensajes a la
+//  ventana.
 // =============================================================================
 #include "render/overlay.h"
 
@@ -39,10 +39,15 @@
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_win32.h>
 
+#include "core/config.h"
 #include "core/logger.h"
 #include "core/paths.h"
+#include "core/state.h"
+#include "modules/module_manager.h"
 #include "render/input.h"
 #include "render/menu.h"
+#include "render/notifications.h"
+#include "render/theme.h"
 
 // El backend de Win32 declara esta función "comentada" en su header para que
 // cada programa la declare por su cuenta. La declaramos aquí.
@@ -103,10 +108,8 @@ struct Renderer {
 };
 
 Renderer g_r;
-// "recursive_mutex": el mismo hilo puede tomarlo varias veces sin bloquearse
-// a sí mismo (por ejemplo, si Windows llama a la WndProc desde dentro de una
-// función de ImGui en el mismo hilo).
-std::recursive_mutex g_mutex;
+// El candado de todo el estado de Luma (ImGui incluido) es luma::StateMutex(),
+// ver core/state.h.
 
 std::atomic<State> g_state{State::Waiting};
 std::atomic<bool> g_menuOpen{false};
@@ -238,6 +241,54 @@ bool CreateDeviceResources(IDXGISwapChain3* swapchain) {
 
 // --- ImGui -----------------------------------------------------------------------
 
+// Carga las fuentes Segoe UI de Windows (tienen tildes y ñ) al tamaño del
+// tema: normal para el texto, más grande para los nombres de módulos y
+// seminegrita para los títulos. Si no están, usa la de ImGui.
+void LoadFonts() {
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->Clear();
+    theme::Fonts& fonts = theme::GetFonts();
+    fonts = theme::Fonts{};
+
+    wchar_t windowsDir[MAX_PATH];
+    GetWindowsDirectoryW(windowsDir, MAX_PATH);
+    const std::filesystem::path fontsDir = std::filesystem::path(windowsDir) / L"Fonts";
+    auto load = [&](const wchar_t* file, float size) -> ImFont* {
+        std::error_code ec;
+        const std::filesystem::path path = fontsDir / file;
+        if (!std::filesystem::exists(path, ec)) {
+            return nullptr;
+        }
+        return io.Fonts->AddFontFromFileTTF(paths::ToUtf8(path).c_str(), size);
+    };
+
+    const float base = theme::Get().fontSize * theme::UiScale();
+    // La primera fuente agregada es la que ImGui usa por defecto.
+    fonts.regular = load(L"segoeui.ttf", base);
+    if (fonts.regular == nullptr) {
+        fonts.regular = io.Fonts->AddFontDefault();
+    }
+    fonts.medium = load(L"segoeui.ttf", base * 1.22f);
+    fonts.title = load(L"seguisb.ttf", base * 1.6f);  // Segoe UI Semibold
+    if (fonts.medium == nullptr) {
+        fonts.medium = fonts.regular;
+    }
+    if (fonts.title == nullptr) {
+        fonts.title = fonts.medium;
+    }
+}
+
+// El tamaño de letra cambió: regenerar la textura de la fuente en la GPU.
+// Pasa solo cuando el usuario suelta el slider de "Tamaño de letra".
+void RebuildFonts() {
+    WaitForGpu();  // la textura vieja podría estar en uso
+    LoadFonts();
+    ImGui_ImplDX12_InvalidateDeviceObjects();
+    ImGui_ImplDX12_CreateDeviceObjects();
+    theme::Apply();
+    log::Info("Fuente regenerada ({:.0f} px).", theme::Get().fontSize);
+}
+
 void CreateImGui() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -252,21 +303,10 @@ void CreateImGui() {
     io.MouseDrawCursor = true;
 
     // Escala según la altura de la imagen: 1.0 en 1080p, 1.33 en 1440p, etc.
-    const float scale = std::clamp(static_cast<float>(g_r.height) / 1080.0f, 1.0f, 3.0f);
+    theme::SetUiScale(std::clamp(static_cast<float>(g_r.height) / 1080.0f, 1.0f, 3.0f));
 
-    // Fuente Segoe UI de Windows (tiene tildes y ñ). Si no está, la de ImGui.
-    wchar_t windowsDir[MAX_PATH];
-    GetWindowsDirectoryW(windowsDir, MAX_PATH);
-    const std::filesystem::path fontPath =
-        std::filesystem::path(windowsDir) / L"Fonts" / L"segoeui.ttf";
-    std::error_code ec;
-    if (std::filesystem::exists(fontPath, ec)) {
-        io.Fonts->AddFontFromFileTTF(paths::ToUtf8(fontPath).c_str(), 18.0f * scale);
-    } else {
-        io.Fonts->AddFontDefault();
-    }
-
-    menu::ApplyStyle(scale);
+    LoadFonts();
+    theme::Apply();
 
     ImGui_ImplWin32_Init(g_r.window);
     g_r.win32Backend = true;
@@ -338,13 +378,33 @@ void RenderFrame(IDXGISwapChain* swapchain) {
         return;
     }
 
-    // 1. ImGui: describir la interfaz de este frame.
+    if (theme::ConsumeFontRebuildRequest()) {
+        RebuildFonts();
+    }
+
+    // Con el menú cerrado, ImGui no debe reaccionar al mouse (el HUD no se
+    // toca) ni cambiar el cursor de Windows (el juego lo tiene escondido).
+    const bool menuOpen = g_menuOpen.load(std::memory_order_relaxed);
+    ImGuiIO& io = ImGui::GetIO();
+    io.MouseDrawCursor = menuOpen;
+    if (menuOpen) {
+        io.ConfigFlags &= ~(ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange);
+    } else {
+        io.ConfigFlags |= ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange;
+    }
+
+    // 1. ImGui: describir la interfaz de este frame. Orden de dibujo (de
+    //    abajo hacia arriba): HUD de los módulos, menú, avisos.
     ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
-    menu::Draw(menu::RenderInfo{g_r.width, g_r.height, g_r.bufferCount, FormatName(g_r.format)});
+    modules::Manager::RenderHud();
+    if (menuOpen) {
+        menu::Draw(menu::RenderInfo{g_r.width, g_r.height, g_r.bufferCount, FormatName(g_r.format)});
+    }
+    notify::Render();
     ImGui::Render();
-    g_wantsTextInput.store(ImGui::GetIO().WantTextInput, std::memory_order_relaxed);
+    g_wantsTextInput.store(menuOpen && io.WantTextInput, std::memory_order_relaxed);
 
     const UINT index = swapchain3->GetCurrentBackBufferIndex();
     if (index >= g_r.bufferCount) {
@@ -411,7 +471,7 @@ bool OnPresent(IDXGISwapChain* swapchain) {
         if (g_queue.load(std::memory_order_acquire) == nullptr) {
             return false;  // Todavía no sabemos qué cola usa el juego.
         }
-        std::lock_guard lock(g_mutex);
+        std::lock_guard lock(StateMutex());
         if (g_state.load() == State::Waiting) {
             Initialize(swapchain);
         }
@@ -429,12 +489,16 @@ bool OnPresent(IDXGISwapChain* swapchain) {
         return false;
     }
 
-    // CAMINO RÁPIDO: con el menú cerrado no hay nada que dibujar.
-    if (!g_menuOpen.load(std::memory_order_relaxed)) {
+    // CAMINO RÁPIDO: menú cerrado, ningún módulo dibujando y ningún aviso en
+    // pantalla = no hay nada que dibujar. Son tres lecturas de variables
+    // atómicas; ImGui ni se toca. Así, con 0 módulos activos, Luma cuesta lo
+    // mismo que en la Fase 2.
+    if (!g_menuOpen.load(std::memory_order_relaxed) && !modules::Manager::HasHud() &&
+        !notify::HasActive()) {
         return false;
     }
 
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(StateMutex());
     RenderFrame(swapchain);
     return false;
 }
@@ -443,7 +507,7 @@ void BeforeResize(IDXGISwapChain* swapchain) {
     if (g_state.load() != State::Ready || swapchain != g_r.swapchain) {
         return;
     }
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(StateMutex());
     // ResizeBuffers falla si alguien todavía tiene referencias a los buffers
     // viejos, así que soltamos las nuestras.
     DestroyDeviceResources();
@@ -451,7 +515,7 @@ void BeforeResize(IDXGISwapChain* swapchain) {
 }
 
 void AfterResize(IDXGISwapChain* swapchain, HRESULT result) {
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(StateMutex());
     if (!g_r.resizing || swapchain != g_r.swapchain) {
         return;
     }
@@ -496,11 +560,36 @@ void ToggleMenu() {
         return;  // Sin overlay no hay menú que mostrar.
     }
     const bool open = !g_menuOpen.load();
+    {
+        std::lock_guard lock(StateMutex());
+        if (open) {
+            menu::OnOpened();
+        } else if (menu::IsCapturingKey()) {
+            menu::OnKeyCaptured(VK_ESCAPE);  // cerrar el menú cancela la asignación
+        }
+    }
     g_menuOpen.store(open);
     if (!open) {
         g_wantsTextInput.store(false);
     }
     input::OnMenuToggled(open);  // liberar / restaurar el cursor
+}
+
+bool OnKeyDown(int virtualKey) {
+    std::lock_guard lock(StateMutex());
+    if (g_menuOpen.load() && menu::IsCapturingKey()) {
+        menu::OnKeyCaptured(virtualKey);
+        return true;  // la tecla era para el menú: el juego no la ve
+    }
+    if (modules::Manager::HandleKey(virtualKey)) {
+        config::MarkDirty();
+    }
+    return false;  // las teclas de los módulos también le llegan al juego
+}
+
+bool IsCapturingKey() {
+    std::lock_guard lock(StateMutex());
+    return g_menuOpen.load() && menu::IsCapturingKey();
 }
 
 bool IsMenuOpen() {
@@ -515,14 +604,14 @@ void FeedInput(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (g_state.load() != State::Ready) {
         return;
     }
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(StateMutex());
     if (g_r.win32Backend) {
         ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam);
     }
 }
 
 void Shutdown() {
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(StateMutex());
     g_menuOpen.store(false);
 
     DestroyDeviceResources();

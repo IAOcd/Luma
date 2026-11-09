@@ -9,17 +9,25 @@
 # SHARED = biblioteca dinámica (.dll). El nombre del objetivo es "Luma",
 # así el archivo resultante se llama Luma.dll.
 add_library(Luma SHARED
+    core/config.cpp
     core/dllmain.cpp
     core/hooks.cpp
+    core/keys.cpp
     core/logger.cpp
     core/luma.cpp
     core/paths.cpp
+    modules/module_manager.cpp
+    modules/registry.cpp
+    modules/hud/watermark.cpp
+    modules/performance/perf_overlay.cpp
     perf/frame_stats.cpp
     render/dx12_hooks.cpp
     render/gameinput_block.cpp
     render/input.cpp
     render/menu.cpp
+    render/notifications.cpp
     render/overlay.cpp
+    render/theme.cpp
 )
 
 # Permite escribir #include "core/version.h" desde cualquier archivo de client/.

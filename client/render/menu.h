@@ -1,5 +1,7 @@
 // =============================================================================
-//  menu.h - Contenido del menú de Luma (lo que se ve dentro de la ventana)
+//  menu.h - El menú de Luma (lo que se ve dentro de la ventana)
+// =============================================================================
+//  HILOS: todo con luma::StateMutex() tomado.
 // =============================================================================
 #pragma once
 
@@ -15,11 +17,17 @@ struct RenderInfo {
     const char* formatName = "";
 };
 
-// Aplica el estilo visual de Luma a ImGui. "scale" agranda todo en
-// resoluciones altas (1.0 = 1080p).
-void ApplyStyle(float scale);
-
 // Dibuja la ventana del menú. Se llama entre ImGui::NewFrame y ImGui::Render.
 void Draw(const RenderInfo& info);
+
+// El menú se acaba de abrir (para la animación de entrada).
+void OnOpened();
+
+// --- Asignación de teclas ---------------------------------------------------------
+// Al hacer clic en el botón de tecla de un módulo, el menú queda "esperando
+// una tecla". La siguiente tecla que pulses (llega por la ventana del juego)
+// se asigna. Esc cancela; Retroceso o Supr dejan el módulo sin tecla.
+bool IsCapturingKey();
+void OnKeyCaptured(int virtualKey);
 
 }  // namespace luma::render::menu

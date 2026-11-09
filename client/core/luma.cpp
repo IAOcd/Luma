@@ -15,26 +15,33 @@
 
 #include <cstdint>
 #include <cwchar>
+#include <format>
+#include <mutex>
 #include <string>
 
+#include "core/config.h"
 #include "core/hooks.h"
+#include "core/keys.h"
 #include "core/logger.h"
 #include "core/paths.h"
+#include "core/state.h"
 #include "core/version.h"
+#include "modules/module_manager.h"
+#include "render/notifications.h"
 #include "perf/frame_stats.h"
 #include "perf/timer.h"
 #include "render/dx12_hooks.h"
 #include "render/gameinput_block.h"
 #include "render/input.h"
+#include "render/input_diag.h"
 #include "render/overlay.h"
 
 namespace luma {
 
 namespace {
 
-// Tecla para descargar Luma. VK_END es la tecla "Fin" (End).
-// En la Fase 3 será configurable desde el menú.
-constexpr int kUnloadKey = VK_END;
+// La tecla para descargar Luma (por defecto Fin/End) está en
+// config::g_unloadKey y se cambia desde Ajustes.
 
 // Cada cuánto revisamos la tecla. 50 ms es imperceptible para una persona y
 // prácticamente no gasta CPU (el hilo pasa el 99,9% del tiempo dormido).
@@ -54,6 +61,10 @@ HANDLE g_instanceMutex = nullptr;
 
 // ¿Se instalaron bien los hooks de DirectX?
 bool g_hooksReady = false;
+
+// ¿Se cargó la config? (Si no, al descargar NO se guarda, para no pisar el
+// archivo con valores vacíos.)
+bool g_configLoaded = false;
 
 // Intenta "reservar" el nombre Luma para este proceso.
 // Devuelve false si otra copia de Luma ya lo tenía.
@@ -133,9 +144,22 @@ bool Startup(HMODULE module) {
         log::Warn("El overlay no se pudo activar; Luma sigue cargado sin él.");
     }
 
-    // Fase 3: módulos y configuración.
+    // --- Módulos y configuración (Fase 3) --------------------------------------
+    // Primero se crean los módulos (todos desactivados) y después la config
+    // activa los que estaban activos y les pone sus opciones y teclas.
+    {
+        std::lock_guard lock(StateMutex());
+        modules::Manager::RegisterAll();
+    }
+    config::LoadAtStartup();
+    g_configLoaded = true;
+    log::Info("{} módulos registrados. Perfil activo: {}.", modules::Manager::All().size(),
+              config::ActiveProfile());
 
-    log::Info("Listo. Pulsa Fin (End) con el juego en primer plano para descargar Luma.");
+    const std::string menuKey = keys::Name(config::g_menuKey.load());
+    notify::Push(notify::Kind::Info, std::format("{} cargado · pulsa {} para abrir el menú", kName, menuKey));
+    log::Info("Listo. Menú: {}. Descargar: {} (con el juego en primer plano).", menuKey,
+              keys::Name(config::g_unloadKey.load()));
     return true;
 }
 
@@ -143,6 +167,7 @@ bool Startup(HMODULE module) {
 // Corre en ESTE hilo (no en el de render), así escribir en disco no le
 // agrega ningún tirón al juego.
 void LogPerformanceSummary() {
+    render::diag::LogAndReset("últimos 30 s");  // temporal, ver input_diag.h
     const perf::Summary s = perf::TakeSummary();
     if (!s.valid) {
         return;
@@ -172,11 +197,15 @@ void WaitForUnload() {
     // hasta que quede instalado.
     bool gameInputDone = !g_hooksReady;
 
-    while (!(IsGameWindowFocused() && (GetAsyncKeyState(kUnloadKey) & 0x8000))) {
+    // La tecla de descarga se lee de la config en cada vuelta (se puede
+    // cambiar desde Ajustes).
+    while (!(IsGameWindowFocused() &&
+             (GetAsyncKeyState(config::g_unloadKey.load(std::memory_order_relaxed)) & 0x8000))) {
         Sleep(kPollIntervalMs);
         if (!gameInputDone) {
             gameInputDone = render::gameinput::TryInstall();
         }
+        config::SaveIfDirty();  // guardado automático (solo si hubo cambios)
         if (GetTickCount64() - lastSummary >= kSummaryEveryMs) {
             lastSummary = GetTickCount64();
             LogPerformanceSummary();
@@ -198,6 +227,12 @@ void Shutdown() {
     //  5. overlay::Shutdown: ya nadie usa ImGui ni DX12 desde el juego; ahora
     //     sí es seguro liberarlos.
     //  6. hooks::Shutdown: liberar MinHook.
+    //  7. Módulos: desactivarlos y borrarlos (ya nadie los dibuja).
+    //
+    //  Antes de todo, guardamos la config (por si había cambios pendientes).
+    if (g_configLoaded) {
+        config::SaveNow();
+    }
     render::dx12::BeginUnload();
     render::gameinput::BeginUnload();
     hooks::DisableAll();
@@ -209,6 +244,11 @@ void Shutdown() {
     if (g_hooksReady) {
         log::Info("Overlay y hooks liberados.");
     }
+    {
+        std::lock_guard lock(StateMutex());
+        modules::Manager::Shutdown();
+    }
+    notify::Clear();
 
     ReleaseInstance();
     log::Info("{} descargado correctamente.", kName);

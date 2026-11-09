@@ -5,7 +5,7 @@ Es una DLL que se carga dentro del juego oficial y le agrega un overlay, un HUD 
 
 Luma **no** incluye nada que dé ventaja en multijugador: nada de killaura, fly, reach, xray, ESP, autoclicker, etc.
 
-> **Estado:** Fase 2. Overlay DX12 con el menú de Luma (tecla **L**) y una pestaña de Rendimiento que muestra el frametime y el costo de Luma. Fin (End) descarga Luma sin cerrar el juego.
+> **Estado:** Fase 3. Hay un sistema de módulos con categorías, teclas, configuración JSON con perfiles, avisos (toasts) y tema configurable. Por ahora hay dos módulos: *Marca de agua* y *Overlay de rendimiento*. El menú se abre con **L**, y **Fin (End)** descarga Luma sin cerrar el juego.
 
 ---
 
@@ -47,8 +47,31 @@ Si algo se rompe raro, borra la carpeta `build/` y vuelve a ejecutar los dos com
 1. Abre Minecraft Bedrock (versión GDK).
 2. Ejecuta `build\bin\Release\LumaLauncher.exe` (con doble clic o desde la terminal).
 3. El launcher muestra cada paso con `[OK]`, o un `[ERROR]` que explica qué pasó y qué hacer.
-4. **L** abre y cierra el menú de Luma. Limitación conocida: Luma todavía no sabe si el chat del juego está abierto, así que escribir una "l" en el chat abre el menú. Se corrige en la Fase 7.
-5. Para quitar Luma sin cerrar el juego: pulsa **Fin (End)** con la ventana de Minecraft en primer plano.
+4. **L** abre y cierra el menú de Luma. Limitación conocida: Luma todavía no sabe si el chat del juego está abierto, así que escribir una "l" en el chat abre el menú. Se corrige en la Fase 7. Mientras tanto puedes cambiar la tecla en *Ajustes*, por ejemplo a Insert.
+5. Para quitar Luma sin cerrar el juego: pulsa **Fin (End)** con la ventana de Minecraft en primer plano. También se puede cambiar en *Ajustes*.
+
+### El menú
+- **Barra lateral:**
+  - La marca de Luma.
+  - Las categorías de módulos: Todos, HUD, Visual, Utilidad, Mundo y Rendimiento.
+  - Las páginas *Tema*, *Perfiles*, *Ajustes* y *Diagnóstico*.
+- **Barra superior:** búsqueda (por nombre o descripción, en todas las categorías), selector de perfil y el botón *Editar HUD*, que se activa en la Fase 5.
+- **Módulos:** aparecen como tarjetas en dos columnas, agrupadas por categoría. Cada tarjeta lleva:
+  - un ícono de color con la inicial;
+  - la tecla asignada, si tiene;
+  - un interruptor tipo píldora: rojo apagado, verde encendido.
+- **Página de un módulo:** al hacer clic en una tarjeta se abre su página, con descripción, interruptor, tecla y opciones.
+  - Botón de tecla: clic para cambiarla. Mientras espera, Esc cancela y Retroceso la quita.
+  - Clic derecho en el botón: quita la tecla.
+- **Avisos (toasts):** aparecen abajo a la derecha. Por ejemplo, al activar un módulo con su tecla.
+- **Cómo se dibuja:** casi todo con la `ImDrawList` de ImGui (rectángulos redondeados, círculos y texto), con tres tamaños de Segoe UI. No usa imágenes, y solo se dibuja con el menú abierto.
+
+### Configuración y perfiles
+- `%APPDATA%\Luma\config\luma.json` guarda qué perfil está activo.
+- `%APPDATA%\Luma\config\profiles\<nombre>.json` guarda un perfil completo: módulos activos, sus opciones y teclas, el tema y las teclas de Luma.
+- **Guardado automático:** se guarda un segundo después del último cambio, y también al descargar Luma.
+- **Escritura segura:** primero se escribe a `.tmp` y después se reemplaza el archivo real, así un corte nunca lo deja a medias.
+- **Archivo dañado:** si un archivo está dañado, se guarda una copia `.corrupto.json`, se usan los valores de fábrica y aparece un aviso.
 
 Opciones del launcher:
 
@@ -77,7 +100,20 @@ client/               Luma.dll
   perf/               Medición, benchmark y optimizaciones
 ```
 
-Las carpetas `modules/` y `sdk/` todavía están vacías; cada una tiene un README que dice en qué fase se llena.
+La carpeta `sdk/` todavía está vacía (se llena en la Fase 6).
+
+## Cómo agregar un módulo
+
+1. Crea `client/modules/<categoría>/<nombre>.h` y `.cpp` con una clase que herede de `luma::modules::Module`. Usa como ejemplo `modules/hud/watermark.*`, el más simple.
+2. En el constructor, pasa un `id` interno (sin espacios ni tildes, y que nunca cambie: es la clave en la config), el nombre visible, la descripción y la categoría.
+3. Reemplaza solo lo que necesites:
+   - `HasHud()` + `OnRenderHud()`: dibujar en pantalla cada frame mientras está activo.
+   - `OnEnable()` / `OnDisable()`.
+   - `HasSettings()` + `DrawSettings()`: sus opciones en el menú. Devuelve `true` si algo cambió, para que se guarde.
+   - `SaveSettings()` / `LoadSettings()`: guardar sus opciones en el perfil.
+4. Agrégalo a la lista en `client/modules/registry.cpp` y su `.cpp` a `client/CMakeLists.txt`.
+
+El menú, la búsqueda, las teclas y el guardado funcionan solos. Un módulo desactivado no ejecuta código por frame, porque el render solo recorre la lista de módulos activos con HUD.
 
 ## Decisiones técnicas
 
@@ -138,7 +174,16 @@ Las dos son funciones de Windows, así que no dependen de la versión del juego.
 
 **GameInput** (`client/render/gameinput_block.cpp`): el log mostró que el juego nunca llama a `GetRawInputData`, así que el mouse tenía que llegarle por otro lado. El juego carga `GameInputRedist.dll`, y en su ejecutable aparece el IID de `IGameInput` versión 0, la que describe el `GameInput.h` del Windows SDK. Luma hookea `IGameInputReading::GetMouseState`, `GetKeyCount` y `GetKeyState` para ocultar mouse y teclado con el menú abierto. Las direcciones salen de la vtable de una lectura propia.
 
-> **Problema conocido (pendiente):** aun con todo lo anterior, con el menú abierto el juego sigue moviendo la cámara y recibiendo clics. Falta descubrir por qué camino le llega el mouse. Ver la Fase 3.
+**Diagnóstico** (`client/render/input_diag.h`, temporal): cada 30 s y al cerrar el menú, el log cuenta cuántas veces usó el juego cada vía de input. Así se encontró lo siguiente:
+- **GameInput:** el juego no usa sus métodos de lectura (0 llamadas).
+- **Raw input:** tampoco lo usa (0 llamadas).
+- **`GetCursorPos`:** el juego lo llama todo el tiempo, unas 140 veces por segundo. Con el menú abierto, Luma le devuelve siempre la posición que tenía el cursor al abrirlo, y ImGui sigue viendo la real porque Luma distingue a quien llama por su dirección de retorno. Al cerrar el menú, el cursor vuelve a esa posición para que la cámara no salte.
+- **`PeekMessageW`:** con el menú abierto, los mensajes de mouse y teclado que el juego saca de su cola los procesa Luma, y el juego recibe un `WM_NULL`. Esto cubre los motores que leen el input antes de `DispatchMessage`.
+- **`GetAsyncKeyState` / `GetKeyState`:** con el menú abierto, el juego ve todas las teclas y botones sin pulsar.
+
+- **GameInput (segundo intento):** también se hookean `IGameInput::GetCurrentReading/GetNextReading/GetPreviousReading`, para descubrir las clases de lectura que usa el juego. El resultado fue **0 lecturas pedidas por el juego**. Además, `GameInputCreate` y `GameInputInitialize` llevan al mismo código, así que no hay otra clase escondida.
+
+> **Problema conocido (pendiente):** con el menú abierto, el teclado ya queda bloqueado (el juego lo lee con `GetAsyncKeyState`), pero **la cámara y los clics siguen llegando al juego**. Están descartados los mensajes de la ventana, raw input, `GetCursorPos`, GameInput, otras ventanas y funciones cargadas por nombre. El siguiente paso es trabajar dentro del juego: encontrar su propia función de "soltar el mouse", la que usa al abrir el menú de pausa o el inventario, y llamarla desde Luma. Ese trabajo pertenece al SDK (Fase 6).
 
 **Descarga segura**, en este orden:
 1. Los hooks dejan de tocar el estado de Luma.
@@ -157,6 +202,31 @@ Las dos son funciones de Windows, así que no dependen de la versión del juego.
 - **Resumen cada 30 s en el log:** el FPS promedio y el costo de Luma **solo de los frames con el menú cerrado** (promedio y máximo). Lo escribe el hilo principal de Luma, no el de render, así que escribir en disco no causa tirones. Así se comprueba el criterio de la Fase 2 sin abrir el menú, porque abrirlo cambia la medición.
 - **Inicialización:** el overlay se inicializa una sola vez, en el primer frame. Se informa aparte en el log y no se cuenta como costo por frame.
 
+### Camino rápido del render (Fase 3)
+En cada frame, el hook de `Present` revisa tres variables atómicas:
+- ¿el menú está abierto?
+- ¿hay algún módulo activo que dibuje?
+- ¿hay algún aviso en pantalla?
+
+Si las tres son "no", vuelve sin tocar ImGui. Con 0 módulos activos, el costo medido fue de **~0.0009 ms por frame**; en la Fase 2 era de 0.0002-0.0005 ms. La diferencia es de menos de 1 µs, en el orden del ruido de la medición.
+
+Costo con módulos activos (menú cerrado, 1080p):
+
+| Módulos activos | Costo por frame |
+|---|---|
+| Marca de agua | ~0.09 ms |
+| Overlay de rendimiento (ventana de ImGui con gráfico) | ~0.29 ms |
+
+Pendiente para la Fase 12: dibujar el overlay de rendimiento sin ventana de ImGui.
+
+### Hilos y candado único
+- **Tres hilos tocan el estado de Luma:**
+  - el de render del juego, que dibuja;
+  - el de la ventana, que recibe teclas y mouse;
+  - el principal de Luma, que guarda la config y espera la tecla de descarga.
+- **Candado:** todo acceso a módulos, config e ImGui pasa por `luma::StateMutex()` (`client/core/state.h`).
+- **Regla para evitar bloqueos:** nunca tener el candado tomado mientras se llama a una función original del juego o de DirectX.
+
 ## Fases
 
 Ver `CLAUDE.md` para la lista completa. Avance:
@@ -164,5 +234,6 @@ Ver `CLAUDE.md` para la lista completa. Avance:
 - [x] 0. Entorno
 - [x] 1. Launcher + DLL mínima
 - [x] 2. Overlay + medición (costo con el menú cerrado: ~0.0003 ms por frame)
-- [ ] 3. Sistema de módulos y config
+- [x] 3. Sistema de módulos y config (costo con 0 módulos: ~0.0009 ms por frame)
+- [ ] 4. Benchmark + optimizaciones del proceso
 - [ ] ...

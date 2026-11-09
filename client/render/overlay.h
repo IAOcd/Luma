@@ -36,6 +36,14 @@ bool IsMenuOpen();
 // ¿ImGui está esperando que el usuario escriba texto?
 bool WantsTextInput();
 
+// Se pulsó una tecla (no repetición). Asigna la tecla si el menú la está
+// esperando, o activa/desactiva los módulos que la tengan. Devuelve true si
+// la tecla era para Luma y el juego no debe verla.
+bool OnKeyDown(int virtualKey);
+
+// ¿El menú está esperando una tecla para asignarla?
+bool IsCapturingKey();
+
 // Pasa un mensaje de teclado/mouse a ImGui de forma segura entre hilos.
 void FeedInput(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 

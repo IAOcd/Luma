@@ -5,7 +5,11 @@ Es una DLL que se carga dentro del juego oficial y le agrega un overlay, un HUD 
 
 Luma **no** incluye nada que dé ventaja en multijugador: nada de killaura, fly, reach, xray, ESP, autoclicker, etc.
 
-> **Estado:** Fase 3. Hay un sistema de módulos con categorías, teclas, configuración JSON con perfiles, avisos (toasts) y tema configurable. Por ahora hay dos módulos: *Marca de agua* y *Overlay de rendimiento*. El menú se abre con **L**, y **Fin (End)** descarga Luma sin cerrar el juego.
+> **Estado:** Fase 3 terminada.
+> - **Módulos y configuración:** sistema de módulos con categorías, teclas, configuración JSON con perfiles, avisos (toasts) y tema configurable. Por ahora hay dos módulos: *Marca de agua* y *Overlay de rendimiento*.
+> - **Menú:** se abre con **L** y se cierra con **L** o **Esc**. Tiene animaciones y sonidos, y una pantalla de carga al inyectar.
+> - **Bloqueo:** con el menú abierto, el juego no recibe ni cámara, ni clics, ni teclas.
+> - **Descarga:** **Fin (End)** descarga Luma sin cerrar el juego.
 
 ---
 
@@ -64,6 +68,17 @@ Si algo se rompe raro, borra la carpeta `build/` y vuelve a ejecutar los dos com
   - Botón de tecla: clic para cambiarla. Mientras espera, Esc cancela y Retroceso la quita.
   - Clic derecho en el botón: quita la tecla.
 - **Avisos (toasts):** aparecen abajo a la derecha. Por ejemplo, al activar un módulo con su tecla.
+- **Ventana fija:** siempre centrada, sin moverse, con el juego oscurecido detrás. **Esc** la cierra sin abrir la pausa del juego.
+- **Animaciones:**
+  - apertura y cierre;
+  - transición entre páginas;
+  - un indicador que se desliza en la barra lateral;
+  - tarjetas que se "levantan" al pasar el mouse;
+  - interruptores animados.
+
+  Todas se pueden desactivar en *Tema*.
+- **Sonidos** (`client/render/sound.cpp`): se **sintetizan** al arrancar, como ondas seno con envolvente. No hay archivos de audio, así que no hay nada ajeno. Suenan en un hilo propio con `PlaySound`, para no frenar el render. Volumen y apagado se configuran en *Tema*.
+- **Pantalla de carga** (`client/render/loading.cpp`): al inyectar, muestra el progreso mientras se carga la config y se escanean las firmas. Después se desvanece.
 - **Cómo se dibuja:** casi todo con la `ImDrawList` de ImGui (rectángulos redondeados, círculos y texto), con tres tamaños de Segoe UI. No usa imágenes, y solo se dibuja con el menú abierto.
 
 ### Configuración y perfiles
@@ -100,7 +115,7 @@ client/               Luma.dll
   perf/               Medición, benchmark y optimizaciones
 ```
 
-`sdk/` ya tiene el escáner de firmas y el control del mouse del juego. Ambos se adelantaron de la Fase 6 para resolver el bloqueo de la cámara.
+`sdk/` ya tiene el escáner de firmas, el control del mouse del juego (cliente y ventana) y el filtro de la cola del mouse. Se adelantaron de la Fase 6 para bloquear el mouse con el menú abierto.
 
 ## Cómo actualizar las firmas (cuando el juego se actualiza)
 Si tras una actualización de Minecraft aparece el aviso *"Firma no encontrada"*, el log indica cuál falló. Para la del mouse:
@@ -172,38 +187,39 @@ Minecraft GDK carga `d3d12.dll` y dibuja con DirectX 12, salvo en algunas PCs co
 
 **Costo con el menú cerrado:** el hook de `Present` sale enseguida, después de leer un par de variables. ImGui no se ejecuta.
 
-**Input** (`client/render/input.cpp`): Luma reemplaza la *WndProc* de la ventana del juego. La tecla del menú se detecta por mensaje, sin revisar el teclado en cada frame. Con el menú abierto, los mensajes de teclado y mouse van a ImGui y no al juego, e ImGui dibuja su propio cursor.
+### Input con el menú abierto
+Con el menú abierto, el juego no debe recibir **nada**: ni cámara, ni clics, ni teclas. Hay tres capas, y hacen falta todas.
 
-Al probarlo descubrimos que eso no alcanzaba: la cámara seguía moviéndose y el cursor quedaba clavado. Revisando con `dumpbin /imports` qué funciones de Windows importa `Minecraft.Windows.exe`, aparecieron dos responsables:
-- **`GetRawInputData`:** el juego lee el movimiento del mouse como *raw input* directamente desde su cola de mensajes, antes de que llegue a la WndProc. Con el menú abierto, el hook le devuelve un mouse "quieto" (movimiento 0, sin clics).
-- **`ClipCursor`:** dentro de un mundo, el juego encierra el cursor. Con el menú abierto, el hook ignora esos pedidos y libera el cursor. Al cerrar el menú, restaura lo último que pidió el juego.
+**1. Windows** (`client/render/input.cpp`). Son funciones de Windows, estables entre versiones del juego:
+- **WndProc propia:** detecta la tecla del menú (por mensaje, sin revisar el teclado en cada frame), Esc y las teclas de los módulos. Con el menú abierto, el teclado y el mouse van a ImGui.
+- **`PeekMessageW`:** el juego a veces mira los mensajes antes de entregarlos a la ventana. Con el menú abierto, Luma los procesa y el juego recibe un `WM_NULL`.
+- **Mensajes de soltar:** los de *soltar* tecla o botón siempre pasan. El juego lleva la cuenta de las teclas apretadas con esos mensajes, y si se perdiera el "soltar W" seguiría caminando. Al abrir el menú, Luma además le avisa al juego que se soltó todo lo que estaba apretado.
+- **`GetAsyncKeyState` / `GetKeyState`:** con el menú abierto, el juego ve todas las teclas sin pulsar.
+- **`ClipCursor`:** con el menú abierto, el juego puede liberar el cursor, pero no encerrarlo.
 
-Las dos son funciones de Windows, así que no dependen de la versión del juego.
+**2. El cliente del juego suelta el mouse** (`client/sdk/mouse_grab.cpp`). Es lo mismo que hace la pausa: muestra el cursor y deja de tratar el mouse como "de juego". Hay dos niveles:
+- **Ventana** (capa de plataforma):
+  - *Agarrar*: esconde el cursor, lo encierra en el centro y pone `ventana+0x398 = 1`.
+  - *Soltar*: hace lo contrario.
+- **Cliente** (`ClientInstance`): su indicador `cliente+0x1F8` dice si el mouse es "de juego". Sus funciones *agarrar* (`juego+0x8BF820`) y *soltar* (`juego+0x8BFA10`) cambian ese indicador y llaman a las de la ventana. Luma usa estas, igual que otros clients.
+- **Objetos sin pulsar Esc:**
+  - El del cliente se captura la primera vez que el juego llama a *agarrar*, cosa que hace continuamente.
+  - El de la ventana se encuentra al cargar, a partir de la variable global del WndProc del juego, en `[[contexto+0x8]+0x78]`.
 
-**GameInput** (`client/render/gameinput_block.cpp`): el log mostró que el juego nunca llama a `GetRawInputData`, así que el mouse tenía que llegarle por otro lado. El juego carga `GameInputRedist.dll`, y en su ejecutable aparece el IID de `IGameInput` versión 0, la que describe el `GameInput.h` del Windows SDK. Luma hookea `IGameInputReading::GetMouseState`, `GetKeyCount` y `GetKeyState` para ocultar mouse y teclado con el menú abierto. Las direcciones salen de la vtable de una lectura propia.
+**3. La cola de acciones del mouse** (`client/sdk/mouse_queue.cpp`). Es la clave para los clics:
+- **Una lista central:** el juego tiene un objeto global `MouseDevice` con una lista de acciones de mouse pendientes (movimiento, clics y rueda), de 20 bytes cada una. Todo el mouse, venga de GameInput o de mensajes, termina ahí.
+- **Se procesa en cada tick:** una función del juego (`juego+0x427EF0`) la recorre en cada tick.
+- **Qué hace Luma:** hookea esa función y, con el menú abierto, **quita los clics y la rueda** antes de que se procesen. Al abrir el menú agrega "soltar izquierdo/derecho" para cortar acciones en curso.
+- **Por qué no se vacía entera:** los movimientos se dejan pasar. Con el mouse suelto no giran la cámara, y si se borraran, la cámara saltaría al cerrar el menú porque el juego no actualizaría su posición.
+- **Memoria:** nunca se le agrega memoria a la lista; solo se escribe dentro del espacio que ya tiene.
 
-**Diagnóstico** (`client/render/input_diag.h`, temporal): cada 30 s y al cerrar el menú, el log cuenta cuántas veces usó el juego cada vía de input. Así se encontró lo siguiente:
-- **GameInput:** el juego no usa sus métodos de lectura (0 llamadas).
-- **Raw input:** tampoco lo usa (0 llamadas).
-- **`GetCursorPos`:** el juego lo llama todo el tiempo, unas 140 veces por segundo. Con el menú abierto, Luma le devuelve siempre la posición que tenía el cursor al abrirlo, y ImGui sigue viendo la real porque Luma distingue a quien llama por su dirección de retorno. Al cerrar el menú, el cursor vuelve a esa posición para que la cámara no salte.
-- **`PeekMessageW`:** con el menú abierto, los mensajes de mouse y teclado que el juego saca de su cola los procesa Luma, y el juego recibe un `WM_NULL`. Esto cubre los motores que leen el input antes de `DispatchMessage`.
-- **`GetAsyncKeyState` / `GetKeyState`:** con el menú abierto, el juego ve todas las teclas y botones sin pulsar.
+**Firmas:** todas se encuentran por escaneo (`client/sdk/scanner.cpp`). Los desplazamientos (`+0x398`, `+0x3A0`, `+0x1F8`) y las variables globales se leen de las propias instrucciones encontradas. Si alguna firma falla tras una actualización, aparece un aviso y solo se pierde esa parte del bloqueo.
 
-- **GameInput (segundo intento):** también se hookean `IGameInput::GetCurrentReading/GetNextReading/GetPreviousReading`, para descubrir las clases de lectura que usa el juego. El resultado fue **0 lecturas pedidas por el juego**. Además, `GameInputCreate` y `GameInputInitialize` llevan al mismo código, así que no hay otra clase escondida.
-
-**La solución: usar las funciones del propio juego** (`client/sdk/mouse_grab.cpp`). Ninguna vía de Windows explicaba la cámara y los clics, así que se pasó a trabajar dentro del juego:
-1. Luma registró la **pila de llamadas** cada vez que el juego llamaba a `ShowCursor` o `ClipCursor`, y mientras tanto se pulsó Esc varias veces en un mundo.
-2. Siempre aparecían dos funciones vecinas del ejecutable. Desensambladas con `dumpbin /disasm`, hacen lo siguiente:
-   - **Agarrar el mouse:** esconde el cursor, lo encierra en el centro de la ventana, captura el mouse y pone `ventana+0x398 = 1`.
-   - **Soltar el mouse:** muestra el cursor, lo libera, suelta la captura y pone `ventana+0x398 = 0`.
-3. Al abrir su menú, Luma llama a *soltar*, lo mismo que hace la pausa. Al cerrarlo llama a *agarrar*, solo si el juego tenía el mouse. Mientras el menú está abierto, frena los intentos del juego de volver a agarrarlo.
-4. Las funciones se encuentran **por firma** (`client/sdk/scanner.cpp`). El desplazamiento `+0x398` no está fijo en el código: se lee de la propia instrucción encontrada. Si las firmas fallan tras una actualización, aparece un aviso y solo se pierde este bloqueo.
-
-El teclado se sigue bloqueando por `GetAsyncKeyState`, porque así lo lee el juego.
-
-**Detalle:** Luma aprende cuál es el objeto de la ventana del juego la primera vez que este agarra o suelta el mouse. Si abres el menú justo después de cargar Luma, pulsa Esc dos veces en el juego antes.
-
-**Pendiente (limpieza):** varios hooks de la investigación (GameInput, raw input, el congelado de `GetCursorPos` y el registro de pilas) ya no hacen falta y se pueden quitar.
+**Cómo se llegó aquí.** Costó bastante, y lo dejo anotado por si sirve en otra actualización:
+- Bloquear raw input, `GetCursorPos` y los métodos de GameInput **no servía**: un diagnóstico que contaba cada vía mostró que el juego no las usa para la cámara ni los clics.
+- Las funciones de *agarrar/soltar* se encontraron registrando la **pila de llamadas** de `ShowCursor`/`ClipCursor` al pausar y desensamblando con `dumpbin /disasm`.
+- La cola de acciones se encontró **estudiando los clients open source [Latite](https://github.com/LatiteClient/Latite) y Flarial**, para entender la idea. Las firmas de Luma son propias, sacadas del desensamblado de este juego. Las públicas de Flarial no coinciden con 1.26.63.
+- Congelar `GetCursorPos` y devolver el cursor a su sitio al cerrar **causaban el salto de cámara**, porque GameInput lee la posición del cursor. Se quitaron.
 
 **Descarga segura**, en este orden:
 1. Los hooks dejan de tocar el estado de Luma.

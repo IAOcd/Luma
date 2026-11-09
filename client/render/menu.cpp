@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cfloat>
 #include <cmath>
@@ -50,6 +51,7 @@
 #include "perf/frame_stats.h"
 #include "perf/timer.h"
 #include "render/notifications.h"
+#include "render/sound.h"
 #include "render/theme.h"
 
 namespace luma::render::menu {
@@ -70,7 +72,41 @@ Category g_categoryFilter = Category::Count;
 // Módulo cuya página de opciones está abierta (nullptr = la grilla).
 Module* g_detail = nullptr;
 char g_search[64] = "";
+
+// --- Animaciones ------------------------------------------------------------------
 std::int64_t g_openedAt = 0;
+std::int64_t g_closedAt = 0;
+std::atomic<bool> g_closing{false};  // el menú se cerró y se está desvaneciendo
+std::int64_t g_pageChangedAt = 0;    // para la transición entre páginas
+float g_indicatorY = -1.0f;          // posición animada del indicador de la barra lateral
+float g_indicatorTarget = -1.0f;
+float g_indicatorHeight = 0.0f;
+ImGuiID g_lastHovered = 0;           // para el sonido al pasar el mouse
+
+constexpr double kOpenMs = 200.0;
+constexpr double kCloseMs = 150.0;
+constexpr double kPageMs = 180.0;
+
+double MsSince(std::int64_t ticks) {
+    return perf::TicksToMs(perf::Now() - ticks);
+}
+
+// Cambiar de página (o entrar/salir de un módulo): animación + sonido.
+void OnNavigate() {
+    g_pageChangedAt = perf::Now();
+    sound::Play(sound::Effect::Click);
+}
+
+// Sonido suave al empezar a pasar el mouse sobre el último elemento dibujado.
+void HoverFeedback(bool hovered) {
+    const ImGuiID id = ImGui::GetItemID();
+    if (hovered && id != g_lastHovered) {
+        g_lastHovered = id;
+        sound::Play(sound::Effect::Hover);
+    } else if (!hovered && id == g_lastHovered) {
+        g_lastHovered = 0;
+    }
+}
 
 // --- Captura de teclas ----------------------------------------------------------
 enum class CaptureTarget { None, Module, MenuKey, UnloadKey };
@@ -182,8 +218,10 @@ bool PillToggle(const char* id, bool* value, float height) {
     const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
     if (clicked) {
         *value = !*value;
+        sound::Play(*value ? sound::Effect::ToggleOn : sound::Effect::ToggleOff);
     }
     const bool hovered = ImGui::IsItemHovered();
+    HoverFeedback(hovered);
     const float t = Animate(ImGui::GetItemID(), *value ? 1.0f : 0.0f);
 
     ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -216,19 +254,27 @@ bool SidebarButton(const char* label, bool selected) {
     const float width = ImGui::GetContentRegionAvail().x;
     const bool clicked = ImGui::InvisibleButton(label, ImVec2(width, height));
     const bool hovered = ImGui::IsItemHovered();
+    HoverFeedback(hovered);
     const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 18.0f);
+    const float active = Animate(ImGui::GetItemID() + 1, selected ? 1.0f : 0.0f, 12.0f);
 
     ImDrawList* draw = ImGui::GetWindowDrawList();
+    // Al pasar el mouse, el botón se corre un poquito a la derecha.
+    const float nudge = hover * ImGui::GetFontSize() * 0.15f;
+    const ImVec2 min(pos.x + nudge, pos.y);
     const ImVec2 max(pos.x + width, pos.y + height);
     ImVec4 background = Mix(pal::kTile, pal::kTileHover, hover);
-    if (selected) {
-        background = Mix(pal::kPanelDark, theme::Accent(1.0f), 0.16f);
+    background = Mix(background, Mix(pal::kPanelDark, theme::Accent(1.0f), 0.18f), active);
+    draw->AddRectFilled(min, max, Col(background), Rounding() * 0.6f);
+    if (active > 0.01f) {
+        draw->AddRect(min, max, Col(theme::Accent(0.45f * active)), Rounding() * 0.6f, 0, 1.5f);
     }
-    draw->AddRectFilled(pos, max, Col(background), Rounding() * 0.6f);
+    CenteredText(draw, ImGui::GetFont(), min, max, Col(Mix(pal::kText, theme::Accent(1.0f), active)), label);
     if (selected) {
-        draw->AddRect(pos, max, Col(theme::Accent(0.45f)), Rounding() * 0.6f, 0, 1.5f);
+        // El indicador lateral se desliza hasta el botón elegido (ver Sidebar).
+        g_indicatorTarget = pos.y - ImGui::GetWindowPos().y;
+        g_indicatorHeight = height;
     }
-    CenteredText(draw, ImGui::GetFont(), pos, max, Col(selected ? theme::Accent(1.0f) : pal::kText), label);
     return clicked;
 }
 
@@ -327,30 +373,39 @@ void ModuleTile(Module& module, float width) {
     // Toda la tarjeta (menos el interruptor) abre las opciones del módulo.
     const bool open = ImGui::InvisibleButton("##tile", ImVec2(width - toggleArea, height));
     const bool hovered = ImGui::IsItemHovered();
-    const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 18.0f);
+    HoverFeedback(hovered);
+    const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 16.0f);
+    const float on = Animate(ImGui::GetItemID() + 1, module.IsEnabled() ? 1.0f : 0.0f, 10.0f);
 
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const float r = Rounding() * 0.7f;
-    draw->AddRectFilled(pos, max, Col(Mix(pal::kTile, pal::kTileHover, hover)), r);
-    if (module.IsEnabled()) {
-        draw->AddRect(pos, max, Col(pal::kOn, 0.35f), r, 0, 1.2f);
+    // Al pasar el mouse la tarjeta "se levanta": sube 2 px y su sombra crece.
+    const float lift = hover * 2.0f;
+    const ImVec2 tMin(pos.x, pos.y - lift);
+    const ImVec2 tMax(max.x, max.y - lift);
+    draw->AddRectFilled(ImVec2(tMin.x + 1, tMin.y + 2 + lift * 1.5f), ImVec2(tMax.x + 1, tMax.y + 2 + lift * 1.5f),
+                        Col(ImVec4(0, 0, 0, 0.18f + 0.12f * hover)), r);
+    draw->AddRectFilled(tMin, tMax, Col(Mix(pal::kTile, pal::kTileHover, hover)), r);
+    if (on > 0.01f) {
+        draw->AddRect(tMin, tMax, Col(pal::kOn, 0.40f * on), r, 0, 1.3f);
     }
 
-    // Ícono y nombre.
+    // Ícono y nombre (todo se dibuja desde "top", la parte de arriba ya levantada).
+    const float top = tMin.y;
     const float iconSize = height * 0.56f;
-    const ImVec2 iconMin(pos.x + height * 0.22f, pos.y + (height - iconSize) * 0.5f);
+    const ImVec2 iconMin(pos.x + height * 0.22f, top + (height - iconSize) * 0.5f);
     ModuleIcon(draw, iconMin, iconSize, module);
     ImFont* medium = theme::GetFonts().medium;
     const ImVec2 nameSize = medium->CalcTextSizeA(medium->FontSize, FLT_MAX, 0.0f, module.Name().c_str());
     const float textX = iconMin.x + iconSize + fontSize * 0.8f;
-    draw->AddText(medium, medium->FontSize, ImVec2(textX, pos.y + (height - nameSize.y) * 0.5f),
+    draw->AddText(medium, medium->FontSize, ImVec2(textX, top + (height - nameSize.y) * 0.5f),
                   Col(pal::kText), module.Name().c_str());
 
     // Etiqueta con la tecla asignada (si tiene).
     if (module.Keybind() != keys::kNone) {
         const std::string key = keys::Name(module.Keybind());
         const ImVec2 keySize = ImGui::CalcTextSize(key.c_str());
-        const ImVec2 kMin(textX + nameSize.x + fontSize * 0.6f, pos.y + (height - keySize.y) * 0.5f - 2.0f);
+        const ImVec2 kMin(textX + nameSize.x + fontSize * 0.6f, top + (height - keySize.y) * 0.5f - 2.0f);
         const ImVec2 kMax(kMin.x + keySize.x + fontSize * 0.7f, kMin.y + keySize.y + 4.0f);
         if (kMax.x < max.x - toggleArea) {
             draw->AddRectFilled(kMin, kMax, Col(pal::kPanelDark), 4.0f);
@@ -360,10 +415,10 @@ void ModuleTile(Module& module, float width) {
 
     // Separador vertical y el interruptor.
     const float dividerX = max.x - toggleArea;
-    draw->AddLine(ImVec2(dividerX, pos.y + height * 0.18f), ImVec2(dividerX, max.y - height * 0.18f),
+    draw->AddLine(ImVec2(dividerX, top + height * 0.18f), ImVec2(dividerX, top + height * 0.82f),
                   Col(ImVec4(1, 1, 1, 0.08f)), 1.0f);
     ImGui::SetCursorScreenPos(ImVec2(dividerX + (toggleArea - toggleWidth) * 0.5f,
-                                     pos.y + (height - toggleHeight) * 0.5f));
+                                     top + (height - toggleHeight) * 0.5f));
     bool enabled = module.IsEnabled();
     if (PillToggle("##toggle", &enabled, toggleHeight)) {
         Manager::SetEnabled(module, enabled, /*notify=*/false);
@@ -375,6 +430,7 @@ void ModuleTile(Module& module, float width) {
     }
     if (open) {
         g_detail = &module;
+        OnNavigate();
     }
 
     // Dejar el cursor debajo de la tarjeta (como si fuera un solo elemento).
@@ -509,6 +565,7 @@ void DrawModuleDetail(Module& module) {
     const float fontSize = ImGui::GetFontSize();
     if (ImGui::Button("<  Volver")) {
         g_detail = nullptr;
+        OnNavigate();
         return;
     }
     ImGui::Spacing();
@@ -535,7 +592,7 @@ void DrawModuleDetail(Module& module) {
     ImGui::Text("Activado");
     ImGui::SameLine(fontSize * 10.0f);
     bool enabled = module.IsEnabled();
-    if (PillToggle("##detail_toggle", &enabled, ImGui::GetFrameHeight())) {
+    if (PillToggle("##detail_toggle", &enabled, ImGui::GetFrameHeight() * 0.9f)) {
         Manager::SetEnabled(module, enabled, /*notify=*/false);
         config::MarkDirty();
     }
@@ -581,9 +638,30 @@ void DrawThemePage() {
         changed = true;
     }
 
-    SectionHeader("Animaciones");
+    SectionHeader("Animaciones y fondo");
     changed |= ImGui::Checkbox("Animaciones suaves", &t.animations);
-    ImGui::TextDisabled("Entrada del menú, interruptores, tarjetas y avisos. Cuestan casi nada.");
+    ImGui::TextDisabled("Apertura y cierre, cambio de página, interruptores, tarjetas y avisos.");
+    changed |= ImGui::SliderFloat("Oscurecer el juego detrás del menú", &t.backgroundDim, 0.0f, 0.8f, "%.2f");
+
+    SectionHeader("Sonido");
+    if (ImGui::Checkbox("Efectos de sonido", &t.sounds)) {
+        changed = true;
+        sound::Play(sound::Effect::Click);
+    }
+    ImGui::BeginDisabled(!t.sounds);
+    ImGui::SliderFloat("Volumen", &t.soundVolume, 0.0f, 1.0f, "%.2f");
+    // Los sonidos se regeneran al SOLTAR el slider (y suena uno de prueba).
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        sound::SetVolume(t.soundVolume);
+        sound::Play(sound::Effect::ToggleOn);
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Probar")) {
+        sound::Play(sound::Effect::Open);
+    }
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Sonidos generados por Luma (sin archivos externos).");
 
     ImGui::Spacing();
     if (ImGui::Button("Restablecer tema")) {
@@ -837,12 +915,14 @@ void Brand() {
 void Sidebar() {
     Brand();
     SidebarLabel("Categorías");
+    g_indicatorTarget = -1.0f;
     auto categoryButton = [](const char* label, Category category) {
-        const bool selected = g_page == Page::Modules && g_categoryFilter == category && g_detail == nullptr;
-        if (SidebarButton(label, selected)) {
+        const bool selected = g_page == Page::Modules && g_categoryFilter == category;
+        if (SidebarButton(label, selected) && !(selected && g_detail == nullptr)) {
             g_page = Page::Modules;
             g_categoryFilter = category;
             g_detail = nullptr;
+            OnNavigate();
         }
     };
     categoryButton("Todos", Category::Count);
@@ -853,16 +933,35 @@ void Sidebar() {
 
     SidebarLabel("Luma");
     auto pageButton = [](const char* label, Page page) {
-        if (SidebarButton(label, g_page == page)) {
+        if (SidebarButton(label, g_page == page) && g_page != page) {
             g_page = page;
             g_detail = nullptr;
             g_profilesDirty = true;
+            OnNavigate();
         }
     };
     pageButton("Tema", Page::Theme);
     pageButton("Perfiles", Page::Profiles);
     pageButton("Ajustes", Page::Settings);
     pageButton("Diagnóstico", Page::Diagnostics);
+
+    // Indicador: una barrita de color que se desliza hasta el botón elegido.
+    if (g_indicatorTarget >= 0.0f) {
+        if (g_indicatorY < 0.0f || !theme::Get().animations) {
+            g_indicatorY = g_indicatorTarget;
+        } else {
+            g_indicatorY = ImLerp(g_indicatorY, g_indicatorTarget,
+                                  std::min(1.0f, ImGui::GetIO().DeltaTime * 16.0f));
+        }
+        const ImVec2 win = ImGui::GetWindowPos();
+        const float barWidth = std::max(3.0f, ImGui::GetFontSize() * 0.2f);
+        const float inset = g_indicatorHeight * 0.22f;
+        const float x = win.x + ImGui::GetStyle().WindowPadding.x * 0.35f;
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImVec2(x, win.y + g_indicatorY + inset),
+            ImVec2(x + barWidth, win.y + g_indicatorY + g_indicatorHeight - inset),
+            Col(theme::Accent(1.0f)), barWidth);
+    }
 
     // Al pie: versión.
     const float footerY = ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - ImGui::GetFontSize() * 1.8f;
@@ -876,6 +975,21 @@ void Sidebar() {
 
 void OnOpened() {
     g_openedAt = perf::Now();
+    g_pageChangedAt = g_openedAt;
+    g_closing.store(false);
+    g_lastHovered = 0;
+    sound::Play(sound::Effect::Open);
+}
+
+void OnClosed() {
+    g_closedAt = perf::Now();
+    // Sin animaciones, el menú desaparece al instante.
+    g_closing.store(theme::Get().animations);
+    sound::Play(sound::Effect::Close);
+}
+
+bool IsAnimatingClose() {
+    return g_closing.load(std::memory_order_relaxed);
 }
 
 bool IsCapturingKey() {
@@ -922,29 +1036,54 @@ void OnKeyCaptured(int vk) {
 }
 
 void Draw(const RenderInfo& info) {
+    // --- Animación de apertura o de cierre ---------------------------------------
+    // "appear" va de 0 (invisible) a 1 (completamente visible).
+    float appear = 1.0f;
+    const bool closing = g_closing.load(std::memory_order_relaxed);
+    if (closing) {
+        const float t = static_cast<float>(MsSince(g_closedAt) / kCloseMs);
+        if (t >= 1.0f) {
+            g_closing.store(false);  // terminó: el overlay vuelve al camino rápido
+            return;
+        }
+        appear = 1.0f - t * t;  // "ease in": se va acelerando al desaparecer
+    } else if (theme::Get().animations) {
+        appear = EaseOut(static_cast<float>(MsSince(g_openedAt) / kOpenMs));
+    }
+
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float fontSize = ImGui::GetFontSize();
-    ImGui::SetNextWindowSize(ImVec2(viewport->Size.x * 0.66f, viewport->Size.y * 0.72f),
-                             ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.5f),
-                            ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSizeConstraints(ImVec2(fontSize * 40.0f, fontSize * 24.0f), viewport->Size);
 
-    // Animación de entrada: aparece y "sube" un poco en 0,18 s.
-    float appear = 1.0f;
-    if (theme::Get().animations) {
-        appear = EaseOut(static_cast<float>(perf::TicksToMs(perf::Now() - g_openedAt) / 180.0));
+    // Fondo: oscurecer el juego detrás del menú (barato: un rectángulo).
+    const float dim = theme::Get().backgroundDim * appear;
+    if (dim > 0.001f) {
+        ImGui::GetBackgroundDrawList()->AddRectFilled(
+            viewport->Pos, ImVec2(viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y),
+            ImGui::ColorConvertFloat4ToU32(ImVec4(0.02f, 0.02f, 0.04f, dim)));
     }
+
+    // Ventana FIJA: siempre centrada y del mismo tamaño (no se puede mover ni
+    // cambiar de tamaño). Se recalcula cada frame por si cambia la resolución.
+    const ImVec2 size(std::max(viewport->Size.x * 0.66f, fontSize * 44.0f),
+                      std::max(viewport->Size.y * 0.72f, fontSize * 26.0f));
+    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                   viewport->Pos.y + viewport->Size.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, appear);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 
-    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
-                                        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+    constexpr ImGuiWindowFlags kFlags =
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
     if (ImGui::Begin(kName, nullptr, kFlags)) {
         ImDrawList* draw = ImGui::GetWindowDrawList();
         const ImVec2 winPos = ImGui::GetWindowPos();
         const ImVec2 winSize = ImGui::GetWindowSize();
-        const float offsetY = (1.0f - appear) * fontSize * 1.5f;  // la "subida" de la animación
+        // Al aparecer, el menú "sube" un poco hasta su lugar (y al cerrarse, baja).
+        const float offsetY = (1.0f - appear) * fontSize * 1.8f;
         const float gap = fontSize * 1.0f;
         const float sidebarWidth = std::clamp(winSize.x * 0.2f, fontSize * 11.0f, fontSize * 15.0f);
         const float opacity = theme::Get().windowOpacity;
@@ -974,7 +1113,14 @@ void Draw(const RenderInfo& info) {
         ImGui::EndChild();
 
         // --- Panel principal ------------------------------------------------------
-        ImGui::SetCursorScreenPos(mainMin);
+        // Transición entre páginas: el contenido nuevo aparece y se desliza
+        // un poco desde la derecha.
+        float page = 1.0f;
+        if (theme::Get().animations && !closing) {
+            page = EaseOut(static_cast<float>(MsSince(g_pageChangedAt) / kPageMs));
+        }
+        ImGui::SetCursorScreenPos(ImVec2(mainMin.x + (1.0f - page) * fontSize * 1.6f, mainMin.y));
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, appear * page);
         ImGui::BeginChild("##main", ImVec2(mainMax.x - mainMin.x, winSize.y),
                           ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoBackground);
         if (g_page == Page::Modules && g_detail != nullptr) {
@@ -989,7 +1135,7 @@ void Draw(const RenderInfo& info) {
             }
         }
         ImGui::EndChild();
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar(2);  // alpha de la página + padding
     }
     ImGui::End();
     ImGui::PopStyleVar(2);

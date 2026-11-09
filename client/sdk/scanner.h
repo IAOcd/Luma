@@ -40,4 +40,11 @@ ScanResult FindPattern(std::string_view pattern);
 // Dirección del módulo del juego en memoria (para mostrar desplazamientos).
 std::uintptr_t GameBase();
 
+// Muchas instrucciones x64 apuntan a una variable "relativa a sí mismas":
+//     mov r15, [rip + desplazamiento]
+// donde rip = la dirección de la instrucción SIGUIENTE. Dada la dirección de
+// los 4 bytes del desplazamiento y dónde termina la instrucción, devuelve la
+// dirección real de la variable.
+std::uintptr_t ResolveRipRelative(std::uintptr_t displacementAddress, std::uintptr_t nextInstruction);
+
 }  // namespace luma::sdk

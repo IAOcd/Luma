@@ -1,39 +1,37 @@
 // =============================================================================
-//  input.cpp - Nuestra WndProc y los hooks de raw input / ClipCursor
+//  input.cpp - Nuestra WndProc y los hooks de input de Windows
 // =============================================================================
-//  Qué descubrimos al probar (Fase 2a): con el menú abierto el cursor de
-//  ImGui no se movía y la cámara del juego sí. Revisando qué funciones de
-//  Windows importa Minecraft.Windows.exe (con la herramienta "dumpbin"):
+//  Qué hace cada pieza (todas son funciones de Windows, estables entre
+//  versiones del juego):
 //
-//    - GetRawInputData: el juego lee el movimiento del mouse como "raw input"
-//      (datos crudos del mouse) directamente desde su cola de mensajes, ANTES
-//      de que lleguen a la WndProc. Bloquearlo en la WndProc no alcanza.
-//    - ClipCursor: dentro de un mundo, el juego encierra el cursor de Windows
-//      para que no salga de la ventana. Por eso ImGui no veía que se moviera.
+//    - WndProc propia: detecta la tecla del menú, Esc y las teclas de los
+//      módulos; con el menú abierto le pasa el teclado y el mouse a ImGui y no
+//      se los entrega al juego.
+//    - PeekMessageW: el juego saca los mensajes de su cola con esta función y
+//      a veces los mira ANTES de entregarlos a la ventana. Con el menú abierto,
+//      Luma los procesa ahí y le devuelve al juego un mensaje vacío.
+//    - GetAsyncKeyState / GetKeyState: con el menú abierto, el juego ve todas
+//      las teclas sin apretar.
+//    - ClipCursor: con el menú abierto, el juego no puede volver a encerrar el
+//      cursor.
 //
-//  Solución (todo funciones de Windows, estables entre versiones del juego):
-//    - Con el menú abierto, GetRawInputData le devuelve al juego un mouse
-//      "quieto": movimiento 0 y sin clics. La cámara no se mueve.
-//    - Con el menú abierto, ignoramos los ClipCursor del juego y liberamos el
-//      cursor. Al cerrar el menú, restauramos lo último que el juego pidió.
+//  El mouse del JUEGO (cámara y clics) no se bloquea aquí: llega por una cola
+//  interna del juego, y eso lo resuelven sdk/mouse_grab y sdk/mouse_queue.
+//  Probamos muchas otras vías de Windows (raw input, GetCursorPos, GameInput);
+//  la historia completa está en el README.
 // =============================================================================
 #include "render/input.h"
 
 #include <intrin.h>  // _ReturnAddress: desde dónde nos llamaron
 
-#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cwctype>
-#include <format>
 #include <mutex>
-#include <string>
 
 #include "core/config.h"
 #include "core/hooks.h"
 #include "core/logger.h"
-#include "core/paths.h"
-#include "render/input_diag.h"
 #include "render/overlay.h"
 #include "sdk/mouse_grab.h"
 
@@ -52,11 +50,43 @@ namespace {
 HWND g_window = nullptr;
 // La WndProc original del juego. Atómica porque la leen otros hilos.
 std::atomic<WNDPROC> g_originalWndProc{nullptr};
+std::atomic<bool> g_hooksActive{false};
 
 // Tras una tecla que usó Luma (por ejemplo, abrir el menú con L), Windows
 // genera además un WM_CHAR con el carácter ('l'). Lo descartamos para que
 // no se escriba en el chat del juego. 0 = no descartar nada.
 wchar_t g_swallowChar = 0;
+
+// --- Funciones originales de Windows (los "trampolines" de MinHook) -----------------
+using ClipCursorFn = BOOL(WINAPI*)(const RECT*);
+using PeekMessageWFn = BOOL(WINAPI*)(LPMSG, HWND, UINT, UINT, UINT);
+using KeyStateFn = SHORT(WINAPI*)(int);
+ClipCursorFn g_originalClipCursor = nullptr;
+PeekMessageWFn g_originalPeekMessageW = nullptr;
+KeyStateFn g_originalGetAsyncKeyState = nullptr;
+KeyStateFn g_originalGetKeyState = nullptr;
+
+// Rango de memoria donde está cargado Luma.dll. Sirve para saber si quien
+// llama a GetKeyState es Luma (ImGui necesita el estado real) o el juego.
+// "__ImageBase" es un símbolo que el enlazador de Microsoft define al inicio
+// de nuestro propio módulo.
+extern "C" IMAGE_DOS_HEADER __ImageBase;
+std::uintptr_t g_lumaStart = 0;
+std::uintptr_t g_lumaEnd = 0;
+
+bool IsLumaAddress(void* address) {
+    const auto value = reinterpret_cast<std::uintptr_t>(address);
+    return value >= g_lumaStart && value < g_lumaEnd;
+}
+
+// Último encierro de cursor que pidió el juego (para restaurarlo si el
+// camino principal, sdk/mouse_grab, no estuviera disponible).
+std::mutex g_clipMutex;
+bool g_gameClipKnown = false;
+bool g_gameClipActive = false;  // false = el juego pidió "sin encierro"
+RECT g_gameClipRect{};
+
+// --- Utilidades ---------------------------------------------------------------------
 
 // El carácter que produce una tecla (en minúscula), o 0 si no produce ninguno.
 wchar_t CharForKey(int vk) {
@@ -76,160 +106,30 @@ int MouseButtonKey(UINT message, WPARAM wParam) {
     return 0;
 }
 
-// --- Hooks de Windows -----------------------------------------------------------
-using GetRawInputDataFn = UINT(WINAPI*)(HRAWINPUT, UINT, LPVOID, PUINT, UINT);
-using GetRawInputBufferFn = UINT(WINAPI*)(PRAWINPUT, PUINT, UINT);
-using GetCursorPosFn = BOOL(WINAPI*)(LPPOINT);
-using ClipCursorFn = BOOL(WINAPI*)(const RECT*);
-GetRawInputDataFn g_originalGetRawInputData = nullptr;
-GetRawInputBufferFn g_originalGetRawInputBuffer = nullptr;
-GetCursorPosFn g_originalGetCursorPos = nullptr;
-ClipCursorFn g_originalClipCursor = nullptr;
-
-using PeekMessageWFn = BOOL(WINAPI*)(LPMSG, HWND, UINT, UINT, UINT);
-using KeyStateFn = SHORT(WINAPI*)(int);
-PeekMessageWFn g_originalPeekMessageW = nullptr;
-KeyStateFn g_originalGetAsyncKeyState = nullptr;
-KeyStateFn g_originalGetKeyState = nullptr;
-
-// Rango de memoria donde está cargado Luma.dll. Sirve para saber si quien
-// llama a GetCursorPos es Luma (ImGui necesita la posición real) o el juego.
-// "__ImageBase" es un símbolo que el enlazador de Microsoft define al inicio
-// de nuestro propio módulo.
-extern "C" IMAGE_DOS_HEADER __ImageBase;
-std::uintptr_t g_lumaStart = 0;
-std::uintptr_t g_lumaEnd = 0;
-
-bool IsLumaAddress(void* address) {
-    const auto value = reinterpret_cast<std::uintptr_t>(address);
-    return value >= g_lumaStart && value < g_lumaEnd;
+// ¿Es un botón del mouse? (VK_LBUTTON=1, VK_RBUTTON=2, VK_MBUTTON=4, X1=5, X2=6)
+bool IsMouseButtonKey(int vk) {
+    return vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_XBUTTON1 ||
+           vk == VK_XBUTTON2;
 }
 
-// Posición del cursor al abrir el menú: es la que ve el juego mientras esté abierto.
-std::atomic<LONG> g_frozenCursorX{0};
-std::atomic<LONG> g_frozenCursorY{0};
-
-void ClearMouseData(RAWINPUT* raw) {
-    raw->data.mouse.lLastX = 0;
-    raw->data.mouse.lLastY = 0;
-    raw->data.mouse.usButtonFlags = 0;
-    raw->data.mouse.usButtonData = 0;
-    raw->data.mouse.ulRawButtons = 0;
+// Mensajes de "puntero" (WM_POINTERDOWN, WM_POINTERUPDATE...): la forma
+// moderna en que Windows avisa de mouse, lápiz y pantalla táctil. Van del
+// 0x0245 al 0x0257 y NO están dentro de WM_MOUSEFIRST..WM_MOUSELAST.
+bool IsPointerMessage(UINT message) {
+    return message >= 0x0245 && message <= 0x0257;
 }
 
-// Último encierro de cursor que pidió el juego (para restaurarlo).
-std::mutex g_clipMutex;
-bool g_gameClipKnown = false;
-bool g_gameClipActive = false;  // false = el juego pidió "sin encierro"
-RECT g_gameClipRect{};
-
-// Diagnóstico: cuántos eventos de mouse le escondimos al juego.
-std::atomic<std::uint32_t> g_blockedMouseEvents{0};
-
-std::atomic<bool> g_hooksActive{false};
-
-UINT WINAPI GetRawInputDataDetour(HRAWINPUT rawInput, UINT command, LPVOID data, PUINT size,
-                                  UINT headerSize) {
-    hooks::ActiveCallGuard guard;
-    const UINT result = g_originalGetRawInputData(rawInput, command, data, size, headerSize);
-    if (data != nullptr) {
-        diag::Count(diag::g_counters.getRawInputData);
-    }
-
-    // Solo nos interesa cuando el juego pidió los datos completos (RID_INPUT)
-    // y la llamada salió bien. ((UINT)-1 es como Windows indica error.)
-    if (data != nullptr && command == RID_INPUT && result != static_cast<UINT>(-1) &&
-        result >= sizeof(RAWINPUTHEADER) && overlay::IsMenuOpen() &&
-        g_hooksActive.load(std::memory_order_relaxed)) {
-        auto* raw = static_cast<RAWINPUT*>(data);
-        if (raw->header.dwType == RIM_TYPEMOUSE) {
-            ClearMouseData(raw);  // Mouse "quieto": sin movimiento, botones ni rueda.
-            g_blockedMouseEvents.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    return result;
+// ¿Es un mensaje de teclado o de mouse? (Los que bloqueamos con el menú abierto.)
+bool IsInputMessage(UINT message) {
+    return (message >= WM_KEYFIRST && message <= WM_KEYLAST) ||
+           (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) || message == WM_INPUT ||
+           IsPointerMessage(message);
 }
 
-// GetRawInputBuffer lee VARIOS eventos de raw input de una vez (lo usan
-// algunos motores para rendimiento). No aparece en las importaciones del
-// juego, pero podría cargarse dinámicamente, así que lo cubrimos también.
-UINT WINAPI GetRawInputBufferDetour(PRAWINPUT data, PUINT size, UINT headerSize) {
-    hooks::ActiveCallGuard guard;
-    const UINT count = g_originalGetRawInputBuffer(data, size, headerSize);
-    if (data == nullptr || count == 0 || count == static_cast<UINT>(-1)) {
-        return count;
-    }
-    diag::Count(diag::g_counters.getRawInputBuffer);
-    if (overlay::IsMenuOpen() && g_hooksActive.load(std::memory_order_relaxed)) {
-        // Los eventos vienen uno detrás de otro, cada uno alineado a 8 bytes.
-        // (Es lo que hace la macro NEXTRAWINPUTBLOCK de Windows, que necesita
-        // un tipo QWORD que no siempre está definido.)
-        auto next = [](RAWINPUT* block) {
-            const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(block) +
-                                           block->header.dwSize + 7;
-            return reinterpret_cast<RAWINPUT*>(address & ~static_cast<std::uintptr_t>(7));
-        };
-        RAWINPUT* raw = data;
-        for (UINT i = 0; i < count; ++i) {
-            if (raw->header.dwType == RIM_TYPEMOUSE) {
-                ClearMouseData(raw);
-                g_blockedMouseEvents.fetch_add(1, std::memory_order_relaxed);
-            }
-            raw = next(raw);
-        }
-    }
-    return count;
-}
-
-// Si el juego calcula el movimiento de la cámara con la posición del cursor,
-// con el menú abierto le mostramos siempre la misma posición. A Luma (ImGui)
-// le damos la real.
-BOOL WINAPI GetCursorPosDetour(LPPOINT point) {
-    hooks::ActiveCallGuard guard;
-    const BOOL ok = g_originalGetCursorPos(point);
-    if (!IsLumaAddress(_ReturnAddress())) {
-        diag::Count(diag::g_counters.getCursorPosGame);
-        if (ok && point != nullptr && overlay::IsMenuOpen() &&
-            g_hooksActive.load(std::memory_order_relaxed)) {
-            point->x = g_frozenCursorX.load(std::memory_order_relaxed);
-            point->y = g_frozenCursorY.load(std::memory_order_relaxed);
-        }
-    }
-    return ok;
-}
-
-BOOL WINAPI ClipCursorDetour(const RECT* rect) {
-    hooks::ActiveCallGuard guard;
-    if (!IsLumaAddress(_ReturnAddress())) {
-        // Diagnóstico (temporal): quién del juego encierra / libera el cursor.
-        diag::LogCallStack("ClipCursor", rect != nullptr ? "encerrar" : "liberar");
-    }
-    {
-        // Recordamos SIEMPRE lo que pide el juego, para restaurarlo después.
-        std::lock_guard lock(g_clipMutex);
-        g_gameClipKnown = true;
-        g_gameClipActive = rect != nullptr;
-        if (rect != nullptr) {
-            g_gameClipRect = *rect;
-        }
-    }
-    if (overlay::IsMenuOpen() && g_hooksActive.load(std::memory_order_relaxed)) {
-        return TRUE;  // Con el menú abierto, el cursor queda libre.
-    }
-    return g_originalClipCursor(rect);
-}
-
-// ShowCursor: el juego esconde el cursor al "agarrar" el mouse (jugar) y lo
-// muestra al soltarlo (pausa, inventario). Solo lo usamos para diagnóstico.
-using ShowCursorFn = int(WINAPI*)(BOOL);
-ShowCursorFn g_originalShowCursor = nullptr;
-
-int WINAPI ShowCursorDetour(BOOL show) {
-    hooks::ActiveCallGuard guard;
-    if (!IsLumaAddress(_ReturnAddress())) {
-        diag::LogCallStack("ShowCursor", show ? "mostrar" : "esconder");
-    }
-    return g_originalShowCursor(show);
+// ¿Es un mensaje de "soltar" una tecla o un botón del mouse?
+bool IsReleaseMessage(UINT message) {
+    return message == WM_KEYUP || message == WM_SYSKEYUP || message == WM_LBUTTONUP ||
+           message == WM_RBUTTONUP || message == WM_MBUTTONUP || message == WM_XBUTTONUP;
 }
 
 // Llama a la ClipCursor real (sin pasar por nuestro detour).
@@ -246,22 +146,10 @@ void RestoreGameClip() {
 
 // --- WndProc --------------------------------------------------------------------
 
-// ¿Es un mensaje de teclado o de mouse? (Los que bloqueamos con el menú abierto.)
-bool IsInputMessage(UINT message) {
-    return (message >= WM_KEYFIRST && message <= WM_KEYLAST) ||
-           (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) || message == WM_INPUT;
-}
-
 LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     // Contamos esta llamada como "activa" para que la descarga espere a que
     // termine (ver hooks.h).
     hooks::ActiveCallGuard guard;
-
-    if (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) {
-        diag::Count(diag::g_counters.wndMouseMessages);
-    } else if (message == WM_INPUT) {
-        diag::Count(diag::g_counters.wndRawInputMessages);
-    }
 
     // --- Teclas ------------------------------------------------------------------
     // WM_SYSKEYDOWN es lo mismo que WM_KEYDOWN pero para Alt, F10 y
@@ -282,7 +170,14 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
             g_swallowChar = keyDown ? CharForKey(vk) : 0;
             return 0;
         }
-        // 2. La tecla del menú. Si ImGui espera texto (la caja de búsqueda),
+        // 2. Esc cierra el menú. El juego no lo ve (si no, abriría la pausa).
+        if (vk == VK_ESCAPE && overlay::IsMenuOpen()) {
+            if (!isRepeat) {
+                overlay::ToggleMenu();
+            }
+            return 0;
+        }
+        // 3. La tecla del menú. Si ImGui espera texto (la caja de búsqueda),
         //    la letra se escribe en vez de cerrar el menú.
         if (vk == config::g_menuKey.load(std::memory_order_relaxed) && !overlay::WantsTextInput()) {
             if (!isRepeat) {
@@ -291,7 +186,7 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
             g_swallowChar = keyDown ? CharForKey(vk) : 0;
             return 0;  // El juego no ve esta tecla.
         }
-        // 3. Teclas de los módulos (el juego también las recibe).
+        // 4. Teclas de los módulos (el juego también las recibe).
         if (!isRepeat && !overlay::WantsTextInput()) {
             overlay::OnKeyDown(vk);
         }
@@ -306,11 +201,16 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
 
     if (overlay::IsMenuOpen()) {
         overlay::FeedInput(window, message, wParam, lParam);
-        if (IsInputMessage(message)) {
-            // WM_INPUT (input "crudo" del mouse) debe pasar por DefWindowProc
-            // para que Windows libere sus datos internos. Los demás simplemente
-            // no se le entregan al juego.
-            if (message == WM_INPUT) {
+        // Los mensajes de SOLTAR (tecla o botón) siempre le llegan al juego:
+        // si soltaste W con el menú abierto, el juego tiene que enterarse, o
+        // seguiría caminando para siempre (lleva la cuenta de las teclas
+        // apretadas con estos mensajes).
+        if (IsInputMessage(message) && !IsReleaseMessage(message)) {
+            // WM_INPUT (input "crudo") debe pasar por DefWindowProc para que
+            // Windows libere sus datos internos. Los de puntero también:
+            // DefWindowProc los convierte en mensajes de mouse clásicos, que
+            // vuelven a pasar por aquí (y los recibe ImGui).
+            if (message == WM_INPUT || IsPointerMessage(message)) {
                 return DefWindowProcW(window, message, wParam, lParam);
             }
             return 0;
@@ -321,27 +221,22 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
     return CallWindowProcW(g_originalWndProc.load(), window, message, wParam, lParam);
 }
 
-// --- Hooks de la cola de mensajes y del estado de teclas -------------------------
+// --- Hooks ----------------------------------------------------------------------------
 
-// PeekMessageW: el juego saca los mensajes de su cola con esta función. Muchos
-// motores miran los mensajes de mouse y teclado ANTES de entregarlos a la
-// ventana (DispatchMessage), así que bloquearlos en la WndProc no alcanza.
-//
-// Con el menú abierto, cuando el juego saca un mensaje de input de su
-// ventana, Luma lo procesa ahí mismo (como si hubiera llegado a la WndProc:
-// ImGui lo recibe, la tecla del menú funciona) y le devuelve al juego un
-// mensaje vacío (WM_NULL), que no hace nada.
+// PeekMessageW: con el menú abierto, cuando el juego saca un mensaje de input
+// de su ventana, Luma lo procesa ahí mismo (como si hubiera llegado a la
+// WndProc: ImGui lo recibe, la tecla del menú funciona) y le devuelve al
+// juego un mensaje vacío (WM_NULL), que no hace nada.
 BOOL WINAPI PeekMessageWDetour(LPMSG msg, HWND window, UINT filterMin, UINT filterMax,
                                UINT removeFlags) {
     hooks::ActiveCallGuard guard;
     const BOOL got = g_originalPeekMessageW(msg, window, filterMin, filterMax, removeFlags);
     if (!got || msg == nullptr || g_window == nullptr || msg->hwnd != g_window ||
-        !IsInputMessage(msg->message) || !overlay::IsMenuOpen() ||
+        !IsInputMessage(msg->message) || IsReleaseMessage(msg->message) || !overlay::IsMenuOpen() ||
         !g_hooksActive.load(std::memory_order_relaxed)) {
         return got;
     }
     if (removeFlags & PM_REMOVE) {
-        diag::Count(diag::g_counters.peekMessageBlocked);
         // TranslateMessage genera el WM_CHAR (el carácter) de una tecla; lo
         // necesita ImGui para escribir en la búsqueda. Llega en una vuelta
         // siguiente y pasa por aquí mismo.
@@ -355,8 +250,8 @@ BOOL WINAPI PeekMessageWDetour(LPMSG msg, HWND window, UINT filterMin, UINT filt
 }
 
 // GetAsyncKeyState / GetKeyState: "¿está apretada esta tecla o botón ahora?".
-// Con el menú abierto le respondemos al juego "no" para todo (así no ataca
-// ni camina). Luma (ImGui y la tecla de descarga) sigue viendo la verdad.
+// Con el menú abierto le respondemos al juego "no" para todo. Luma (ImGui y la
+// tecla de descarga) sigue viendo la verdad.
 bool BlockKeyStateForCaller(void* returnAddress) {
     return overlay::IsMenuOpen() && g_hooksActive.load(std::memory_order_relaxed) &&
            !IsLumaAddress(returnAddress);
@@ -364,11 +259,7 @@ bool BlockKeyStateForCaller(void* returnAddress) {
 
 SHORT WINAPI GetAsyncKeyStateDetour(int vk) {
     hooks::ActiveCallGuard guard;
-    void* caller = _ReturnAddress();
-    if (!IsLumaAddress(caller)) {
-        diag::Count(diag::g_counters.getAsyncKeyStateGame);
-    }
-    if (BlockKeyStateForCaller(caller)) {
+    if (BlockKeyStateForCaller(_ReturnAddress())) {
         return 0;
     }
     return g_originalGetAsyncKeyState(vk);
@@ -376,14 +267,81 @@ SHORT WINAPI GetAsyncKeyStateDetour(int vk) {
 
 SHORT WINAPI GetKeyStateDetour(int vk) {
     hooks::ActiveCallGuard guard;
-    void* caller = _ReturnAddress();
-    if (!IsLumaAddress(caller)) {
-        diag::Count(diag::g_counters.getKeyStateGame);
-    }
-    if (BlockKeyStateForCaller(caller)) {
+    if (BlockKeyStateForCaller(_ReturnAddress())) {
         return 0;
     }
     return g_originalGetKeyState(vk);
+}
+
+BOOL WINAPI ClipCursorDetour(const RECT* rect) {
+    hooks::ActiveCallGuard guard;
+    {
+        // Recordamos SIEMPRE lo que pide el juego, por si hay que restaurarlo.
+        std::lock_guard lock(g_clipMutex);
+        g_gameClipKnown = true;
+        g_gameClipActive = rect != nullptr;
+        if (rect != nullptr) {
+            g_gameClipRect = *rect;
+        }
+    }
+    // Con el menú abierto, el juego no puede ENCERRAR el cursor (quedaría
+    // clavado y no podrías usar el menú). Liberarlo (rect == nullptr) sí se
+    // permite siempre: es justo lo que hace el juego al soltar el mouse.
+    if (rect != nullptr && overlay::IsMenuOpen() && g_hooksActive.load(std::memory_order_relaxed)) {
+        return TRUE;
+    }
+    return g_originalClipCursor(rect);
+}
+
+// Al abrir el menú: avisarle al juego que se soltaron todas las teclas y
+// botones que estaban apretados. Si no, el juego seguiría "viendo" W
+// apretada (y caminando) mientras el menú está abierto.
+// Se llama desde el hilo de la ventana (donde el juego procesa sus mensajes).
+void ReleaseHeldInput(HWND window) {
+    WNDPROC original = g_originalWndProc.load();
+    if (window == nullptr || original == nullptr || g_originalGetAsyncKeyState == nullptr) {
+        return;
+    }
+    // El bit más alto (0x8000) de GetAsyncKeyState = "apretada ahora mismo".
+    auto held = [](int vk) { return (g_originalGetAsyncKeyState(vk) & 0x8000) != 0; };
+    int released = 0;
+
+    // Teclas: WM_KEYUP con el formato de lParam que manda Windows
+    // (bit 31 = se soltó, bit 30 = estaba apretada, repetición 1, código de escaneo).
+    for (int vk = 0x08; vk <= 0xFE; ++vk) {
+        if (IsMouseButtonKey(vk) || !held(vk)) {
+            continue;
+        }
+        const UINT scan = MapVirtualKeyW(static_cast<UINT>(vk), MAPVK_VK_TO_VSC);
+        const LPARAM lParam = static_cast<LPARAM>(0xC0000001u | (scan << 16));
+        CallWindowProcW(original, window, WM_KEYUP, static_cast<WPARAM>(vk), lParam);
+        ++released;
+    }
+
+    // Botones del mouse: WM_xBUTTONUP en la posición actual del cursor.
+    POINT cursor{};
+    if (GetCursorPos(&cursor)) {
+        ScreenToClient(window, &cursor);
+    }
+    const LPARAM position = MAKELPARAM(cursor.x, cursor.y);
+    const struct {
+        int vk;
+        UINT message;
+        WPARAM wParam;
+    } buttons[] = {{VK_LBUTTON, WM_LBUTTONUP, 0},
+                   {VK_RBUTTON, WM_RBUTTONUP, 0},
+                   {VK_MBUTTON, WM_MBUTTONUP, 0},
+                   {VK_XBUTTON1, WM_XBUTTONUP, MAKEWPARAM(0, XBUTTON1)},
+                   {VK_XBUTTON2, WM_XBUTTONUP, MAKEWPARAM(0, XBUTTON2)}};
+    for (const auto& b : buttons) {
+        if (held(b.vk)) {
+            CallWindowProcW(original, window, b.message, b.wParam, position);
+            ++released;
+        }
+    }
+    if (released > 0) {
+        log::Info("Menú abierto: se soltaron {} teclas/botones que estaban apretados.", released);
+    }
 }
 
 }  // namespace
@@ -404,20 +362,12 @@ bool CreateHooks() {
         const char* logName;
     };
     const HookSpec specs[] = {
-        {"GetRawInputData", reinterpret_cast<void*>(&GetRawInputDataDetour),
-         reinterpret_cast<void**>(&g_originalGetRawInputData), "user32!GetRawInputData"},
-        {"GetRawInputBuffer", reinterpret_cast<void*>(&GetRawInputBufferDetour),
-         reinterpret_cast<void**>(&g_originalGetRawInputBuffer), "user32!GetRawInputBuffer"},
-        {"GetCursorPos", reinterpret_cast<void*>(&GetCursorPosDetour),
-         reinterpret_cast<void**>(&g_originalGetCursorPos), "user32!GetCursorPos"},
         {"PeekMessageW", reinterpret_cast<void*>(&PeekMessageWDetour),
          reinterpret_cast<void**>(&g_originalPeekMessageW), "user32!PeekMessageW"},
         {"GetAsyncKeyState", reinterpret_cast<void*>(&GetAsyncKeyStateDetour),
          reinterpret_cast<void**>(&g_originalGetAsyncKeyState), "user32!GetAsyncKeyState"},
         {"GetKeyState", reinterpret_cast<void*>(&GetKeyStateDetour),
          reinterpret_cast<void**>(&g_originalGetKeyState), "user32!GetKeyState"},
-        {"ShowCursor", reinterpret_cast<void*>(&ShowCursorDetour),
-         reinterpret_cast<void**>(&g_originalShowCursor), "user32!ShowCursor"},
         {"ClipCursor", reinterpret_cast<void*>(&ClipCursorDetour),
          reinterpret_cast<void**>(&g_originalClipCursor), "user32!ClipCursor"},
     };
@@ -459,47 +409,40 @@ bool Install(HWND gameWindow) {
 
 void OnMenuToggled(bool open) {
     if (open) {
-        // Lo principal: pedirle al juego que suelte el mouse, como hace la
-        // pausa (ver sdk/mouse_grab.h). Lo de abajo es la red de seguridad
-        // por si esas funciones no se encontraron.
+        // Que el juego suelte lo que tenía apretado (si no, sigue caminando).
+        ReleaseHeldInput(g_window);
+        // Pedirle al juego que suelte el mouse, como hace la pausa
+        // (sdk/mouse_grab.h): muestra y libera el cursor, y deja de tratar el
+        // mouse como "de juego".
         sdk::mouse::OnMenuOpened();
-        {
-            // Si el juego encerró el cursor antes de que Luma se cargara, no
-            // pasó por nuestro hook: lo leemos de Windows para poder restaurarlo.
+        // Red de seguridad: liberar el cursor nosotros también (si el juego ya
+        // lo liberó no pasa nada). Si el camino del juego no estuviera
+        // disponible, recordamos cómo estaba para devolverlo al cerrar.
+        if (!sdk::mouse::ReleasedByLuma()) {
             std::lock_guard lock(g_clipMutex);
-            if (!g_gameClipKnown) {
-                RECT current{};
-                if (GetClipCursor(&current)) {
-                    g_gameClipKnown = true;
-                    g_gameClipActive = true;
-                    g_gameClipRect = current;
-                }
+            RECT current{};
+            if (!g_gameClipKnown && GetClipCursor(&current)) {
+                g_gameClipKnown = true;
+                g_gameClipActive = true;
+                g_gameClipRect = current;
             }
         }
-        // Posición que verá el juego mientras el menú esté abierto.
-        POINT cursor{};
-        if (g_originalGetCursorPos != nullptr && g_originalGetCursorPos(&cursor)) {
-            g_frozenCursorX.store(cursor.x);
-            g_frozenCursorY.store(cursor.y);
-        }
-        RealClipCursor(nullptr);  // Liberar el cursor.
-        g_blockedMouseEvents.store(0);
-        diag::LogAndReset("antes de abrir el menú");
+        RealClipCursor(nullptr);
     } else {
-        // Devolver el cursor a donde estaba al abrir el menú: así, para el
-        // juego, el cursor nunca se movió y la cámara no salta al cerrar.
-        SetCursorPos(g_frozenCursorX.load(), g_frozenCursorY.load());
-        RestoreGameClip();
-        sdk::mouse::OnMenuClosed();  // devolverle el mouse al juego (si lo tenía)
-        log::Info("Menú cerrado. Eventos de raw input de mouse ocultados al juego: {}.",
-                  g_blockedMouseEvents.load());
-        diag::LogAndReset("con el menú abierto");
+        // Si el juego soltó el mouse por nosotros, al cerrar lo vuelve a
+        // agarrar él mismo (y encierra el cursor como siempre). Si no,
+        // devolvemos el encierro que tenía.
+        const bool releasedByGame = sdk::mouse::ReleasedByLuma();
+        sdk::mouse::OnMenuClosed();
+        if (!releasedByGame) {
+            RestoreGameClip();
+        }
     }
 }
 
 void Uninstall() {
     g_hooksActive.store(false);
-    if (overlay::IsMenuOpen()) {
+    if (overlay::IsMenuOpen() && !sdk::mouse::ReleasedByLuma()) {
         RestoreGameClip();  // Devolver el cursor como lo quería el juego.
     }
     if (g_window == nullptr) {
@@ -518,83 +461,3 @@ void Uninstall() {
 }
 
 }  // namespace luma::render::input
-
-namespace luma::render::diag {
-
-void LogAndReset(const char* context) {
-    auto take = [](std::atomic<std::uint32_t>& counter) { return counter.exchange(0); };
-    log::Info("Diagnóstico de input ({}): mensajes de mouse a la ventana={}, WM_INPUT={}, "
-              "GetRawInputData={}, GetRawInputBuffer={}, GetCursorPos del juego={}, "
-              "GameInput lecturas pedidas={}, GameInput GetMouseState={}, GameInput GetKeyState={}, "
-              "PeekMessage interceptados={}, GetAsyncKeyState del juego={}, GetKeyState del juego={}",
-              context, take(g_counters.wndMouseMessages), take(g_counters.wndRawInputMessages),
-              take(g_counters.getRawInputData), take(g_counters.getRawInputBuffer),
-              take(g_counters.getCursorPosGame), take(g_counters.gameInputGetReading),
-              take(g_counters.gameInputMouseState),
-              take(g_counters.gameInputKeyState), take(g_counters.peekMessageBlocked),
-              take(g_counters.getAsyncKeyStateGame), take(g_counters.getKeyStateGame));
-}
-
-namespace {
-
-std::mutex g_stackMutex;
-std::array<std::uint64_t, 40> g_seenStacks{};
-std::size_t g_seenCount = 0;
-
-// "Minecraft.Windows.exe+0x1A2B3C": nombre corto del módulo y desplazamiento
-// desde su inicio. El desplazamiento no cambia entre ejecuciones (aunque
-// Windows cargue el módulo en otra dirección), así que sirve para buscarlo
-// en el archivo del juego.
-std::string DescribeAddress(void* address) {
-    HMODULE module = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            static_cast<LPCWSTR>(address), &module)) {
-        return std::format("0x{:X}", reinterpret_cast<std::uintptr_t>(address));
-    }
-    wchar_t path[MAX_PATH];
-    const DWORD length = GetModuleFileNameW(module, path, MAX_PATH);
-    std::wstring name(path, length);
-    const std::size_t slash = name.find_last_of(L"\\/");
-    if (slash != std::wstring::npos) {
-        name = name.substr(slash + 1);
-    }
-    return std::format("{}+0x{:X}", paths::ToUtf8(name),
-                       reinterpret_cast<std::uintptr_t>(address) - reinterpret_cast<std::uintptr_t>(module));
-}
-
-}  // namespace
-
-void LogCallStack(const char* api, const char* detail) {
-    void* frames[20];
-    // Saltamos 1 marco (esta misma función). RtlCaptureStackBackTrace lee
-    // las direcciones de retorno de la pila del hilo actual.
-    const USHORT count = RtlCaptureStackBackTrace(1, 20, frames, nullptr);
-
-    // "Huella" de la pila para no escribir dos veces la misma.
-    std::uint64_t hash = 1469598103934665603ull;
-    for (USHORT i = 0; i < count; ++i) {
-        hash = (hash ^ reinterpret_cast<std::uintptr_t>(frames[i])) * 1099511628211ull;
-    }
-    {
-        std::lock_guard lock(g_stackMutex);
-        for (std::size_t i = 0; i < g_seenCount; ++i) {
-            if (g_seenStacks[i] == hash) {
-                return;
-            }
-        }
-        if (g_seenCount == g_seenStacks.size()) {
-            return;
-        }
-        g_seenStacks[g_seenCount++] = hash;
-    }
-
-    std::string text;
-    for (USHORT i = 0; i < count; ++i) {
-        text += "\n      ";
-        text += DescribeAddress(frames[i]);
-    }
-    log::Info("PILA {} ({}) en el hilo {}:{}", api, detail, GetCurrentThreadId(), text);
-}
-
-}  // namespace luma::render::diag

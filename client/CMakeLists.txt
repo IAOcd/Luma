@@ -22,13 +22,15 @@ add_library(Luma SHARED
     modules/performance/perf_overlay.cpp
     perf/frame_stats.cpp
     render/dx12_hooks.cpp
-    render/gameinput_block.cpp
     render/input.cpp
+    render/loading.cpp
     render/menu.cpp
     render/notifications.cpp
     render/overlay.cpp
+    render/sound.cpp
     render/theme.cpp
     sdk/mouse_grab.cpp
+    sdk/mouse_queue.cpp
     sdk/scanner.cpp
 )
 
@@ -42,4 +44,5 @@ target_link_libraries(Luma PRIVATE
     nlohmann_json::nlohmann_json  # configuración JSON (se usa desde la Fase 3)
     shell32                   # SHGetKnownFolderPath (carpeta %APPDATA%)
     ole32                     # CoTaskMemFree (liberar el texto que devuelve la anterior)
+    winmm                     # PlaySound (efectos de sonido del menú)
 )

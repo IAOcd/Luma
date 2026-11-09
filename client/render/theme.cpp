@@ -122,6 +122,9 @@ void Save(nlohmann::json& out) {
     t["rounding"] = g_settings.rounding;
     t["fontSize"] = g_settings.fontSize;
     t["animations"] = g_settings.animations;
+    t["sounds"] = g_settings.sounds;
+    t["soundVolume"] = g_settings.soundVolume;
+    t["backgroundDim"] = g_settings.backgroundDim;
     out["theme"] = std::move(t);
 }
 
@@ -140,6 +143,9 @@ void Load(const nlohmann::json& in) {
         g_settings.rounding = std::clamp(t.value("rounding", defaults.rounding), 0.0f, 16.0f);
         g_settings.fontSize = std::clamp(t.value("fontSize", defaults.fontSize), 13.0f, 28.0f);
         g_settings.animations = t.value("animations", defaults.animations);
+        g_settings.sounds = t.value("sounds", defaults.sounds);
+        g_settings.soundVolume = std::clamp(t.value("soundVolume", defaults.soundVolume), 0.0f, 1.0f);
+        g_settings.backgroundDim = std::clamp(t.value("backgroundDim", defaults.backgroundDim), 0.0f, 0.8f);
     }
     if (g_settings.fontSize != oldFont) {
         RequestFontRebuild();

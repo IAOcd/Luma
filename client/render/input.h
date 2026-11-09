@@ -13,10 +13,9 @@
 //  Así detectamos la tecla del menú sin gastar nada por frame (solo
 //  reaccionamos cuando llega el mensaje).
 //
-//  PERO Minecraft no lee el movimiento del mouse por mensajes, sino con
-//  "raw input" (GetRawInputData), y además encierra el cursor dentro de la
-//  ventana con ClipCursor. Por eso también hookeamos esas dos funciones de
-//  Windows (ver input.cpp).
+//  Además hookeamos PeekMessageW, GetAsyncKeyState/GetKeyState y ClipCursor
+//  (ver input.cpp). El mouse del juego (cámara y clics) no pasa por aquí: lo
+//  resuelven sdk/mouse_grab y sdk/mouse_queue.
 // =============================================================================
 #pragma once
 
@@ -24,8 +23,8 @@
 
 namespace luma::render::input {
 
-// Crea los hooks de GetRawInputData y ClipCursor (se activan con
-// hooks::EnableAll).
+// Crea los hooks de PeekMessageW, GetAsyncKeyState, GetKeyState y ClipCursor
+// (se activan con hooks::EnableAll).
 bool CreateHooks();
 
 // Instala nuestra WndProc en la ventana del juego.

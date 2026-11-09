@@ -75,6 +75,12 @@ std::uintptr_t GameBase() {
     return reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
 }
 
+std::uintptr_t ResolveRipRelative(std::uintptr_t displacementAddress, std::uintptr_t nextInstruction) {
+    // El desplazamiento es un número de 32 bits CON signo (puede apuntar hacia atrás).
+    const auto displacement = *reinterpret_cast<const std::int32_t*>(displacementAddress);
+    return static_cast<std::uintptr_t>(static_cast<std::intptr_t>(nextInstruction) + displacement);
+}
+
 ScanResult FindPattern(std::string_view pattern) {
     std::vector<std::uint8_t> bytes;
     std::vector<bool> mask;

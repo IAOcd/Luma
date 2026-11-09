@@ -45,6 +45,7 @@
 #include "core/state.h"
 #include "modules/module_manager.h"
 #include "render/input.h"
+#include "render/loading.h"
 #include "render/menu.h"
 #include "render/notifications.h"
 #include "render/theme.h"
@@ -402,10 +403,12 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
     modules::Manager::RenderHud();
-    if (menuOpen) {
+    // También mientras se desvanece al cerrarse (ya sin recibir input).
+    if (menuOpen || menu::IsAnimatingClose()) {
         menu::Draw(menu::RenderInfo{g_r.width, g_r.height, g_r.bufferCount, FormatName(g_r.format)});
     }
     notify::Render();
+    loading::Render();
     ImGui::Render();
     g_wantsTextInput.store(menuOpen && io.WantTextInput, std::memory_order_relaxed);
 
@@ -497,7 +500,7 @@ bool OnPresent(IDXGISwapChain* swapchain) {
     // atómicas; ImGui ni se toca. Así, con 0 módulos activos, Luma cuesta lo
     // mismo que en la Fase 2.
     if (!g_menuOpen.load(std::memory_order_relaxed) && !modules::Manager::HasHud() &&
-        !notify::HasActive()) {
+        !notify::HasActive() && !menu::IsAnimatingClose() && !loading::IsVisible()) {
         return false;
     }
 
@@ -567,8 +570,11 @@ void ToggleMenu() {
         std::lock_guard lock(StateMutex());
         if (open) {
             menu::OnOpened();
-        } else if (menu::IsCapturingKey()) {
-            menu::OnKeyCaptured(VK_ESCAPE);  // cerrar el menú cancela la asignación
+        } else {
+            if (menu::IsCapturingKey()) {
+                menu::OnKeyCaptured(VK_ESCAPE);  // cerrar el menú cancela la asignación
+            }
+            menu::OnClosed();
         }
     }
     g_menuOpen.store(open);

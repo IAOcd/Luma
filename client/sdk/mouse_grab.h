@@ -7,7 +7,8 @@
 //  internas suyas, que encontramos así (Fase 3, con el juego 1.26.63):
 //
 //    1. Luma registró la pila de llamadas cada vez que el juego llamaba a
-//       ShowCursor / ClipCursor (ver render/input_diag.h).
+//       ShowCursor / ClipCursor (con RtlCaptureStackBackTrace; ese
+//       diagnóstico se quitó después de usarlo, está explicado en el README).
 //    2. Al pausar y volver a jugar aparecieron siempre dos funciones vecinas
 //       del ejecutable. Desensambladas con "dumpbin /disasm":
 //
@@ -30,10 +31,21 @@
 // =============================================================================
 #pragma once
 
+#include <windows.h>
+
 namespace luma::sdk::mouse {
 
+// Se llama durante Init para informar el progreso (paso actual, total), por
+// ejemplo para la pantalla de carga.
+using ProgressFn = void (*)(int step, int total);
+
 // Busca las firmas y crea los hooks (activados). Llamar con MinHook listo.
-bool Init();
+bool Init(ProgressFn progress = nullptr);
+
+// Busca el objeto de la ventana del juego a partir de su HWND (así no hay
+// que esperar a que el juego agarre o suelte el mouse). Devuelve true si ya
+// se conoce.
+bool LocateWindow(HWND gameWindow);
 
 // ¿Se encontraron las funciones?
 bool Available();

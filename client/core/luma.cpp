@@ -13,6 +13,7 @@
 // =============================================================================
 #include "core/luma.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cwchar>
 #include <format>
@@ -28,14 +29,15 @@
 #include "core/version.h"
 #include "modules/module_manager.h"
 #include "render/notifications.h"
+#include "render/sound.h"
 #include "perf/frame_stats.h"
 #include "perf/timer.h"
 #include "render/dx12_hooks.h"
-#include "render/gameinput_block.h"
 #include "render/input.h"
-#include "render/input_diag.h"
+#include "render/loading.h"
 #include "render/overlay.h"
 #include "sdk/mouse_grab.h"
+#include "sdk/mouse_queue.h"
 
 namespace luma {
 
@@ -139,17 +141,16 @@ bool Startup(HMODULE module) {
         }
         g_hooksReady = dx12 && hooks::EnableAll();
     }
-    // SDK (memoria del juego): las funciones con las que el juego agarra y
-    // suelta el mouse. Si no se encuentran, solo se pierde el bloqueo de la
-    // cámara con el menú abierto.
-    if (g_hooksReady) {
-        sdk::mouse::Init();
-    }
     if (g_hooksReady) {
         log::Info("Hooks de DirectX 12 activos. Esperando el primer frame...");
     } else {
         log::Warn("El overlay no se pudo activar; Luma sigue cargado sin él.");
     }
+
+    // Desde aquí, la pantalla de carga muestra cada paso (el overlay ya
+    // dibuja en cuanto llega el primer frame, en paralelo con este hilo).
+    render::loading::Begin();
+    render::loading::SetStep("Cargando la configuración...", 0.10f);
 
     // --- Módulos y configuración (Fase 3) --------------------------------------
     // Primero se crean los módulos (todos desactivados) y después la config
@@ -160,8 +161,32 @@ bool Startup(HMODULE module) {
     }
     config::LoadAtStartup();
     g_configLoaded = true;
+    sound::Init();  // después de la config: usa el volumen guardado
     log::Info("{} módulos registrados. Perfil activo: {}.", modules::Manager::All().size(),
               config::ActiveProfile());
+
+    // --- SDK (memoria del juego) -------------------------------------------------
+    // Las funciones con las que el juego agarra y suelta el mouse. Si no se
+    // encuentran, solo se pierde el bloqueo de la cámara con el menú abierto.
+    if (g_hooksReady) {
+        sdk::mouse::Init([](int step, int total) {
+            static const char* const kSteps[] = {"Buscando funciones del juego (1/5)...",
+                                                 "Buscando funciones del juego (2/5)...",
+                                                 "Buscando funciones del juego (3/5)...",
+                                                 "Buscando funciones del juego (4/5)...",
+                                                 "Buscando funciones del juego (5/5)...",
+                                                 "Conectando con el juego..."};
+            render::loading::SetStep(kSteps[std::min(step, 5)],
+                                     0.2f + 0.7f * static_cast<float>(step) / static_cast<float>(total));
+        });
+    }
+    // La cola de acciones del mouse: lo que de verdad le impide al juego
+    // recibir clics y movimiento con el menú abierto (ver sdk/mouse_queue.h).
+    if (g_hooksReady) {
+        render::loading::SetStep("Conectando con el mouse del juego...", 0.95f);
+        sdk::mousequeue::Init();
+    }
+    render::loading::Finish();
 
     const std::string menuKey = keys::Name(config::g_menuKey.load());
     notify::Push(notify::Kind::Info, std::format("{} cargado · pulsa {} para abrir el menú", kName, menuKey));
@@ -174,7 +199,6 @@ bool Startup(HMODULE module) {
 // Corre en ESTE hilo (no en el de render), así escribir en disco no le
 // agrega ningún tirón al juego.
 void LogPerformanceSummary() {
-    render::diag::LogAndReset("últimos 30 s");  // temporal, ver input_diag.h
     const perf::Summary s = perf::TakeSummary();
     if (!s.valid) {
         return;
@@ -197,20 +221,18 @@ void WaitForUnload() {
     // Sleep(50) en Windows suele durar algo más (~62 ms), y el error se acumula.
     ULONGLONG lastSummary = GetTickCount64();
 
-    // GetAsyncKeyState devuelve un número cuyo bit más alto (0x8000) vale 1
-    // si la tecla está apretada en este momento.
-    // El filtro de GameInput necesita una lectura de mouse o teclado, que
-    // quizá todavía no exista al cargar Luma: lo intentamos en cada vuelta
-    // hasta que quede instalado.
-    bool gameInputDone = !g_hooksReady;
+    bool windowLocated = !g_hooksReady;
 
-    // La tecla de descarga se lee de la config en cada vuelta (se puede
-    // cambiar desde Ajustes).
+    // GetAsyncKeyState devuelve un número cuyo bit más alto (0x8000) vale 1
+    // si la tecla está apretada en este momento. La tecla de descarga se lee
+    // de la config en cada vuelta (se puede cambiar desde Ajustes).
     while (!(IsGameWindowFocused() &&
              (GetAsyncKeyState(config::g_unloadKey.load(std::memory_order_relaxed)) & 0x8000))) {
         Sleep(kPollIntervalMs);
-        if (!gameInputDone) {
-            gameInputDone = render::gameinput::TryInstall();
+        // Encontrar el objeto de la ventana del juego en cuanto el juego esté
+        // en primer plano (así el menú bloquea la cámara desde el principio).
+        if (!windowLocated && IsGameWindowFocused()) {
+            windowLocated = sdk::mouse::LocateWindow(GetForegroundWindow()) || !sdk::mouse::Available();
         }
         config::SaveIfDirty();  // guardado automático (solo si hubo cambios)
         if (GetTickCount64() - lastSummary >= kSummaryEveryMs) {
@@ -240,9 +262,9 @@ void Shutdown() {
     if (g_configLoaded) {
         config::SaveNow();
     }
+    sdk::mousequeue::BeginUnload();
     sdk::mouse::BeginUnload();  // si el menú estaba abierto, devolverle el mouse al juego
     render::dx12::BeginUnload();
-    render::gameinput::BeginUnload();
     hooks::DisableAll();
     hooks::WaitForActiveCalls();
     render::input::Uninstall();
@@ -257,6 +279,7 @@ void Shutdown() {
         modules::Manager::Shutdown();
     }
     notify::Clear();
+    sound::Shutdown();
 
     ReleaseInstance();
     log::Info("{} descargado correctamente.", kName);

@@ -20,8 +20,14 @@ struct RenderInfo {
 // Dibuja la ventana del menú. Se llama entre ImGui::NewFrame y ImGui::Render.
 void Draw(const RenderInfo& info);
 
-// El menú se acaba de abrir (para la animación de entrada).
+// El menú se acaba de abrir / cerrar (animaciones y sonidos).
 void OnOpened();
+void OnClosed();
+
+// ¿El menú ya se cerró pero todavía se está desvaneciendo? Mientras sea true,
+// el overlay lo sigue dibujando (sin recibir input). Se puede llamar sin el
+// candado (es atómico).
+bool IsAnimatingClose();
 
 // --- Asignación de teclas ---------------------------------------------------------
 // Al hacer clic en el botón de tecla de un módulo, el menú queda "esperando

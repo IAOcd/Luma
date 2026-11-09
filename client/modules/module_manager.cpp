@@ -7,6 +7,7 @@
 
 #include "core/logger.h"
 #include "render/notifications.h"
+#include "render/sound.h"
 
 namespace luma::modules {
 
@@ -74,6 +75,7 @@ void Manager::SetEnabled(Module& module, bool enabled, bool notify) {
     RebuildActiveLists();
     log::Info("Módulo {}: {}", module.Name(), enabled ? "activado" : "desactivado");
     if (notify) {
+        sound::Play(enabled ? sound::Effect::ToggleOn : sound::Effect::ToggleOff);
         notify::Push(enabled ? notify::Kind::Success : notify::Kind::Info,
                      std::format("{} {}", module.Name(), enabled ? "activado" : "desactivado"));
     }

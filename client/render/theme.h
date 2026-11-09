@@ -19,6 +19,9 @@ struct Settings {
     float rounding = 12.0f;
     float fontSize = 18.0f;  // en píxeles a 1080p (se escala con la resolución)
     bool animations = true;
+    bool sounds = true;        // efectos de sonido del menú
+    float soundVolume = 0.6f;  // 0..1
+    float backgroundDim = 0.40f;  // cuánto se oscurece el juego detrás del menú (0..0.8)
 };
 
 Settings& Get();

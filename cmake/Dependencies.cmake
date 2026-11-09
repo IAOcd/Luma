@@ -48,14 +48,31 @@ FetchContent_Declare(imgui
 # Descargar todo (y, para minhook y json, procesar su CMakeLists).
 FetchContent_MakeAvailable(minhook nlohmann_json imgui)
 
-# --- Biblioteca ImGui (solo el núcleo) ------------------------------------------
-# Por ahora solo el núcleo de ImGui. Los "backends" (el código que conecta
-# ImGui con DirectX y con la ventana de Windows) se agregan en la Fase 2,
-# cuando decidamos qué API gráfica usa el juego.
+# --- Biblioteca ImGui ---------------------------------------------------------------
+# El núcleo de ImGui más dos "backends" oficiales (el código que conecta ImGui
+# con el resto del sistema):
+#   - imgui_impl_win32: recibe teclado y mouse desde la ventana de Windows.
+#   - imgui_impl_dx12:  dibuja la interfaz con DirectX 12, la API que usa
+#                       Minecraft (ver README, "API gráfica del overlay").
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp
 )
-target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
+target_include_directories(imgui PUBLIC
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
+)
+# IMGUI_DISABLE_OBSOLETE_FUNCTIONS: no compilar funciones viejas de ImGui que
+# ya no se recomiendan; así nunca las usamos por accidente.
+target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+# Nuestra configuración de ImGui (ver client/render/imgui_config.h).
+target_compile_definitions(imgui PUBLIC
+    "IMGUI_USER_CONFIG=\"${PROJECT_SOURCE_DIR}/client/render/imgui_config.h\""
+)
+# El backend DX12 compila sus shaders al iniciar con d3dcompiler (una DLL que
+# viene con Windows 10/11).
+target_link_libraries(imgui PUBLIC d3d12 dxgi d3dcompiler)

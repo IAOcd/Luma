@@ -10,9 +10,16 @@
 # así el archivo resultante se llama Luma.dll.
 add_library(Luma SHARED
     core/dllmain.cpp
+    core/hooks.cpp
     core/logger.cpp
     core/luma.cpp
     core/paths.cpp
+    perf/frame_stats.cpp
+    render/dx12_hooks.cpp
+    render/gameinput_block.cpp
+    render/input.cpp
+    render/menu.cpp
+    render/overlay.cpp
 )
 
 # Permite escribir #include "core/version.h" desde cualquier archivo de client/.

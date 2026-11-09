@@ -24,6 +24,7 @@
 // =============================================================================
 #pragma once
 
+#include <imgui.h>
 #include <nlohmann/json.hpp>
 
 #include <string>
@@ -43,6 +44,29 @@ enum class Category {
 };
 
 const char* CategoryName(Category category);
+
+// Dónde va un elemento del HUD. Se guarda RELATIVO a la pantalla (fracciones
+// de 0 a 1), así sirve en cualquier resolución.
+//
+// "Ancla": qué punto del elemento se ubica en (x, y). Un elemento pegado al
+// borde derecho tiene ancla 1 en x: si su texto se alarga ("99 FPS" ->
+// "144 FPS"), crece hacia la izquierda en vez de salirse de la pantalla. El
+// editor elige el ancla solo según en qué tercio de la pantalla lo sueltes.
+struct HudLayout {
+    float x = 0.01f;       // posición del ancla, fracción del ancho de pantalla
+    float y = 0.01f;       // ... del alto
+    float anchorX = 0.0f;  // 0 = izquierda, 0.5 = centro, 1 = derecha del elemento
+    float anchorY = 0.0f;  // 0 = arriba, 0.5 = centro, 1 = abajo
+    float scale = 1.0f;
+};
+
+// Lo que recibe un módulo para dibujar su HUD.
+struct HudFrame {
+    ImDrawList* draw = nullptr;
+    ImVec2 pos{0, 0};     // esquina superior izquierda donde dibujar
+    float scale = 1.0f;   // escala elegida en el editor
+    bool editing = false; // ¿está abierto el editor de HUD? (para mostrar un ejemplo si no hay datos)
+};
 
 class Module {
 public:
@@ -76,8 +100,20 @@ public:
 
     // ¿Dibuja algo en pantalla cada frame mientras está activo?
     virtual bool HasHud() const { return false; }
-    // Dibuja su parte del HUD (se llama dentro de un frame de ImGui).
-    virtual void OnRenderHud() {}
+    // ¿Es un "elemento" del HUD que se puede mover y escalar con el editor?
+    // (La mira, por ejemplo, dibuja pero siempre en el centro: no lo es.)
+    virtual bool IsHudElement() const { return HasHud(); }
+    // Dibuja su parte del HUD (dentro de un frame de ImGui) con su esquina
+    // superior izquierda en frame.pos, y devuelve el tamaño que ocupó (el
+    // editor lo usa para saber dónde está y el gestor para ubicarlo).
+    virtual ImVec2 OnRenderHud(const HudFrame& frame) { (void)frame; return ImVec2(0, 0); }
+
+    // Posición y escala en pantalla (las cambia el editor de HUD).
+    HudLayout& Layout() { return layout_; }
+    const HudLayout& DefaultLayout() const { return defaultLayout_; }
+    // Rectángulo que ocupó en el último frame (en píxeles de pantalla).
+    ImVec2 LastPos() const { return lastPos_; }
+    ImVec2 LastSize() const { return lastSize_; }
 
     // Al activarse / desactivarse.
     virtual void OnEnable() {}
@@ -101,6 +137,12 @@ private:
 
 protected:
     bool localOnly_ = false;
+    // Cada módulo con HUD fija su posición de fábrica en su constructor con
+    // SetDefaultLayout (así "Restablecer" vuelve a ella).
+    void SetDefaultLayout(HudLayout layout) {
+        layout_ = layout;
+        defaultLayout_ = layout;
+    }
 
 private:
     std::string id_;
@@ -109,6 +151,10 @@ private:
     Category category_;
     bool enabled_ = false;
     int keybind_ = keys::kNone;
+    HudLayout layout_;
+    HudLayout defaultLayout_;
+    ImVec2 lastPos_{0, 0};
+    ImVec2 lastSize_{0, 0};
 };
 
 }  // namespace luma::modules

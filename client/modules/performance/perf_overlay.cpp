@@ -6,99 +6,119 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdio>
 
 #include "perf/frame_stats.h"
+#include "perf/timer.h"
+#include "render/hud.h"
 #include "render/icons.h"
-#include "render/theme.h"
 
 namespace luma::modules::performance {
 
+namespace rh = render::hud;
+
 namespace {
 
-// Promedios de los últimos N frames del historial.
-constexpr std::size_t kAverageFrames = 60;
+constexpr std::size_t kGraphFrames = 120;  // frames que muestra el gráfico
 
 }  // namespace
+
+PerfOverlay::PerfOverlay()
+    : Module("perf_overlay", "Overlay de rendimiento",
+             "Muestra FPS, frametime, el costo de Luma por frame y un gráfico de los últimos frames.",
+             Category::Performance) {
+    // Arriba a la derecha.
+    HudLayout l;
+    l.x = 0.996f;
+    l.y = 0.007f;
+    l.anchorX = 1.0f;
+    SetDefaultLayout(l);
+}
 
 const char* PerfOverlay::IconSvg() const {
     return render::icons::kChart;
 }
 
-PerfOverlay::PerfOverlay()
-    : Module("perf_overlay", "Overlay de rendimiento",
-             "Muestra FPS, frametime y el costo de Luma por frame en pantalla.",
-             Category::Performance) {}
-
-void PerfOverlay::OnRenderHud() {
+ImVec2 PerfOverlay::OnRenderHud(const HudFrame& frame) {
     const perf::History& history = perf::GetHistory();
-    if (history.count == 0) {
-        return;
+    const std::int64_t now = perf::Now();
+    if (lastUpdate_ == 0 || perf::TicksToMs(now - lastUpdate_) >= 250.0) {
+        lastUpdate_ = now;
+        const perf::Recent recent = perf::RecentAverage(60);
+        frameMs_ = recent.frameMs;
+        fps_ = recent.frameMs > 0.0 ? 1000.0 / recent.frameMs : 0.0;
+        costMs_ = recent.costUs / 1000.0;
     }
 
-    // Promedio de los últimos kAverageFrames frames (los más recientes están
-    // justo antes de "next" en el ring buffer).
-    const std::size_t n = std::min(kAverageFrames, history.count);
-    double frameSum = 0.0;
-    double costSum = 0.0;
-    for (std::size_t i = 0; i < n; ++i) {
-        const std::size_t index = (history.next + perf::kHistorySize - 1 - i) % perf::kHistorySize;
-        frameSum += history.frameMs[index];
-        costSum += history.costUs[index];
-    }
-    const double frameMs = frameSum / static_cast<double>(n);
-    const double costMs = costSum / static_cast<double>(n) / 1000.0;
-    const double fps = frameMs > 0.0 ? 1000.0 / frameMs : 0.0;
+    const rh::Metrics m = rh::Measure(frame.scale);
+    const float u = m.px;
+    const float pad = 5.0f * u;
+    const float line = m.capHeight + 4.0f * u;  // alto de cada renglón
+    char lines[2][48];
+    std::snprintf(lines[0], sizeof(lines[0]), "%.0f FPS  %.2f ms", fps_, frameMs_);
+    std::snprintf(lines[1], sizeof(lines[1]), "Luma: %.3f ms", costMs_);
+    const int count = showLumaCost_ ? 2 : 1;
 
-    // Ventana pequeña sin bordes ni título, que no recibe clics.
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
-    const float margin = ImGui::GetFontSize() * 0.6f;
-    const bool right = corner_ == 1 || corner_ == 3;
-    const bool bottom = corner_ == 2 || corner_ == 3;
-    ImGui::SetNextWindowPos(ImVec2(right ? display.x - margin : margin,
-                                   bottom ? display.y - margin : margin),
-                            ImGuiCond_Always, ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
-    ImGui::SetNextWindowBgAlpha(0.55f);
-    constexpr ImGuiWindowFlags kFlags =
-        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
-    if (ImGui::Begin("##luma_perf_overlay", nullptr, kFlags)) {
-        ImGui::TextColored(theme::Accent(1.0f), "%.0f FPS", fps);
-        ImGui::SameLine();
-        ImGui::TextDisabled("%.2f ms", frameMs);
-        if (showLumaCost_) {
-            ImGui::TextDisabled("Luma: %.3f ms/frame", costMs);
-        }
-        if (showGraph_) {
-            const int offset =
-                history.count == perf::kHistorySize ? static_cast<int>(history.next) : 0;
-            ImGui::PlotLines("##ft", history.frameMs.data(), static_cast<int>(history.count),
-                             offset, nullptr, 0.0f, 33.3f,
-                             ImVec2(ImGui::GetFontSize() * 9.0f, ImGui::GetFontSize() * 2.2f));
-        }
+    float width = 70.0f * u;
+    for (int i = 0; i < count; ++i) {
+        width = std::max(width, rh::TextSize(m, lines[i]).x + pad * 2.0f);
     }
-    ImGui::End();
+    width = std::floor(width);
+    const float graphH = showGraph_ ? 20.0f * u : 0.0f;
+    const float height = std::floor(pad * 2.0f + line * static_cast<float>(count) - 4.0f * u +
+                                    (showGraph_ ? graphH + 4.0f * u : 0.0f));
+    const ImVec2 o = frame.pos;
+    ImDrawList* draw = frame.draw;
+    rh::Box(draw, m, o, ImVec2(o.x + width, o.y + height));
+
+    float y = o.y + pad;
+    for (int i = 0; i < count; ++i) {
+        // La segunda línea, un poco más tenue.
+        rh::Text(draw, m, ImVec2(o.x + pad, y - m.capTop), lines[i], rh::TextColor(i == 0 ? 1.0f : 0.7f));
+        y += line;
+    }
+
+    // Gráfico: una línea con el frametime de los últimos frames (más alto =
+    // más lento). Los puntos van en un arreglo fijo: sin pedir memoria.
+    if (showGraph_ && history.count > 1) {
+        const float gx = o.x + pad;
+        const float gy = y;
+        const float gw = width - pad * 2.0f;
+        draw->AddRectFilled(ImVec2(gx, gy), ImVec2(gx + gw, gy + graphH), IM_COL32(255, 255, 255, 14));
+        const std::size_t n = std::min(kGraphFrames, history.count);
+        float peak = 33.3f;
+        for (std::size_t i = 0; i < n; ++i) {
+            peak = std::max(peak, history.frameMs[(history.next + perf::kHistorySize - n + i) % perf::kHistorySize]);
+        }
+        std::array<ImVec2, kGraphFrames> points{};
+        for (std::size_t i = 0; i < n; ++i) {
+            const float ms = history.frameMs[(history.next + perf::kHistorySize - n + i) % perf::kHistorySize];
+            const float px = gx + gw * static_cast<float>(i) / static_cast<float>(kGraphFrames - 1);
+            const float py = gy + graphH - std::min(1.0f, ms / peak) * graphH;
+            points[i] = ImVec2(px, py);
+        }
+        draw->AddPolyline(points.data(), static_cast<int>(n), rh::TextColor(0.9f), ImDrawFlags_None,
+                          std::max(1.0f, u * 0.75f));
+    }
+    return ImVec2(width, height);
 }
 
 bool PerfOverlay::DrawSettings() {
     bool changed = false;
-    const char* corners[] = {"Arriba a la izquierda", "Arriba a la derecha", "Abajo a la izquierda",
-                             "Abajo a la derecha"};
-    changed |= ImGui::Combo("Esquina", &corner_, corners, IM_ARRAYSIZE(corners));
     changed |= ImGui::Checkbox("Gráfico de frametime", &showGraph_);
     changed |= ImGui::Checkbox("Mostrar costo de Luma", &showLumaCost_);
-    ImGui::TextDisabled("Con este módulo activo Luma dibuja cada frame, así que su costo sube.");
+    ImGui::TextDisabled("Con un elemento del HUD activo, Luma dibuja cada frame y su costo sube un poco.");
     return changed;
 }
 
 void PerfOverlay::SaveSettings(nlohmann::json& out) const {
-    out["corner"] = corner_;
     out["showGraph"] = showGraph_;
     out["showLumaCost"] = showLumaCost_;
 }
 
 void PerfOverlay::LoadSettings(const nlohmann::json& in) {
-    corner_ = std::clamp(in.value("corner", 1), 0, 3);
     showGraph_ = in.value("showGraph", true);
     showLumaCost_ = in.value("showLumaCost", true);
 }

@@ -3,9 +3,11 @@
 // =============================================================================
 #include "perf/frame_stats.h"
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 
+#include "perf/benchmark.h"
 #include "perf/timer.h"
 
 namespace luma::perf {
@@ -29,10 +31,15 @@ std::int64_t g_periodStart = 0;
 std::mutex g_summaryMutex;
 Summary g_lastSummary;
 
+std::atomic<std::uint32_t> g_renderThread{0};
+
 }  // namespace
 
 void RecordFrame(std::int64_t frameStart, std::int64_t lumaEnd, bool menuOpen, bool oneTimeWork) {
     const std::int64_t cost = oneTimeWork ? 0 : lumaEnd - frameStart;
+    if (g_renderThread.load(std::memory_order_relaxed) == 0) {
+        g_renderThread.store(GetCurrentThreadId());
+    }
 
     // Historial (el primer frame no tiene "anterior", así que no hay frametime).
     if (g_lastFrameStart != 0) {
@@ -40,6 +47,8 @@ void RecordFrame(std::int64_t frameStart, std::int64_t lumaEnd, bool menuOpen, b
         g_history.frameMs[i] = static_cast<float>(TicksToMs(frameStart - g_lastFrameStart));
         g_history.costUs[i] = static_cast<float>(TicksToUs(cost));
         g_history.menuOpen[i] = menuOpen;
+        // El benchmark (si está grabando) guarda cada frame.
+        benchmark::OnFrame(frameStart, g_history.frameMs[i], g_history.costUs[i]);
         g_history.next = (i + 1) % kHistorySize;
         if (g_history.count < kHistorySize) {
             ++g_history.count;
@@ -63,6 +72,26 @@ void RecordFrame(std::int64_t frameStart, std::int64_t lumaEnd, bool menuOpen, b
 
 const History& GetHistory() {
     return g_history;
+}
+
+Recent RecentAverage(std::size_t frames) {
+    Recent r;
+    const std::size_t n = std::min(frames, g_history.count);
+    if (n == 0) {
+        return r;
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t index = (g_history.next + kHistorySize - 1 - i) % kHistorySize;
+        r.frameMs += g_history.frameMs[index];
+        r.costUs += g_history.costUs[index];
+    }
+    r.frameMs /= static_cast<double>(n);
+    r.costUs /= static_cast<double>(n);
+    return r;
+}
+
+std::uint32_t RenderThreadId() {
+    return g_renderThread.load(std::memory_order_relaxed);
 }
 
 Summary TakeSummary() {

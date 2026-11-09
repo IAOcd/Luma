@@ -29,11 +29,13 @@
 #include <cwctype>
 #include <mutex>
 
+#include "core/clicks.h"
 #include "core/config.h"
 #include "core/hooks.h"
 #include "core/logger.h"
 #include "render/overlay.h"
 #include "sdk/mouse_grab.h"
+#include "sdk/mouse_queue.h"
 
 namespace luma::render::input {
 
@@ -85,6 +87,37 @@ std::mutex g_clipMutex;
 bool g_gameClipKnown = false;
 bool g_gameClipActive = false;  // false = el juego pidió "sin encierro"
 RECT g_gameClipRect{};
+
+// --- Teclas sostenidas (ver input.h) ----------------------------------------------
+// Un mensaje propio de Luma: "sincroniza las teclas sostenidas". Se lo
+// mandamos a la ventana con PostMessage para que el trabajo ocurra en el hilo
+// de la ventana (el único donde se puede llamar a la WndProc del juego).
+constexpr UINT kHoldSyncMessage = WM_APP + 0x4C4D;
+constexpr UINT kToggleMenuMessage = WM_APP + 0x4C4E;
+
+struct Hold {
+    std::atomic<bool> enabled{false};   // el módulo está activo
+    std::atomic<int> vk{0};             // la tecla del juego
+    std::atomic<bool> active{true};     // estado del "toggle" (pulsar la tecla lo alterna)
+    std::atomic<bool> applied{false};   // ¿el juego la cree apretada por nosotros?
+    int appliedVk = 0;                  // con qué tecla la apretamos (hilo de la ventana)
+};
+Hold g_holds[2];
+std::atomic<bool> g_holdsSuspended{false};  // en un menú del juego o sin foco
+
+// ¿La tecla "vk" que preguntan es la sostenida? Ctrl, Shift y Alt tienen
+// además versión izquierda (VK_LCONTROL...), que el juego podría usar.
+bool SameKey(int asked, int held) {
+    if (asked == held) {
+        return true;
+    }
+    switch (held) {
+        case VK_CONTROL: return asked == VK_LCONTROL;
+        case VK_SHIFT:   return asked == VK_LSHIFT;
+        case VK_MENU:    return asked == VK_LMENU;
+        default:         return false;
+    }
+}
 
 // --- Utilidades ---------------------------------------------------------------------
 
@@ -144,6 +177,72 @@ void RestoreGameClip() {
     }
 }
 
+// Le "aprieta" o "suelta" una tecla al juego: le pasamos a su WndProc el
+// mismo mensaje que mandaría Windows. Solo en el hilo de la ventana.
+void SendKeyToGame(HWND window, int vk, bool down) {
+    WNDPROC original = g_originalWndProc.load();
+    if (window == nullptr || original == nullptr || vk == 0) {
+        return;
+    }
+    const UINT scan = MapVirtualKeyW(static_cast<UINT>(vk), MAPVK_VK_TO_VSC);
+    // lParam: repetición 1 y código de escaneo; al soltar, bits 30 y 31.
+    const LPARAM lParam = static_cast<LPARAM>((down ? 0x00000001u : 0xC0000001u) | (scan << 16));
+    CallWindowProcW(original, window, down ? WM_KEYDOWN : WM_KEYUP, static_cast<WPARAM>(vk), lParam);
+}
+
+// Pone cada tecla sostenida como debe estar. En el hilo de la ventana.
+void SyncHolds(HWND window) {
+    const bool suspended = g_holdsSuspended.load();
+    for (Hold& h : g_holds) {
+        const int vk = h.vk.load();
+        const bool want = h.enabled.load() && h.active.load() && !suspended && vk != 0;
+        if (h.applied.load() && (!want || h.appliedVk != vk)) {
+            SendKeyToGame(window, h.appliedVk, false);
+            h.applied.store(false);
+        }
+        if (want && !h.applied.load()) {
+            SendKeyToGame(window, vk, true);
+            h.appliedVk = vk;
+            h.applied.store(true);
+        }
+    }
+}
+
+// Una tecla real llegó a la ventana. Devuelve true si el juego NO debe verla.
+bool HandleHoldKey(UINT message, WPARAM wParam, LPARAM lParam) {
+    const bool down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+    const bool up = message == WM_KEYUP || message == WM_SYSKEYUP;
+    if ((!down && !up) || g_holdsSuspended.load()) {
+        return false;
+    }
+    const int vk = static_cast<int>(wParam);
+    for (Hold& h : g_holds) {
+        if (!h.enabled.load() || h.vk.load() != vk) {
+            continue;
+        }
+        if (down && (lParam & (1 << 30)) == 0) {
+            // Pulsaste la tecla: alterna. Este WM_KEYDOWN le llega al juego igual.
+            const bool nowActive = !h.active.load();
+            h.active.store(nowActive);
+            // Si queda activa, la tecla "es nuestra" (nos guardamos el soltar).
+            // Si no, el soltar real le llega al juego y la suelta.
+            h.applied.store(nowActive);
+            h.appliedVk = vk;
+            return false;
+        }
+        if (up && h.applied.load()) {
+            return true;  // sigue "apretada" para el juego
+        }
+    }
+    return false;
+}
+
+void PostHoldSync() {
+    if (g_window != nullptr) {
+        PostMessageW(g_window, kHoldSyncMessage, 0, 0);
+    }
+}
+
 // --- WndProc --------------------------------------------------------------------
 
 LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -172,7 +271,8 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         }
         // 2. Esc cierra el menú. El juego no lo ve (si no, abriría la pausa).
         if (vk == VK_ESCAPE && overlay::IsMenuOpen()) {
-            if (!isRepeat) {
+            // Si está el editor de HUD, Esc vuelve al menú en vez de cerrarlo.
+            if (!isRepeat && !overlay::HandleEscape()) {
                 overlay::ToggleMenu();
             }
             return 0;
@@ -196,6 +296,37 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         g_swallowChar = 0;
         if (towlower(static_cast<wint_t>(wParam)) == static_cast<wint_t>(expected)) {
             return 0;
+        }
+    }
+
+    // Mensaje propio: sincronizar las teclas sostenidas (no es para el juego).
+    if (message == kHoldSyncMessage) {
+        SyncHolds(window);
+        return 0;
+    }
+    if (message == kToggleMenuMessage) {
+        overlay::ToggleMenu();
+        return 0;
+    }
+    // Al volver a la ventana, el juego puede haber "soltado" todo: volvemos
+    // a apretar las teclas sostenidas.
+    if (message == WM_SETFOCUS) {
+        for (Hold& h : g_holds) {
+            h.applied.store(false);
+        }
+        const LRESULT result = CallWindowProcW(g_originalWndProc.load(), window, message, wParam, lParam);
+        SyncHolds(window);
+        return result;
+    }
+
+    if (!overlay::IsMenuOpen()) {
+        if (HandleHoldKey(message, wParam, lParam)) {
+            return 0;
+        }
+        // Respaldo del contador de clics si no está la cola del mouse del juego.
+        if (clicks::Wanted() && !sdk::mousequeue::Available()) {
+            if (message == WM_LBUTTONDOWN) clicks::Record(clicks::Button::Left);
+            if (message == WM_RBUTTONDOWN) clicks::Record(clicks::Button::Right);
         }
     }
 
@@ -257,12 +388,26 @@ bool BlockKeyStateForCaller(void* returnAddress) {
            !IsLumaAddress(returnAddress);
 }
 
+// Si el juego pregunta por una tecla sostenida por Luma, le decimos que
+// está apretada (bit 0x8000), para que coincida con los mensajes.
+SHORT ApplyHolds(int vk, SHORT state, void* returnAddress) {
+    if (IsLumaAddress(returnAddress)) {
+        return state;
+    }
+    for (const Hold& h : g_holds) {
+        if (h.applied.load(std::memory_order_relaxed) && SameKey(vk, h.vk.load(std::memory_order_relaxed))) {
+            return static_cast<SHORT>(state | static_cast<SHORT>(0x8000));
+        }
+    }
+    return state;
+}
+
 SHORT WINAPI GetAsyncKeyStateDetour(int vk) {
     hooks::ActiveCallGuard guard;
     if (BlockKeyStateForCaller(_ReturnAddress())) {
         return 0;
     }
-    return g_originalGetAsyncKeyState(vk);
+    return ApplyHolds(vk, g_originalGetAsyncKeyState(vk), _ReturnAddress());
 }
 
 SHORT WINAPI GetKeyStateDetour(int vk) {
@@ -270,7 +415,7 @@ SHORT WINAPI GetKeyStateDetour(int vk) {
     if (BlockKeyStateForCaller(_ReturnAddress())) {
         return 0;
     }
-    return g_originalGetKeyState(vk);
+    return ApplyHolds(vk, g_originalGetKeyState(vk), _ReturnAddress());
 }
 
 BOOL WINAPI ClipCursorDetour(const RECT* rect) {
@@ -441,6 +586,15 @@ void OnMenuToggled(bool open) {
 }
 
 void Uninstall() {
+    // Soltar las teclas sostenidas. SendMessageTimeout espera a que el hilo
+    // de la ventana lo procese (máximo 0,5 s, por si estuviera trabado).
+    for (Hold& h : g_holds) {
+        h.enabled.store(false);
+    }
+    if (g_window != nullptr) {
+        DWORD_PTR ignored = 0;
+        SendMessageTimeoutW(g_window, kHoldSyncMessage, 0, 0, SMTO_ABORTIFHUNG, 500, &ignored);
+    }
     g_hooksActive.store(false);
     if (overlay::IsMenuOpen() && !sdk::mouse::ReleasedByLuma()) {
         RestoreGameClip();  // Devolver el cursor como lo quería el juego.
@@ -458,6 +612,55 @@ void Uninstall() {
     SetWindowLongPtrW(g_window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(g_originalWndProc.load()));
     g_window = nullptr;
     log::Info("Procesador de input restaurado.");
+}
+
+HWND GameWindow() {
+    return g_window;
+}
+
+void RequestMenuToggle() {
+    if (g_window != nullptr) {
+        PostMessageW(g_window, kToggleMenuMessage, 0, 0);
+    }
+}
+
+void ConfigureHold(HoldSlot slot, bool enabled, int vk) {
+    Hold& h = g_holds[static_cast<int>(slot)];
+    h.vk.store(vk);
+    if (enabled && !h.enabled.load()) {
+        h.active.store(true);  // al activar el módulo, empieza sosteniendo
+    }
+    h.enabled.store(enabled);
+    PostHoldSync();
+}
+
+bool IsHoldActive(HoldSlot slot) {
+    const Hold& h = g_holds[static_cast<int>(slot)];
+    return h.enabled.load(std::memory_order_relaxed) && h.active.load(std::memory_order_relaxed);
+}
+
+void PollHolds() {
+    if (g_window == nullptr || (!g_holds[0].enabled.load() && !g_holds[1].enabled.load())) {
+        return;
+    }
+    // Suspender si la ventana no tiene el foco, si el menú de Luma está
+    // abierto o si estás en un menú del juego (el juego soltó el mouse). Si
+    // eso no se sabe (firmas no encontradas), miramos si el cursor está
+    // visible: jugando, el juego lo esconde.
+    bool suspended = GetForegroundWindow() != g_window || overlay::IsMenuOpen();
+    if (!suspended) {
+        const int mouse = sdk::mouse::GameMouseState();
+        if (mouse == 0) {
+            suspended = true;
+        } else if (mouse < 0) {
+            CURSORINFO info{};
+            info.cbSize = sizeof(info);
+            suspended = GetCursorInfo(&info) && (info.flags & CURSOR_SHOWING) != 0;
+        }
+    }
+    if (g_holdsSuspended.exchange(suspended) != suspended) {
+        PostHoldSync();
+    }
 }
 
 }  // namespace luma::render::input

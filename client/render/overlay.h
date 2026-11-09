@@ -33,6 +33,10 @@ void CaptureQueue(ID3D12CommandQueue* queue);
 void ToggleMenu();
 bool IsMenuOpen();
 
+// Esc con el menú abierto: si el editor de HUD está abierto, lo cierra y
+// vuelve al menú (devuelve true). Si no, devuelve false (el menú se cierra).
+bool HandleEscape();
+
 // ¿ImGui está esperando que el usuario escriba texto?
 bool WantsTextInput();
 

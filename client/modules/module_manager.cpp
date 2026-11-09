@@ -3,7 +3,11 @@
 // =============================================================================
 #include "modules/module_manager.h"
 
+#include <algorithm>
+#include <cmath>
 #include <format>
+
+#include <imgui.h>
 
 #include "core/logger.h"
 #include "render/notifications.h"
@@ -95,10 +99,35 @@ bool Manager::HandleKey(int virtualKey) {
     return changed;
 }
 
-void Manager::RenderHud() {
+void Manager::RenderHud(bool editing) {
+    // La capa "de fondo" de ImGui: queda DEBAJO del menú y de los avisos.
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
     for (Module* module : activeHud_) {
-        module->OnRenderHud();
+        HudFrame frame;
+        frame.draw = draw;
+        frame.scale = module->layout_.scale;
+        frame.editing = editing;
+        if (module->IsHudElement()) {
+            // De la posición guardada (fracciones + ancla) a píxeles. Usamos
+            // el tamaño del frame anterior: el elemento todavía no se dibujó.
+            const HudLayout& l = module->layout_;
+            const ImVec2 size = module->lastSize_;
+            float x = l.x * display.x - l.anchorX * size.x;
+            float y = l.y * display.y - l.anchorY * size.y;
+            // Nunca fuera de la pantalla (por ejemplo, tras bajar la resolución).
+            x = std::clamp(x, 0.0f, std::max(0.0f, display.x - size.x));
+            y = std::clamp(y, 0.0f, std::max(0.0f, display.y - size.y));
+            frame.pos = ImVec2(std::floor(x), std::floor(y));
+        }
+        const ImVec2 size = module->OnRenderHud(frame);
+        module->lastPos_ = frame.pos;
+        module->lastSize_ = size;
     }
+}
+
+void Manager::ResetLayout(Module& module) {
+    module.layout_ = module.defaultLayout_;
 }
 
 void Manager::Save(nlohmann::json& out) {
@@ -110,6 +139,10 @@ void Manager::Save(nlohmann::json& out) {
         nlohmann::json settings = nlohmann::json::object();
         module->SaveSettings(settings);
         entry["settings"] = std::move(settings);
+        if (module->IsHudElement()) {
+            const HudLayout& l = module->layout_;
+            entry["hud"] = {{"x", l.x}, {"y", l.y}, {"anchorX", l.anchorX}, {"anchorY", l.anchorY}, {"scale", l.scale}};
+        }
         all[module->Id()] = std::move(entry);
     }
     out["modules"] = std::move(all);
@@ -123,6 +156,7 @@ void Manager::Load(const nlohmann::json& in) {
     for (const auto& module : modules_) {
         bool enabled = false;
         int keybind = keys::kNone;
+        module->layout_ = module->defaultLayout_;
         if (all != nullptr && all->contains(module->Id())) {
             const nlohmann::json& entry = (*all)[module->Id()];
             // .value(clave, por_defecto) devuelve el valor guardado, o el
@@ -132,6 +166,16 @@ void Manager::Load(const nlohmann::json& in) {
             keybind = entry.value("keybind", keys::kNone);
             if (entry.contains("settings") && entry["settings"].is_object()) {
                 module->LoadSettings(entry["settings"]);
+            }
+            if (entry.contains("hud") && entry["hud"].is_object()) {
+                const nlohmann::json& h = entry["hud"];
+                HudLayout& l = module->layout_;
+                const HudLayout& d = module->defaultLayout_;
+                l.x = std::clamp(h.value("x", d.x), 0.0f, 1.0f);
+                l.y = std::clamp(h.value("y", d.y), 0.0f, 1.0f);
+                l.anchorX = std::clamp(h.value("anchorX", d.anchorX), 0.0f, 1.0f);
+                l.anchorY = std::clamp(h.value("anchorY", d.anchorY), 0.0f, 1.0f);
+                l.scale = std::clamp(h.value("scale", d.scale), 0.5f, 4.0f);
             }
         }
         module->SetKeybind(keybind);

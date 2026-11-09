@@ -28,8 +28,10 @@
 #include "core/state.h"
 #include "core/version.h"
 #include "modules/module_manager.h"
+#include "modules/performance/process_opts.h"
 #include "render/notifications.h"
 #include "render/sound.h"
+#include "perf/benchmark.h"
 #include "perf/frame_stats.h"
 #include "perf/timer.h"
 #include "render/dx12_hooks.h"
@@ -237,6 +239,9 @@ void WaitForUnload() {
             windowLocated = sdk::mouse::LocateWindow(GetForegroundWindow()) || !sdk::mouse::Available();
         }
         config::SaveIfDirty();  // guardado automático (solo si hubo cambios)
+        render::input::PollHolds();             // toggle sprint/sneak: menús del juego y foco
+        perf::benchmark::Poll();                // terminar pruebas (cálculos y CSV fuera del render)
+        modules::performance::PollRenderThread();  // prioridad del hilo de render
         if (GetTickCount64() - lastSummary >= kSummaryEveryMs) {
             lastSummary = GetTickCount64();
             LogPerformanceSummary();

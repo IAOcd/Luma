@@ -6,88 +6,87 @@
 #include <imgui.h>
 
 #include <algorithm>
-#include <cfloat>
+#include <cmath>
 #include <cstdio>
 
 #include "core/version.h"
 #include "render/assets.h"
+#include "render/hud.h"
 #include "render/icons.h"
 #include "render/theme.h"
 
 namespace luma::modules::hud {
 
+namespace rh = render::hud;
+
 Watermark::Watermark()
-    : Module("watermark", "Marca de agua", "Muestra \"Luma\" en una esquina de la pantalla.",
-             Category::Hud) {}
+    : Module("watermark", "Marca de agua", "Muestra el logo y el nombre de Luma en pantalla.", Category::Hud) {
+    // Abajo a la derecha (ancla en su esquina inferior derecha).
+    HudLayout l;
+    l.x = 0.996f;
+    l.y = 0.992f;
+    l.anchorX = 1.0f;
+    l.anchorY = 1.0f;
+    l.scale = 1.5f;
+    SetDefaultLayout(l);
+}
 
 const char* Watermark::IconSvg() const {
     return render::icons::kLumaLogo;
 }
 
-void Watermark::OnRenderHud() {
-    // GetForegroundDrawList = una "capa" que ImGui dibuja encima de todo.
-    // Dibujar directamente ahí es lo más barato: sin ventanas ni layout.
-    ImDrawList* draw = ImGui::GetForegroundDrawList();
-    const theme::Fonts& fonts = theme::GetFonts();
-    ImFont* font = fonts.title != nullptr ? fonts.title : ImGui::GetFont();
-    const float size = ImGui::GetFontSize() * scale_;
-    const float margin = size * 0.6f;
-    const float logoSize = size * 1.05f;
-    const float gap = size * 0.35f;
-
-    const char* name = kName;
+ImVec2 Watermark::OnRenderHud(const HudFrame& frame) {
+    const rh::Metrics m = rh::Measure(frame.scale);
+    const float u = m.px;
+    const rh::Metrics small = rh::Measure(frame.scale * 0.5f);
     char version[16] = "";
     if (showVersion_) {
-        // snprintf escribe en un arreglo fijo: sin pedir memoria cada frame.
-        std::snprintf(version, sizeof(version), " %s", kVersion);
+        std::snprintf(version, sizeof(version), "%s", kVersion);
     }
-    const ImVec2 nameSize = font->CalcTextSizeA(size, FLT_MAX, 0.0f, name);
-    const ImVec2 versionSize = ImGui::GetFont()->CalcTextSizeA(size * 0.55f, FLT_MAX, 0.0f, version);
-    const float width = logoSize + gap + nameSize.x + versionSize.x;
-    const float height = std::max(logoSize, nameSize.y);
-
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
-    const bool right = corner_ == 1 || corner_ == 3;
-    const bool bottom = corner_ == 2 || corner_ == 3;
-    const ImVec2 pos(right ? display.x - width - margin : margin,
-                     bottom ? display.y - height - margin : margin);
-
-    // Marfil de Luma con una sombra suave para que se lea sobre cualquier fondo.
+    const ImVec2 nameSize = rh::TextSize(m, kName);
+    const ImVec2 versionSize = showVersion_ ? rh::TextSize(small, version) : ImVec2(0, 0);
+    const float pad = box_ ? 5.0f * u : 0.0f;
+    const float logo = std::floor(m.capHeight * 1.5f);
+    const float gap = 3.0f * u;
+    const float width = pad * 2.0f + logo + gap + nameSize.x + (showVersion_ ? 2.0f * u + versionSize.x : 0.0f);
+    const float height = std::floor(std::max(logo, m.capHeight) + pad * 2.0f + (box_ ? 0.0f : 2.0f * u));
+    const ImVec2 o = frame.pos;
+    if (box_) {
+        rh::Box(frame.draw, m, o, ImVec2(o.x + width, o.y + height));
+    }
+    // El logo, en marfil, con la misma sombra que el texto.
     const ImU32 color = ImGui::ColorConvertFloat4ToU32(theme::kIvory);
-    const ImU32 shadow = IM_COL32(0, 0, 0, 120);
-    const ImVec2 logoCenter(pos.x + logoSize * 0.5f, pos.y + height * 0.5f);
-    render::assets::DrawLogo(draw, ImVec2(logoCenter.x + 1.5f, logoCenter.y + 1.5f), logoSize, shadow);
-    render::assets::DrawLogo(draw, logoCenter, logoSize, color);
-
-    const ImVec2 textPos(pos.x + logoSize + gap, pos.y + (height - nameSize.y) * 0.5f);
-    draw->AddText(font, size, ImVec2(textPos.x + 1.5f, textPos.y + 1.5f), shadow, name);
-    draw->AddText(font, size, textPos, color, name);
+    const ImVec2 logoCenter(o.x + pad + logo * 0.5f, o.y + height * 0.5f);
+    render::assets::DrawLogo(frame.draw, ImVec2(logoCenter.x + u, logoCenter.y + u), logo, IM_COL32(0, 0, 0, 110));
+    render::assets::DrawLogo(frame.draw, logoCenter, logo, color);
+    // "Luma" con las mayúsculas centradas respecto del logo.
+    const float textX = o.x + pad + logo + gap;
+    const float textY = o.y + (height - m.capHeight) * 0.5f - m.capTop;
+    rh::Text(frame.draw, m, ImVec2(textX, textY), kName, color);
     if (showVersion_) {
-        const ImVec2 vpos(textPos.x + nameSize.x, textPos.y + nameSize.y - versionSize.y - size * 0.1f);
-        draw->AddText(ImGui::GetFont(), size * 0.55f, vpos, IM_COL32(233, 230, 223, 170), version);
+        // La versión, chiquita, alineada abajo con el nombre.
+        const float vy = textY + m.capTop + m.capHeight - small.capTop - small.capHeight;
+        rh::Text(frame.draw, small, ImVec2(textX + nameSize.x + 2.0f * u, vy), version, IM_COL32(233, 230, 223, 170));
     }
+    return ImVec2(std::floor(width), height);
 }
 
 bool Watermark::DrawSettings() {
     bool changed = false;
-    const char* corners[] = {"Arriba a la izquierda", "Arriba a la derecha", "Abajo a la izquierda",
-                             "Abajo a la derecha"};
-    changed |= ImGui::Combo("Esquina", &corner_, corners, IM_ARRAYSIZE(corners));
     changed |= ImGui::Checkbox("Mostrar versión", &showVersion_);
-    changed |= ImGui::SliderFloat("Tamaño", &scale_, 0.8f, 3.0f, "%.1fx");
+    changed |= ImGui::Checkbox("Con caja de fondo", &box_);
+    ImGui::TextDisabled("Posición y tamaño: con el editor de HUD.");
     return changed;
 }
 
 void Watermark::SaveSettings(nlohmann::json& out) const {
-    out["corner"] = corner_;
     out["showVersion"] = showVersion_;
-    out["scale"] = scale_;
+    out["box"] = box_;
 }
 
 void Watermark::LoadSettings(const nlohmann::json& in) {
-    corner_ = std::clamp(in.value("corner", 0), 0, 3);
     showVersion_ = in.value("showVersion", true);
-    scale_ = std::clamp(in.value("scale", 1.3f), 0.8f, 3.0f);
+    box_ = in.value("box", false);
 }
 
 }  // namespace luma::modules::hud

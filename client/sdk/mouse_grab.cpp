@@ -406,6 +406,21 @@ void OnMenuOpened() {
     }
 }
 
+int GameMouseState() {
+    if (!g_active.load(std::memory_order_relaxed)) {
+        return -1;
+    }
+    void* client = g_client.load(std::memory_order_relaxed);
+    if (g_clientHooked && client != nullptr) {
+        return IsFlagSet(client, g_clientFlagOffset) ? 1 : 0;
+    }
+    void* window = g_window.load(std::memory_order_relaxed);
+    if (window != nullptr && g_grabbedOffset != 0) {
+        return IsFlagSet(window, g_grabbedOffset) ? 1 : 0;
+    }
+    return -1;
+}
+
 void OnMenuClosed() {
     if (g_active.load() && g_grabOnClose) {
         if (g_usedClient) {

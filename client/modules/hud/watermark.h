@@ -1,5 +1,8 @@
 // =============================================================================
-//  watermark.h - Módulo "Marca de agua": muestra "Luma" en una esquina
+//  watermark.h - Módulo "Marca de agua": el logo y "Luma" en pantalla
+// =============================================================================
+//  El módulo más simple: muestra la marca de Luma. Se mueve y escala con el
+//  editor de HUD, como todos.
 // =============================================================================
 #pragma once
 
@@ -13,7 +16,7 @@ public:
 
     const char* IconSvg() const override;
     bool HasHud() const override { return true; }
-    void OnRenderHud() override;
+    ImVec2 OnRenderHud(const HudFrame& frame) override;
 
     bool HasSettings() const override { return true; }
     bool DrawSettings() override;
@@ -21,9 +24,8 @@ public:
     void LoadSettings(const nlohmann::json& in) override;
 
 private:
-    int corner_ = 0;  // 0 = arriba izq., 1 = arriba der., 2 = abajo izq., 3 = abajo der.
     bool showVersion_ = true;
-    float scale_ = 1.3f;
+    bool box_ = false;  // con caja de fondo, como los demás elementos
 };
 
 }  // namespace luma::modules::hud

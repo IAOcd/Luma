@@ -39,6 +39,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -50,11 +51,16 @@
 #include "core/paths.h"
 #include "core/version.h"
 #include "modules/module_manager.h"
+#include "perf/benchmark.h"
 #include "perf/frame_stats.h"
 #include "perf/timer.h"
+#include "perf/windows_info.h"
 #include "render/assets.h"
 #include "render/glass.h"
+#include "render/hud.h"
+#include "render/hud_editor.h"
 #include "render/icons.h"
+#include "render/input.h"
 #include "render/notifications.h"
 #include "render/sound.h"
 #include "render/theme.h"
@@ -71,7 +77,7 @@ using modules::Module;
 //  Estado
 // =============================================================================
 
-enum class Page { Modules, Theme, Profiles, Settings, Diagnostics };
+enum class Page { Modules, Theme, Profiles, Settings, Benchmark, Diagnostics };
 
 Page g_page = Page::Modules;
 Category g_categoryFilter = Category::Count;  // Count = todas
@@ -102,6 +108,13 @@ Module* g_captureModule = nullptr;
 std::vector<std::string> g_profiles;
 bool g_profilesDirty = true;
 char g_newProfile[33] = "";
+
+// Benchmark (página de Benchmark).
+char g_benchLabel[40] = "";
+int g_benchSeconds = 60;
+int g_benchMode = 0;  // 0 = con mi HUD, 1 = Luma en reposo
+perf::windows::Info g_windowsInfo;
+bool g_windowsInfoDirty = true;
 
 // =============================================================================
 //  Utilidades
@@ -670,11 +683,11 @@ void DrawModulesPage() {
                                headerY + fs * 0.25f));
     ProfileCombo(fs * 10.0f);
     ImGui::SameLine(0.0f, fs * 0.6f);
-    ImGui::BeginDisabled();
-    GlassButton("Editar HUD", icons::kMove, ImVec2(fs * 9.4f, ImGui::GetFrameHeight() * 1.1f), true);
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip("El editor de HUD llega en la Fase 5.");
+    if (GlassButton("Editar HUD", icons::kMove, ImVec2(fs * 9.4f, ImGui::GetFrameHeight() * 1.1f), true)) {
+        hudeditor::Begin();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Mover y escalar los elementos del HUD activos.");
     }
     ImGui::SetCursorPosY(std::max(afterHeader, headerY + ImGui::GetFrameHeight() * 1.1f + fs * 0.25f) + fs * 0.4f);
 
@@ -806,6 +819,48 @@ void DrawThemePage() {
     }
     RowLabel("Animaciones");
     changed |= Toggle("##anim", &t.animations, ImGui::GetFrameHeight() * 0.95f);
+    EndGroupCard();
+
+    SectionHeader(icons::kHud, "HUD en pantalla");
+    BeginGroupCard("hud");
+    {
+        render::hud::Style& h = render::hud::GetStyle();
+        bool hudChanged = false;
+        RowLabel("Letra");
+        static const char* const kFonts[] = {"Pixel", "Luma"};
+        int font = static_cast<int>(h.font);
+        if (Segmented("hudfont", kFonts, 2, &font)) {
+            h.font = static_cast<render::hud::FontChoice>(font);
+            hudChanged = true;
+        }
+        if (h.font == render::hud::FontChoice::Pixel) {
+            ImGui::SameLine();
+            ImGui::TextDisabled(render::hud::PixelFontAvailable() ? "(la del juego)" : "(no se encontró: se usa Luma)");
+        }
+        RowLabel("Fondo de las cajas");
+        hudChanged |= ImGui::SliderFloat("##hudbg", &h.background, 0.0f, 1.0f, "%.2f");
+        RowLabel("Sombra del texto");
+        hudChanged |= Toggle("##hudshadow", &h.textShadow, ImGui::GetFrameHeight() * 0.95f);
+        RowLabel("Esquinas");
+        hudChanged |= ImGui::SliderFloat("##hudround", &h.rounding, 0.0f, 6.0f, "%.0f");
+        RowLabel("Borde");
+        hudChanged |= Toggle("##hudborder", &h.border, ImGui::GetFrameHeight() * 0.95f);
+        RowLabel("Color del texto");
+        hudChanged |= ImGui::ColorEdit3("##hudtext", h.text, ImGuiColorEditFlags_NoInputs);
+        RowLabel("Tecla apretada", "(keystrokes)");
+        hudChanged |= ImGui::ColorEdit3("##hudpressed", h.pressed, ImGuiColorEditFlags_NoInputs);
+        RowLabel("Posiciones");
+        if (GlassButton("Abrir el editor de HUD", icons::kMove, ImVec2(0, 0))) {
+            hudeditor::Begin();
+        }
+        if (GlassButton("Estilo de fábrica", nullptr, ImVec2(0, 0))) {
+            h = render::hud::Style{};
+            hudChanged = true;
+        }
+        if (hudChanged) {
+            config::MarkDirty();
+        }
+    }
     EndGroupCard();
 
     SectionHeader(icons::kSparkle, "Sonido");
@@ -963,6 +1018,188 @@ void DrawSettingsPage() {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("Config, perfiles y logs.");
+    EndGroupCard();
+}
+
+// =============================================================================
+//  Página de Benchmark (Fase 4)
+// =============================================================================
+
+// Los nombres de las optimizaciones activas ("Timer de 1 ms + Prioridad...").
+std::string ActiveOptimizations() {
+    std::string out;
+    for (const auto& m : Manager::All()) {
+        if (m->IsEnabled() && m->Id().rfind("opt_", 0) == 0) {
+            if (!out.empty()) {
+                out += " + ";
+            }
+            out += m->Name();
+        }
+    }
+    return out;
+}
+
+const char* StatusText(perf::windows::Status s) {
+    switch (s) {
+        case perf::windows::Status::On:  return "Activado";
+        case perf::windows::Status::Off: return "Desactivado";
+        default:                          return "No disponible";
+    }
+}
+
+// Una fila de consejo: título, estado (con color), explicación y un botón
+// que abre la página de Configuración de Windows donde se cambia.
+void TipRow(const char* title, const char* status, bool good, const char* text, const wchar_t* settingsUri) {
+    const theme::Palette& p = theme::P();
+    ImGui::PushID(title);
+    ImGui::AlignTextToFramePadding();
+    ImGui::PushFont(theme::GetFonts().medium);
+    ImGui::TextUnformatted(title);
+    ImGui::PopFont();
+    ImGui::SameLine();
+    const ImVec4 color = good ? ImVec4(0.45f, 0.85f, 0.45f, 1.0f) : ImVec4(1.0f, 0.75f, 0.30f, 1.0f);
+    ImGui::TextColored(theme::WithAlpha(color, ImGui::GetStyle().Alpha), "%s", status);
+    if (settingsUri != nullptr) {
+        ImGui::SameLine();
+        if (GlassButton("Abrir en Windows", nullptr, ImVec2(0, 0))) {
+            ShellExecuteW(nullptr, L"open", settingsUri, nullptr, nullptr, SW_SHOWNORMAL);
+        }
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, p.textDim);
+    ImGui::TextUnformatted(text);
+    ImGui::PopStyleColor();
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, Fs() * 0.3f));
+    ImGui::PopID();
+}
+
+void DrawBenchmarkPage() {
+    PageHeader("Benchmark", "Mide FPS de forma comparable y prueba si las optimizaciones sirven.");
+    const float fs = Fs();
+    const perf::benchmark::State state = perf::benchmark::GetState();
+    const bool idle = state == perf::benchmark::State::Idle;
+
+    SectionHeader(icons::kChart, "Nueva prueba");
+    BeginGroupCard("bench");
+    ImGui::BeginDisabled(!idle);
+    RowLabel("Nombre");
+    ImGui::InputTextWithHint("##benchlabel", "Por ejemplo: sin optimizaciones", g_benchLabel, sizeof(g_benchLabel));
+    RowLabel("Duración");
+    ImGui::SliderInt("##benchsecs", &g_benchSeconds, 10, 300, "%d s");
+    RowLabel("Modo");
+    static const char* const kModes[] = {"Con mi HUD", "Luma en reposo"};
+    Segmented("benchmode", kModes, 2, &g_benchMode);
+    RowLabel("Optimizaciones");
+    const std::string optimizations = ActiveOptimizations();
+    ImGui::TextUnformatted(optimizations.empty() ? "ninguna" : optimizations.c_str());
+    ImGui::EndDisabled();
+
+    if (idle) {
+        if (GlassButton("Empezar (el menú se cierra)", icons::kChart, ImVec2(0, 0), true)) {
+            const auto mode = g_benchMode == 1 ? perf::benchmark::Mode::Resting : perf::benchmark::Mode::WithHud;
+            if (perf::benchmark::Start(g_benchSeconds, 5.0, g_benchLabel, mode, optimizations)) {
+                notify::Push(notify::Kind::Info, "Benchmark en 5 s: no abras el menú y no te muevas");
+                // Cerrar el menú desde el hilo de la ventana (ver input.h).
+                render::input::RequestMenuToggle();
+            }
+        }
+    } else {
+        const char* what = state == perf::benchmark::State::Countdown ? "Empieza en" : "Grabando: faltan";
+        ImGui::Text("%s %.0f s", what, perf::benchmark::SecondsLeft());
+        ImGui::SameLine();
+        if (GlassButton("Cancelar", icons::kClose, ImVec2(0, 0))) {
+            perf::benchmark::Cancel("cancelado desde el menú");
+        }
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Para comparar: quédate quieto en el mismo lugar y mirando lo mismo en cada prueba. "
+                        "\"Luma en reposo\" no dibuja nada durante la prueba: su costo es ~0,001 ms, así que es "
+                        "la referencia \"sin Luma\". Después activa UNA optimización y repite.");
+    ImGui::PopTextWrapPos();
+    EndGroupCard();
+
+    const std::vector<perf::benchmark::Result> results = perf::benchmark::Results();
+    SectionHeader(icons::kDiagnostics, "Resultados de esta sesión", static_cast<int>(results.size()));
+    if (results.empty()) {
+        ImGui::TextDisabled("Todavía no hiciste ninguna prueba.");
+    } else {
+        constexpr ImGuiTableFlags kTable = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
+                                           ImGuiTableFlags_BordersInnerH;
+        if (ImGui::BeginTable("##results", 7, kTable)) {
+            ImGui::TableSetupColumn("Nombre", ImGuiTableColumnFlags_WidthStretch, 2.2f);
+            ImGui::TableSetupColumn("Modo", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+            ImGui::TableSetupColumn("Optimizaciones", ImGuiTableColumnFlags_WidthStretch, 2.4f);
+            ImGui::TableSetupColumn("FPS", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+            ImGui::TableSetupColumn("1% low", ImGuiTableColumnFlags_WidthStretch, 0.9f);
+            ImGui::TableSetupColumn("Frametime", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("Luma", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableHeadersRow();
+            for (auto it = results.rbegin(); it != results.rend(); ++it) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(it->label.c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(it->mode.c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(it->optimizations.c_str());
+                ImGui::TableNextColumn(); ImGui::Text("%.1f", it->averageFps);
+                ImGui::TableNextColumn(); ImGui::Text("%.1f", it->low1Fps);
+                ImGui::TableNextColumn(); ImGui::Text("%.2f ms", it->averageMs);
+                ImGui::TableNextColumn(); ImGui::Text("%.3f ms", it->lumaCostMs);
+            }
+            ImGui::EndTable();
+        }
+    }
+    if (GlassButton("Abrir la carpeta de benchmarks", nullptr, ImVec2(0, 0))) {
+        std::error_code ec;
+        const std::filesystem::path dir = paths::DataDir() / L"benchmarks";
+        std::filesystem::create_directories(dir, ec);
+        ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("resumen.csv = una fila por prueba; un .csv por prueba con cada frame.");
+
+    // --- Consejos de Windows ---------------------------------------------------
+    if (g_windowsInfoDirty) {
+        g_windowsInfo = perf::windows::Read();
+        g_windowsInfoDirty = false;
+    }
+    const perf::windows::Info& w = g_windowsInfo;
+    using perf::windows::Status;
+    SectionHeader(icons::kSettings, "Consejos de Windows");
+    BeginGroupCard("windows");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted("Luma solo te muestra cómo están estas opciones: nunca las cambia por su cuenta. "
+                           "Prueba cada una con el benchmark.");
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, fs * 0.3f));
+    TipRow("Modo de juego", StatusText(w.gameMode), w.gameMode == Status::On,
+           "Windows le da prioridad al juego y evita instalar actualizaciones mientras juegas. Recomendado: "
+           "activado. (Configuración > Juegos > Modo de juego.)",
+           L"ms-settings:gaming-gamemode");
+    TipRow("Programación de GPU acelerada por hardware", StatusText(w.gpuScheduling), w.gpuScheduling == Status::On,
+           "La tarjeta gráfica organiza su propio trabajo: puede bajar la latencia. Con GPUs y drivers recientes, "
+           "suele convenir activado (pide reiniciar). (Configuración > Pantalla > Gráficos > Cambiar la "
+           "configuración predeterminada de gráficos.)",
+           L"ms-settings:display-advancedgraphics");
+    TipRow("Optimizaciones para juegos en ventana", StatusText(w.windowedOptimizations),
+           w.windowedOptimizations == Status::On,
+           "Minecraft Bedrock juega en ventana: esta opción le da casi la misma latencia que la pantalla completa. "
+           "(Mismo lugar que la anterior.)",
+           L"ms-settings:display-advancedgraphics");
+    const std::string plan = "Plan actual: " + (w.powerPlan.empty() ? std::string("desconocido") : w.powerPlan);
+    TipRow("Plan de energía", plan.c_str(), w.powerPlanIsHighPerformance,
+           "En portátiles, \"Equilibrado\" puede bajar la frecuencia de la CPU. \"Alto rendimiento\" (o el modo de "
+           "energía \"Mejor rendimiento\" en Windows 11) la mantiene alta. Enchufa el cargador para jugar.",
+           L"ms-settings:powersleep");
+    const std::string gpu = "Ahora: " + w.gpuPreference;
+    TipRow("GPU para Minecraft", gpu.c_str(), w.gpuPreference == "Alto rendimiento",
+           "En portátiles con dos GPU (integrada + dedicada), elige \"Alto rendimiento\" para Minecraft en "
+           "Configuración > Pantalla > Gráficos. Si tu PC tiene una sola GPU, no hace falta.",
+           L"ms-settings:display-advancedgraphics");
+    if (GlassButton("Volver a leer", nullptr, ImVec2(0, 0))) {
+        g_windowsInfoDirty = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Nada de \"limpiadores de RAM\" ni trucos de registro: no tienen evidencia.");
     EndGroupCard();
 }
 
@@ -1151,12 +1388,14 @@ void Sidebar() {
             g_page = pg;
             g_detail = nullptr;
             g_profilesDirty = true;
+            g_windowsInfoDirty = true;
             OnNavigate();
         }
     };
     page("Tema", icons::kTheme, Page::Theme);
     page("Perfiles", icons::kProfiles, Page::Profiles);
     page("Ajustes", icons::kSettings, Page::Settings);
+    page("Benchmark", icons::kChart, Page::Benchmark);
     page("Diagnóstico", icons::kDiagnostics, Page::Diagnostics);
 
     // La píldora: se desliza hasta la entrada elegida con un leve rebote.
@@ -1202,6 +1441,9 @@ void OnOpened() {
 }
 
 void OnClosed() {
+    if (hudeditor::IsActive()) {
+        hudeditor::End();
+    }
     g_closedAt = perf::Now();
     g_closing.store(theme::Get().animations);
     sound::Play(sound::Effect::Close);
@@ -1254,10 +1496,19 @@ void OnKeyCaptured(int vk) {
 }
 
 void Draw(const RenderInfo& info) {
+    const bool closing = g_closing.load(std::memory_order_relaxed);
+    // Editor de HUD: reemplaza al menú mientras está abierto.
+    if (hudeditor::IsActive() && !closing) {
+        hudeditor::Draw();
+        if (!hudeditor::IsActive()) {
+            OnOpened();  // al salir del editor, el menú vuelve a aparecer con su animación
+        }
+        return;
+    }
+
     // --- Animación de apertura o de cierre ---------------------------------------
     float appear = 1.0f;
     float scale = 1.0f;
-    const bool closing = g_closing.load(std::memory_order_relaxed);
     if (closing) {
         const float t = static_cast<float>(MsSince(g_closedAt) / kCloseMs);
         if (t >= 1.0f) {
@@ -1337,6 +1588,7 @@ void Draw(const RenderInfo& info) {
                 case Page::Theme:       DrawThemePage(); break;
                 case Page::Profiles:    DrawProfilesPage(); break;
                 case Page::Settings:    DrawSettingsPage(); break;
+                case Page::Benchmark:   DrawBenchmarkPage(); break;
                 case Page::Diagnostics: DrawDiagnosticsPage(info); break;
                 case Page::Modules:     DrawModulesPage(); break;
             }

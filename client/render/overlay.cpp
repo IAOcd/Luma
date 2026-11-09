@@ -44,8 +44,11 @@
 #include "core/paths.h"
 #include "core/state.h"
 #include "modules/module_manager.h"
+#include "perf/benchmark.h"
 #include "render/assets.h"
 #include "render/gpu.h"
+#include "render/hud.h"
+#include "render/hud_editor.h"
 #include "render/input.h"
 #include "render/loading.h"
 #include "render/menu.h"
@@ -273,6 +276,8 @@ void LoadFonts() {
     if (fonts.title == nullptr) {
         fonts.title = fonts.medium;
     }
+    // Las del HUD (la pixelada del juego a varios tamaños exactos y la suave).
+    hud::LoadFonts(io, theme::UiScale());
 }
 
 // El tamaño de letra cambió: regenerar la textura de la fuente en la GPU.
@@ -409,7 +414,7 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
-    modules::Manager::RenderHud();
+    modules::Manager::RenderHud(menuOpen && hudeditor::IsActive());
     // También mientras se desvanece al cerrarse (ya sin recibir input).
     if (menuOpen || menu::IsAnimatingClose()) {
         menu::Draw(menu::RenderInfo{g_r.width, g_r.height, g_r.bufferCount, FormatName(g_r.format)});
@@ -517,6 +522,11 @@ bool OnPresent(IDXGISwapChain* swapchain) {
         !notify::HasActive() && !menu::IsAnimatingClose() && !loading::IsVisible()) {
         return false;
     }
+    // Benchmark en modo "Luma en reposo": no dibujar nada (ni HUD ni avisos)
+    // mientras graba, para medir el juego casi como si Luma no estuviera.
+    if (perf::benchmark::SuppressDrawing() && !g_menuOpen.load(std::memory_order_relaxed)) {
+        return false;
+    }
 
     std::lock_guard lock(StateMutex());
     RenderFrame(swapchain);
@@ -617,6 +627,15 @@ bool IsCapturingKey() {
 
 bool IsMenuOpen() {
     return g_menuOpen.load(std::memory_order_relaxed);
+}
+
+bool HandleEscape() {
+    std::lock_guard lock(StateMutex());
+    if (hudeditor::IsActive()) {
+        hudeditor::End();
+        return true;
+    }
+    return false;
 }
 
 bool WantsTextInput() {

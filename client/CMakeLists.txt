@@ -9,6 +9,7 @@
 # SHARED = biblioteca dinámica (.dll). El nombre del objetivo es "Luma",
 # así el archivo resultante se llama Luma.dll.
 add_library(Luma SHARED
+    core/clicks.cpp
     core/config.cpp
     core/dllmain.cpp
     core/hooks.cpp
@@ -18,13 +19,21 @@ add_library(Luma SHARED
     core/paths.cpp
     modules/module_manager.cpp
     modules/registry.cpp
+    modules/hud/hud_modules.cpp
     modules/hud/watermark.cpp
     modules/performance/perf_overlay.cpp
+    modules/performance/process_opts.cpp
+    modules/utility/toggle_keys.cpp
+    modules/visual/crosshair.cpp
+    perf/benchmark.cpp
     perf/frame_stats.cpp
+    perf/windows_info.cpp
     render/assets.cpp
     render/dx12_hooks.cpp
     render/glass.cpp
     render/gpu.cpp
+    render/hud.cpp
+    render/hud_editor.cpp
     render/icons.cpp
     render/input.cpp
     render/loading.cpp
@@ -54,4 +63,6 @@ target_link_libraries(Luma PRIVATE
     windowscodecs             # WIC: decodificar el PNG del logo
     d3d12                     # el desenfoque del vidrio (render/gpu.cpp)
     d3dcompiler               # compilar el shader del desenfoque
+    winmm                     # timeBeginPeriod (optimización "Timer de 1 ms")
+    powrprof                  # leer el plan de energía (consejos de Windows)
 )

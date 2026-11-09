@@ -70,4 +70,15 @@ Summary TakeSummary();
 // El último resumen tomado (para mostrarlo en el menú).
 Summary LastSummary();
 
+// Promedios de los últimos "frames" frames del historial (para el HUD).
+// Solo desde el hilo de render.
+struct Recent {
+    double frameMs = 0.0;
+    double costUs = 0.0;
+};
+Recent RecentAverage(std::size_t frames);
+
+// El hilo de render del juego (el que llama a Present). 0 si todavía no se vio.
+std::uint32_t RenderThreadId();
+
 }  // namespace luma::perf

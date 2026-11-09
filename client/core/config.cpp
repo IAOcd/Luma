@@ -20,6 +20,7 @@
 #include "core/state.h"
 #include "modules/module_manager.h"
 #include "render/notifications.h"
+#include "render/hud.h"
 #include "render/theme.h"
 
 using nlohmann::json;
@@ -120,6 +121,7 @@ json BuildProfileJson() {
     data["menuKey"] = g_menuKey.load();
     data["unloadKey"] = g_unloadKey.load();
     theme::Save(data);
+    render::hud::Save(data);
     modules::Manager::Save(data);
     return data;
 }
@@ -131,6 +133,7 @@ bool ApplyProfileJson(const json& data) {
         g_menuKey.store(data.value("menuKey", static_cast<int>('L')));
         g_unloadKey.store(data.value("unloadKey", static_cast<int>(VK_END)));
         theme::Load(data);
+        render::hud::Load(data);
         modules::Manager::Load(data);
         return true;
     } catch (const std::exception& e) {
@@ -139,6 +142,7 @@ bool ApplyProfileJson(const json& data) {
         g_menuKey.store('L');
         g_unloadKey.store(VK_END);
         theme::Load(empty);
+        render::hud::Load(empty);
         modules::Manager::Load(empty);
         return false;
     }

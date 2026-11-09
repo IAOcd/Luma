@@ -37,8 +37,17 @@ public:
     static bool HandleKey(int virtualKey);
 
     // Dibuja el HUD de los módulos activos (hilo de render, dentro de un frame
-    // de ImGui).
-    static void RenderHud();
+    // de ImGui), cada uno en su posición. "editing" = el editor está abierto.
+    static void RenderHud(bool editing);
+
+    // Lista de los módulos activos que dibujan (para el editor de HUD).
+    static const std::vector<Module*>& ActiveHud() { return activeHud_; }
+
+    // Rehace la lista de módulos que dibujan (si un módulo cambió HasHud()).
+    static void RefreshActive() { RebuildActiveLists(); }
+
+    // Vuelve un elemento a su posición y escala de fábrica.
+    static void ResetLayout(Module& module);
 
     // ¿Hay algún módulo activo que dibuje en pantalla? Se puede llamar SIN el
     // candado: es una variable atómica. Es la clave del "camino rápido": si

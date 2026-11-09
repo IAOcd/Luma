@@ -60,6 +60,13 @@ void OnMenuClosed();
 
 // Antes de descargar Luma: si el menú estaba abierto, devolverle el mouse
 // al juego como estaba.
+// ¿El juego tiene el mouse "agarrado" ahora mismo? (= estás jugando; en el
+// inventario, el chat o la pausa lo suelta.) Lee la misma marca que usan sus
+// funciones de agarrar/soltar.
+//   1 = agarrado (jugando), 0 = suelto (en un menú del juego o en el de Luma),
+//  -1 = no se sabe (firmas no encontradas o todavía no se vio el objeto).
+int GameMouseState();
+
 void BeginUnload();
 
 }  // namespace luma::sdk::mouse

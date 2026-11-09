@@ -5,10 +5,12 @@ Es una DLL que se carga dentro del juego oficial y le agrega un overlay, un HUD 
 
 Luma **no** incluye nada que dé ventaja en multijugador: nada de killaura, fly, reach, xray, ESP, autoclicker, etc.
 
-> **Estado:** Fase 3 terminada.
-> - **Módulos y configuración:** sistema de módulos con categorías, teclas, configuración JSON con perfiles, avisos (toasts) y tema configurable. Por ahora hay dos módulos: *Marca de agua* y *Overlay de rendimiento*.
-> - **Menú:** se abre con **L** y se cierra con **L** o **Esc**. Tiene animaciones y sonidos, y una pantalla de carga al inyectar.
-> - **Bloqueo:** con el menú abierto, el juego no recibe ni cámara, ni clics, ni teclas.
+> **Estado:** Fases 4 y 5 terminadas (falta tu prueba en el juego).
+> - **HUD:** keystrokes, FPS, CPS, reloj, marca de agua, mira personalizada, toggle sprint y toggle sneak, con un estilo propio tipo "client de PvP": cajas oscuras, texto nítido con sombra y la letra pixelada de tu juego.
+> - **Editor de HUD:** arrastrar, escalar con la rueda y alinear con "imanes" a los bordes y a otros elementos.
+> - **Benchmark:** FPS promedio, 1% low y frametime, exportados a CSV, con un modo "Luma en reposo" para comparar contra "sin Luma".
+> - **Optimizaciones del proceso:** cuatro, cada una por separado. Más una página de consejos de Windows que solo lee y explica.
+> - **Menú:** estilo "liquid glass" (vidrio que desenfoca el juego), se abre con **L** y se cierra con **L** o **Esc**. Con el menú abierto el juego no recibe ni cámara, ni clics, ni teclas.
 > - **Descarga:** **Fin (End)** descarga Luma sin cerrar el juego.
 
 ---
@@ -55,31 +57,64 @@ Si algo se rompe raro, borra la carpeta `build/` y vuelve a ejecutar los dos com
 5. Para quitar Luma sin cerrar el juego: pulsa **Fin (End)** con la ventana de Minecraft en primer plano. También se puede cambiar en *Ajustes*.
 
 ### El menú
+- **Estilo "liquid glass":** dos paneles de vidrio que desenfocan el juego de verdad: se copia el frame y se le pasa un desenfoque gaussiano en la GPU (`client/render/gpu.cpp`). Tiene estilo oscuro y claro, con los colores de Luma (carbón `#25282B` y marfil `#E9E6DF`).
 - **Barra lateral:**
-  - La marca de Luma.
-  - Las categorías de módulos: Todos, HUD, Visual, Utilidad, Mundo y Rendimiento.
-  - Las páginas *Tema*, *Perfiles*, *Ajustes* y *Diagnóstico*.
-- **Barra superior:** búsqueda (por nombre o descripción, en todas las categorías), selector de perfil y el botón *Editar HUD*, que se activa en la Fase 5.
-- **Módulos:** aparecen como tarjetas en dos columnas, agrupadas por categoría. Cada tarjeta lleva:
-  - un ícono de color con la inicial;
-  - la tecla asignada, si tiene;
-  - un interruptor tipo píldora: rojo apagado, verde encendido.
-- **Página de un módulo:** al hacer clic en una tarjeta se abre su página, con descripción, interruptor, tecla y opciones.
-  - Botón de tecla: clic para cambiarla. Mientras espera, Esc cancela y Retroceso la quita.
-  - Clic derecho en el botón: quita la tecla.
-- **Avisos (toasts):** aparecen abajo a la derecha. Por ejemplo, al activar un módulo con su tecla.
-- **Ventana fija:** siempre centrada, sin moverse, con el juego oscurecido detrás. **Esc** la cierra sin abrir la pausa del juego.
-- **Animaciones:**
-  - apertura y cierre;
-  - transición entre páginas;
-  - un indicador que se desliza en la barra lateral;
-  - tarjetas que se "levantan" al pasar el mouse;
-  - interruptores animados.
+  - el logo;
+  - las categorías de módulos: Todos, HUD, Visual, Utilidad, Mundo y Rendimiento;
+  - las páginas *Tema*, *Perfiles*, *Ajustes*, *Benchmark* y *Diagnóstico*.
+- **Barra superior:** búsqueda (en todas las categorías), selector de perfil y **Editar HUD**.
+- **Tarjetas de módulo:** ícono SVG propio, tecla asignada e interruptor. Al hacer clic se abre su página, con descripción, interruptor, tecla y opciones.
+- **Íconos:** son "paths" SVG dibujados como vectores (`client/render/icons.h`). Los que empiezan con `F` se rellenan, como el logo de Luma.
+- **Avisos (toasts), sonidos y animaciones:**
+  - Los sonidos de vidrio se **sintetizan** al arrancar y suenan con XAudio2, así que no hay archivos de audio ajenos.
+  - Todo se puede apagar en *Tema*.
+- **Pantalla de carga** al inyectar.
 
-  Todas se pueden desactivar en *Tema*.
-- **Sonidos** (`client/render/sound.cpp`): se **sintetizan** al arrancar, como ondas seno con envolvente. No hay archivos de audio, así que no hay nada ajeno. Suenan en un hilo propio con `PlaySound`, para no frenar el render. Volumen y apagado se configuran en *Tema*.
-- **Pantalla de carga** (`client/render/loading.cpp`): al inyectar, muestra el progreso mientras se carga la config y se escanean las firmas. Después se desvanece.
-- **Cómo se dibuja:** casi todo con la `ImDrawList` de ImGui (rectángulos redondeados, círculos y texto), con tres tamaños de Segoe UI. No usa imágenes, y solo se dibuja con el menú abierto.
+### El HUD (lo que ves mientras juegas)
+El estilo es común a todos los elementos y se elige en *Tema > HUD en pantalla* (`client/render/hud.h`):
+- cajas cuadradas, oscuras y translúcidas;
+- texto con la sombra del juego;
+- opacidad, esquinas, borde y colores configurables.
+
+**Letra "Pixel":** es la fuente pixelada que trae tu Minecraft (`Content\data\fonts\Mojangles.ttf`).
+- Luma la **lee de tu instalación** al arrancar: no la incluye ni la distribuye. Si no la encuentra, usa la de Luma (Segoe UI).
+- Para que se vea nítida, se carga a 8 tamaños exactos de su cuadrícula. Por eso el tamaño de los elementos va de a saltos.
+
+Todo se mide en **píxeles de HUD**, como el juego: 1 píxel de HUD = 2 píxeles de pantalla a 1080p con tamaño 1x.
+
+**Editor de HUD:** se abre con *Editar HUD* (`client/render/hud_editor.cpp`). El menú se oculta y cada elemento activo aparece con un contorno.
+
+| Acción | Qué hace |
+|---|---|
+| Arrastrar | Mover. Se "imanta" a los bordes y al centro de la pantalla y a los bordes de los demás elementos, con una línea guía. |
+| Shift mientras arrastras | Mover sin imanes. |
+| Rueda | Tamaño, de 50% a 400%. |
+| Clic derecho | Volver a la posición de fábrica. |
+| Esc o *Listo* | Volver al menú. |
+
+Las posiciones se guardan en el perfil como **fracciones de la pantalla** más un **ancla**: el punto del elemento que queda fijo. El ancla se elige sola según en qué tercio de la pantalla sueltes el elemento. Así, un elemento pegado a la derecha crece hacia la izquierda si su texto se alarga, y todo sirve en cualquier resolución.
+
+**De dónde sale cada dato (sin leer memoria del juego):**
+
+| Módulo | Dato |
+|---|---|
+| FPS | La medición de frames de Luma (se actualiza 4 veces por segundo para que se pueda leer). |
+| CPS | Los clics de la **cola del mouse del juego** (`sdk/mouse_queue`), el mismo lugar donde los lee el juego. |
+| Keystrokes | `GetAsyncKeyState`, solo con la ventana del juego en primer plano. |
+| Reloj | `GetLocalTime`. |
+
+Sobre el CPS:
+- Medimos que el juego no siempre vacía esa cola tras procesarla. Para no contar un clic dos veces, Luma marca cada clic contado en un byte de **relleno** de la acción: el byte +11, que no usa nadie.
+- Si la firma de la cola no se encuentra, usa los mensajes `WM_LBUTTONDOWN` de Windows como respaldo.
+
+**Mira personalizada:** se dibuja encima de la del juego, que sigue debajo. Esconder la original requiere tocar el render del juego (Fase 8) o un paquete de recursos. Se esconde sola en los menús del juego.
+
+**Toggle sprint / sneak** (`render/input.h`, "teclas sostenidas"):
+- **Cómo mantiene la tecla:** el juego lleva la cuenta de las teclas apretadas con los mensajes de la ventana. Luma le manda un `WM_KEYDOWN` de Ctrl (o Shift) y se guarda el `WM_KEYUP` real; además, `GetAsyncKeyState` responde "apretada".
+- **Cómo se alterna:** pulsando la tecla de verdad.
+- **Cuándo se suelta sola:**
+  - en el inventario, el chat y la pausa, porque el juego "suelta" el mouse (si no, un Shift sostenido haría que cada clic en el inventario mueva ítems);
+  - al perder el foco; al volver, se aprieta de nuevo.
 
 ### Configuración y perfiles
 - `%APPDATA%\Luma\config\luma.json` guarda qué perfil está activo.
@@ -127,16 +162,76 @@ Si tras una actualización de Minecraft aparece el aviso *"Firma no encontrada"*
 
 ## Cómo agregar un módulo
 
-1. Crea `client/modules/<categoría>/<nombre>.h` y `.cpp` con una clase que herede de `luma::modules::Module`. Usa como ejemplo `modules/hud/watermark.*`, el más simple.
-2. En el constructor, pasa un `id` interno (sin espacios ni tildes, y que nunca cambie: es la clave en la config), el nombre visible, la descripción y la categoría.
+1. Crea `client/modules/<categoría>/<nombre>.h` y `.cpp` con una clase que herede de `luma::modules::Module`. Usa como ejemplo `modules/hud/hud_modules.cpp` (FPS, reloj...).
+2. En el constructor:
+   - pasa un `id` interno (sin espacios ni tildes, y que nunca cambie: es la clave en la config), el nombre visible, la descripción y la categoría;
+   - si dibuja en pantalla, llama a `SetDefaultLayout(...)` con su posición de fábrica.
 3. Reemplaza solo lo que necesites:
-   - `HasHud()` + `OnRenderHud()`: dibujar en pantalla cada frame mientras está activo.
+   - `HasHud()` + `OnRenderHud(frame)`: dibujar cada frame mientras está activo. Dibuja con su esquina en `frame.pos`, usa `render::hud` para el estilo y **devuelve su tamaño**. El gestor lo ubica y el editor de HUD lo mueve sin que el módulo haga nada.
+   - `IsHudElement()`: devuelve `false` si dibuja pero no se debe mover, como la mira.
    - `OnEnable()` / `OnDisable()`.
    - `HasSettings()` + `DrawSettings()`: sus opciones en el menú. Devuelve `true` si algo cambió, para que se guarde.
-   - `SaveSettings()` / `LoadSettings()`: guardar sus opciones en el perfil.
+   - `SaveSettings()` / `LoadSettings()`: sus opciones en el perfil. La posición del HUD la guarda el gestor.
+   - `IconSvg()`: su ícono (un path SVG de 24x24).
 4. Agrégalo a la lista en `client/modules/registry.cpp` y su `.cpp` a `client/CMakeLists.txt`.
 
-El menú, la búsqueda, las teclas y el guardado funcionan solos. Un módulo desactivado no ejecuta código por frame, porque el render solo recorre la lista de módulos activos con HUD.
+El menú, la búsqueda, las teclas, el guardado y el editor de HUD funcionan solos. Un módulo desactivado no ejecuta código por frame, porque el render solo recorre la lista de módulos activos con HUD.
+
+## Benchmark y optimizaciones (Fase 4)
+
+### Benchmark (página *Benchmark*)
+1. Elige nombre, duración (10-300 s) y modo.
+2. Pulsa *Empezar*. El menú se cierra, hay una cuenta de 5 s (así no hay avisos en pantalla, que cuestan) y graba cada frame. Si abres el menú mientras graba, se cancela.
+3. Al terminar aparece un aviso con el resultado. Los archivos quedan en `%APPDATA%\Luma\benchmarks\`:
+   - `resumen.csv`: una fila por prueba, para comparar;
+   - `<fecha>_<nombre>.csv`: una fila por frame, para graficar.
+
+   Usan el separador y la coma decimal de tu Windows, así que Excel los abre bien a la primera.
+
+Qué mide:
+
+| Número | Significado |
+|---|---|
+| FPS promedio | Frames / segundos. |
+| 1% low / 0.1% low | El 1% (o 0,1%) de frames más lentos, promediados y pasados a FPS. Muestran los tirones que el promedio esconde. |
+| Frametime, p99, máximo | En ms. p99 = el 99% de los frames tardó menos que eso. |
+| Costo de Luma | Promedio por frame. |
+
+**Modos:**
+- **Con mi HUD:** mide el juego con tu configuración, incluido lo que cuesta dibujar el HUD.
+- **Luma en reposo:** durante la prueba Luma no dibuja nada. Su costo baja a ~0,001 ms por frame, así que es la referencia "sin Luma" más honesta que se puede medir desde dentro del juego. Para una medición externa de verdad sin Luma, existen herramientas como PresentMon o CapFrameX.
+
+**Para tener números comparables** ("sin Luma / con Luma / con cada optimización"), quédate quieto en el mismo lugar y mirando lo mismo, y haz:
+
+| # | Modo | Optimizaciones |
+|---|---|---|
+| 1 | Luma en reposo | ninguna (≈ sin Luma) |
+| 2 | Con mi HUD | ninguna (= costo de Luma) |
+| 3, 4... | Luma en reposo | **una** optimización por prueba |
+
+Si una optimización no mejora los números, se descarta (regla del proyecto).
+
+### Optimizaciones del proceso (categoría *Rendimiento*)
+Cada una es un módulo separado: se activa sola, se mide sola y se deshace al apagarla o al descargar Luma (`client/modules/performance/process_opts.cpp`).
+
+| Módulo | Qué hace | Cuidado |
+|---|---|---|
+| Prioridad del proceso | `SetPriorityClass`: "por encima de lo normal" o "alta". | "Alta" puede frenar otros programas. Nunca "tiempo real", que puede congelar el PC. |
+| Timer de 1 ms | `timeBeginPeriod(1)` más la opción de Windows 11 para que se respete aunque la ventana esté tapada. Los frames pueden salir más parejos, sobre todo con límite de FPS. | Gasta un poco más de batería. |
+| Sin modo eficiencia | Le prohíbe a Windows 11 poner a Minecraft en "EcoQoS" (núcleos lentos), algo que hace con ventanas en segundo plano. | — |
+| Prioridad del hilo de render | Sube solo el hilo que llama a `Present`, no todo el juego. | — |
+
+Lo que **no** hacemos, a propósito: "limpiar la RAM", trucos de registro, prioridad de tiempo real y nada que no se pueda medir y deshacer.
+
+### Consejos de Windows
+La página *Benchmark* **lee** cómo están estas opciones y explica cómo cambiarlas:
+- Modo de juego.
+- Programación de GPU acelerada por hardware.
+- Optimizaciones para juegos en ventana.
+- Plan de energía.
+- GPU preferida para Minecraft (importa en portátiles con dos GPU).
+
+Tiene botones que abren la página correspondiente de Configuración de Windows. **Luma nunca las cambia por su cuenta.**
 
 ## Decisiones técnicas
 
@@ -234,7 +329,7 @@ Con el menú abierto, el juego no debe recibir **nada**: ni cámara, ni clics, n
 - **Reloj:** `QueryPerformanceCounter`, que tiene una resolución de ~100 ns y cuesta ~20-30 ns leerlo.
 - **Frametime:** el tiempo entre dos llamadas a `Present`.
 - **Costo de Luma:** el tiempo desde que entra el hook de `Present` hasta que termina el código de Luma, sin contar el `Present` original del juego. El propio registro de la medición (unas decenas de ns) queda fuera. Los hooks de `ExecuteCommandLists` y `GetRawInputData` no se miden porque, con el menú cerrado, solo leen una variable.
-- **Historial:** los últimos 512 frames en arreglos de tamaño fijo (un *ring buffer*), sin asignar memoria por frame. Lo usa el gráfico de la pestaña Rendimiento. El "1% low" sale del percentil 99 del frametime.
+- **Historial:** los últimos 512 frames en arreglos de tamaño fijo (un *ring buffer*), sin asignar memoria por frame. Lo usan el gráfico de *Diagnóstico* y el HUD. El benchmark guarda aparte cada frame de la prueba, en memoria reservada al empezar.
 - **Resumen cada 30 s en el log:** el FPS promedio y el costo de Luma **solo de los frames con el menú cerrado** (promedio y máximo). Lo escribe el hilo principal de Luma, no el de render, así que escribir en disco no causa tirones. Así se comprueba el criterio de la Fase 2 sin abrir el menú, porque abrirlo cambia la medición.
 - **Inicialización:** el overlay se inicializa una sola vez, en el primer frame. Se informa aparte en el log y no se cuenta como costo por frame.
 
@@ -246,14 +341,14 @@ En cada frame, el hook de `Present` revisa tres variables atómicas:
 
 Si las tres son "no", vuelve sin tocar ImGui. Con 0 módulos activos, el costo medido fue de **~0.0009 ms por frame**; en la Fase 2 era de 0.0002-0.0005 ms. La diferencia es de menos de 1 µs, en el orden del ruido de la medición.
 
-Costo con módulos activos (menú cerrado, 1080p):
+Costo con módulos activos (menú cerrado, 1080p, medido en el log):
 
 | Módulos activos | Costo por frame |
 |---|---|
 | Marca de agua | ~0.09 ms |
-| Overlay de rendimiento (ventana de ImGui con gráfico) | ~0.29 ms |
+| 7 elementos (keystrokes, FPS, CPS, reloj, marca de agua, mira, overlay de rendimiento) | ~0.37 ms |
 
-Pendiente para la Fase 12: dibujar el overlay de rendimiento sin ventana de ImGui.
+Casi todo ese costo es fijo: preparar un frame de ImGui y mandar sus comandos a la GPU. Lo que cuesta cada elemento es poco. Optimizarlo más queda para la Fase 12 (por ejemplo, reutilizar la geometría del HUD entre frames si no cambió).
 
 ### Hilos y candado único
 - **Tres hilos tocan el estado de Luma:**
@@ -271,5 +366,7 @@ Ver `CLAUDE.md` para la lista completa. Avance:
 - [x] 1. Launcher + DLL mínima
 - [x] 2. Overlay + medición (costo con el menú cerrado: ~0.0003 ms por frame)
 - [x] 3. Sistema de módulos y config (costo con 0 módulos: ~0.0009 ms por frame)
-- [ ] 4. Benchmark + optimizaciones del proceso
+- [x] 4. Benchmark + optimizaciones del proceso
+- [x] 5. Editor de HUD + módulos sin memoria del juego (FPS, CPS, keystrokes, reloj, mira, toggle sprint/sneak)
+- [ ] 6. SDK
 - [ ] ...

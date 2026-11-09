@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "core/clicks.h"
 #include "core/hooks.h"
 #include "core/logger.h"
 #include "render/notifications.h"
@@ -114,13 +115,52 @@ void FilterQueue(bool justOpened) {
     }
 }
 
+// Mira los clics de la lista y los anota para el contador de CPS
+// (core/clicks.h). Solo se llama si algún módulo activo los usa.
+//
+// OJO: medimos que el juego NO siempre vacía la lista justo después de
+// procesarla: la llamada siguiente puede volver a ver las mismas acciones, y
+// contaríamos un clic dos veces. Comparar con "lo que vimos antes" no sirve
+// (dos clics seguidos en el mismo lugar son idénticos byte a byte), así que
+// MARCAMOS cada clic contado en el byte +11 de la acción. Ese byte es
+// "relleno": el dato termina en +9 y el siguiente campo (+12, 4 bytes)
+// tiene que empezar en una dirección múltiplo de 4, así que +10 y +11 no
+// los usa nadie. El juego no lo lee; nosotros sí.
+constexpr std::size_t kMarkOffset = 11;
+constexpr std::uint8_t kMark = 0xA5;
+
+void ObserveClicks() {
+    __try {
+        auto* begin = *reinterpret_cast<std::uint8_t* const*>(g_listBegin);
+        auto* end = *reinterpret_cast<std::uint8_t* const*>(g_listEnd);
+        if (begin == nullptr || end < begin) {
+            return;
+        }
+        for (std::uint8_t* a = begin; a + kActionSize <= end; a += kActionSize) {
+            // tipo (+8) = botón; dato (+9) distinto de 0 = apretado
+            const bool left = a[8] == kActionLeft && a[9] != 0;
+            const bool right = a[8] == kActionRight && a[9] != 0;
+            if ((left || right) && a[kMarkOffset] != kMark) {
+                a[kMarkOffset] = kMark;
+                clicks::Record(left ? clicks::Button::Left : clicks::Button::Right);
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Memoria inesperada: no contar nada antes que crashear.
+    }
+}
+
 std::uintptr_t __fastcall ProcessQueueDetour(void* a, void* b, void* c) {
     hooks::ActiveCallGuard guard;
-    const bool menuOpen = g_active.load(std::memory_order_relaxed) && render::overlay::IsMenuOpen();
+    const bool active = g_active.load(std::memory_order_relaxed);
+    const bool menuOpen = active && render::overlay::IsMenuOpen();
     if (menuOpen) {
         FilterQueue(!g_wasMenuOpen);
     }
     g_wasMenuOpen = menuOpen;
+    if (active && !menuOpen && clicks::Wanted()) {
+        ObserveClicks();
+    }
     return g_original(a, b, c);
 }
 

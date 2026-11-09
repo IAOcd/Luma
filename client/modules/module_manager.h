@@ -28,6 +28,12 @@ public:
     static const std::vector<std::unique_ptr<Module>>& All();
     static Module* Find(std::string_view id);
 
+    // ¿Se puede usar en esta versión del juego? (Ver Module::NeedsPlayer.)
+    static bool IsAvailable(const Module& module);
+    // Desactiva los módulos activos que no estén disponibles (se llama
+    // después de buscar las firmas del juego al arrancar).
+    static void DisableUnavailable();
+
     // Activa o desactiva un módulo. "notify" = mostrar un aviso (toast).
     static void SetEnabled(Module& module, bool enabled, bool notify);
     static void Toggle(Module& module, bool notify) { SetEnabled(module, !module.IsEnabled(), notify); }
@@ -39,6 +45,9 @@ public:
     // Dibuja el HUD de los módulos activos (hilo de render, dentro de un frame
     // de ImGui), cada uno en su posición. "editing" = el editor está abierto.
     static void RenderHud(bool editing);
+
+    // Llama a OnTick de los módulos activos que lo usan (hilo principal, cada 50 ms).
+    static void Tick();
 
     // Lista de los módulos activos que dibujan (para el editor de HUD).
     static const std::vector<Module*>& ActiveHud() { return activeHud_; }
@@ -68,6 +77,7 @@ private:
     // Solo los módulos activos con HUD. Se reconstruye al activar/desactivar
     // (nunca por frame) y tiene espacio reservado de antemano.
     static std::vector<Module*> activeHud_;
+    static std::vector<Module*> activeTick_;
     static std::atomic<bool> hasHud_;
 };
 

@@ -14,6 +14,7 @@
 #include "core/logger.h"
 #include "render/notifications.h"
 #include "render/overlay.h"
+#include "sdk/mouse_grab.h"
 #include "sdk/scanner.h"
 
 namespace luma::sdk::mousequeue {
@@ -115,38 +116,65 @@ void FilterQueue(bool justOpened) {
     }
 }
 
-// Mira los clics de la lista y los anota para el contador de CPS
-// (core/clicks.h). Solo se llama si algún módulo activo los usa.
+// --- Con el menú CERRADO: contar clics, limitar CPS y bloquear la rueda ------------
 //
 // OJO: medimos que el juego NO siempre vacía la lista justo después de
 // procesarla: la llamada siguiente puede volver a ver las mismas acciones, y
-// contaríamos un clic dos veces. Comparar con "lo que vimos antes" no sirve
-// (dos clics seguidos en el mismo lugar son idénticos byte a byte), así que
-// MARCAMOS cada clic contado en el byte +11 de la acción. Ese byte es
-// "relleno": el dato termina en +9 y el siguiente campo (+12, 4 bytes)
-// tiene que empezar en una dirección múltiplo de 4, así que +10 y +11 no
-// los usa nadie. El juego no lo lee; nosotros sí.
+// contaríamos (o limitaríamos) un clic dos veces. Comparar con "lo que vimos
+// antes" no sirve (dos clics seguidos en el mismo lugar son idénticos byte a
+// byte), así que MARCAMOS cada clic ya procesado en el byte +11 de la acción.
+// Ese byte es "relleno": el dato termina en +9 y el campo siguiente (+12, de
+// 4 bytes) tiene que empezar en una dirección múltiplo de 4, así que +10 y
+// +11 no los usa nadie. El juego no lo lee; nosotros sí.
 constexpr std::size_t kMarkOffset = 11;
 constexpr std::uint8_t kMark = 0xA5;
+constexpr std::uint8_t kActionWheel = 4;
 
-void ObserveClicks() {
+std::atomic<bool> g_blockWheel{false};
+std::atomic<int> g_cpsCap{0};          // 0 = sin límite
+bool g_dropRelease[2] = {false, false};  // se descartó el "apretar": descartar también su "soltar"
+
+void ProcessActions(bool gameHasMouse) {
     __try {
         auto* begin = *reinterpret_cast<std::uint8_t* const*>(g_listBegin);
-        auto* end = *reinterpret_cast<std::uint8_t* const*>(g_listEnd);
+        auto& end = *reinterpret_cast<std::uint8_t**>(g_listEnd);
         if (begin == nullptr || end < begin) {
             return;
         }
+        const int cap = gameHasMouse ? g_cpsCap.load(std::memory_order_relaxed) : 0;
+        const bool blockWheel = gameHasMouse && g_blockWheel.load(std::memory_order_relaxed);
+        std::uint8_t* write = begin;
         for (std::uint8_t* a = begin; a + kActionSize <= end; a += kActionSize) {
-            // tipo (+8) = botón; dato (+9) distinto de 0 = apretado
-            const bool left = a[8] == kActionLeft && a[9] != 0;
-            const bool right = a[8] == kActionRight && a[9] != 0;
-            if ((left || right) && a[kMarkOffset] != kMark) {
-                a[kMarkOffset] = kMark;
-                clicks::Record(left ? clicks::Button::Left : clicks::Button::Right);
+            bool keep = true;
+            const std::uint8_t type = a[8];
+            const bool button = type == kActionLeft || type == kActionRight;
+            const int index = type == kActionRight ? 1 : 0;
+            if (button && a[9] != 0 && a[kMarkOffset] != kMark) {
+                // Un clic nuevo. ¿Pasa el límite de CPS?
+                const auto which = index == 1 ? clicks::Button::Right : clicks::Button::Left;
+                if (cap > 0 && clicks::PerSecond(which) >= cap) {
+                    keep = false;
+                    g_dropRelease[index] = true;
+                } else {
+                    a[kMarkOffset] = kMark;
+                    clicks::Record(which);
+                }
+            } else if (button && a[9] == 0 && g_dropRelease[index]) {
+                keep = false;  // el "soltar" del clic que descartamos
+                g_dropRelease[index] = false;
+            } else if (type == kActionWheel && blockWheel) {
+                keep = false;
+            }
+            if (keep) {
+                if (write != a) {
+                    std::memmove(write, a, kActionSize);
+                }
+                write += kActionSize;
             }
         }
+        end = write;  // solo achica la lista (nunca pide memoria)
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        // Memoria inesperada: no contar nada antes que crashear.
+        // Memoria inesperada: no hacer nada antes que crashear.
     }
 }
 
@@ -158,8 +186,9 @@ std::uintptr_t __fastcall ProcessQueueDetour(void* a, void* b, void* c) {
         FilterQueue(!g_wasMenuOpen);
     }
     g_wasMenuOpen = menuOpen;
-    if (active && !menuOpen && clicks::Wanted()) {
-        ObserveClicks();
+    if (active && !menuOpen &&
+        (clicks::Wanted() || g_blockWheel.load(std::memory_order_relaxed) || g_cpsCap.load(std::memory_order_relaxed) > 0)) {
+        ProcessActions(mouse::GameMouseState() != 0);
     }
     return g_original(a, b, c);
 }
@@ -209,6 +238,14 @@ bool Init() {
 
 bool Available() {
     return g_active.load();
+}
+
+void SetBlockWheel(bool block) {
+    g_blockWheel.store(block);
+}
+
+void SetCpsCap(int cps) {
+    g_cpsCap.store(cps);
 }
 
 void BeginUnload() {

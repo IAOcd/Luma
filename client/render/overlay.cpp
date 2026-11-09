@@ -50,6 +50,7 @@
 #include "render/hud.h"
 #include "render/hud_editor.h"
 #include "render/input.h"
+#include "render/item_icons.h"
 #include "render/loading.h"
 #include "render/menu.h"
 #include "render/notifications.h"
@@ -390,6 +391,7 @@ void RenderFrame(IDXGISwapChain* swapchain) {
         RebuildFonts();
     }
     assets::UploadPending();  // el logo, la primera vez que está listo
+    icons_items::UploadPending();  // íconos de ítems ya decodificados
 
     // Con el menú cerrado, ImGui no debe reaccionar al mouse (el HUD no se
     // toca) ni cambiar el cursor de Windows (el juego lo tiene escondido).
@@ -414,7 +416,12 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
-    modules::Manager::RenderHud(menuOpen && hudeditor::IsActive());
+    // En los menús del juego (el juego soltó el mouse) el HUD se esconde para
+    // no quedar encima de ellos. Con el menú de Luma abierto sí se dibuja.
+    const bool inGameMenu = !menuOpen && hud::GetStyle().hideInGameMenus && sdk::mouse::GameMouseState() == 0;
+    if (!inGameMenu) {
+        modules::Manager::RenderHud(menuOpen && hudeditor::IsActive());
+    }
     // También mientras se desvanece al cerrarse (ya sin recibir input).
     if (menuOpen || menu::IsAnimatingClose()) {
         menu::Draw(menu::RenderInfo{g_r.width, g_r.height, g_r.bufferCount, FormatName(g_r.format)});

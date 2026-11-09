@@ -41,6 +41,10 @@ struct Style {
     bool border = false;        // borde fino alrededor de las cajas
     float text[3] = {1.0f, 1.0f, 1.0f};         // color del texto
     float pressed[3] = {1.0f, 1.0f, 1.0f};      // color de una tecla apretada (keystrokes)
+    // Esconder el HUD en los menús del juego (pausa, inventario, chat...),
+    // para que no quede encima de ellos. Luma lo sabe porque el juego
+    // "suelta" el mouse al abrir un menú (sdk/mouse_grab.h).
+    bool hideInGameMenus = true;
 };
 Style& GetStyle();
 

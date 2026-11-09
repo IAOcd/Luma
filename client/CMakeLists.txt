@@ -20,9 +20,12 @@ add_library(Luma SHARED
     modules/module_manager.cpp
     modules/registry.cpp
     modules/hud/hud_modules.cpp
+    modules/hud/inventory_hud.cpp
+    modules/hud/player_hud.cpp
     modules/hud/watermark.cpp
     modules/performance/perf_overlay.cpp
     modules/performance/process_opts.cpp
+    modules/utility/mouse_tweaks.cpp
     modules/utility/toggle_keys.cpp
     modules/visual/crosshair.cpp
     perf/benchmark.cpp
@@ -36,6 +39,7 @@ add_library(Luma SHARED
     render/hud_editor.cpp
     render/icons.cpp
     render/input.cpp
+    render/item_icons.cpp
     render/loading.cpp
     render/menu.cpp
     render/notifications.cpp
@@ -43,7 +47,12 @@ add_library(Luma SHARED
     render/sound.cpp
     render/theme.cpp
     sdk/mouse_grab.cpp
+    sdk/entity.cpp
+    sdk/inventory.cpp
+    sdk/memory.cpp
     sdk/mouse_queue.cpp
+    sdk/network.cpp
+    sdk/player.cpp
     sdk/scanner.cpp
     # Recursos incrustados en la DLL (el logo). Visual Studio compila los .rc solo.
     assets/luma.rc

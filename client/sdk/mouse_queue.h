@@ -38,6 +38,13 @@ bool Init();
 // ¿Está activo el bloqueo?
 bool Available();
 
+// Con el menú cerrado y jugando (el juego tiene el mouse):
+//  - bloquear la rueda (no cambia de ranura en la barra rápida);
+//  - limitar los CPS: los clics de más se descartan antes de que el juego
+//    los vea (0 = sin límite).
+void SetBlockWheel(bool block);
+void SetCpsCap(int cps);
+
 // Antes de descargar Luma.
 void BeginUnload();
 

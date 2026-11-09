@@ -14,9 +14,12 @@
 #include "modules/module_manager.h"
 
 #include "modules/hud/hud_modules.h"
+#include "modules/hud/player_hud.h"
+#include "modules/hud/inventory_hud.h"
 #include "modules/hud/watermark.h"
 #include "modules/performance/perf_overlay.h"
 #include "modules/performance/process_opts.h"
+#include "modules/utility/mouse_tweaks.h"
 #include "modules/utility/toggle_keys.h"
 #include "modules/visual/crosshair.h"
 
@@ -29,12 +32,23 @@ void Manager::RegisterAll() {
     modules_.push_back(std::make_unique<hud::FpsCounter>());
     modules_.push_back(std::make_unique<hud::CpsCounter>());
     modules_.push_back(std::make_unique<hud::Clock>());
+    modules_.push_back(std::make_unique<hud::Coordinates>());
+    modules_.push_back(std::make_unique<hud::Compass>());
+    modules_.push_back(std::make_unique<hud::SpeedDisplay>());
+    modules_.push_back(std::make_unique<hud::PingDisplay>());
+    modules_.push_back(std::make_unique<hud::ArmorHud>());
+    modules_.push_back(std::make_unique<hud::HeldItem>());
+    modules_.push_back(std::make_unique<hud::ItemCounter>());
     modules_.push_back(std::make_unique<hud::Watermark>());
     // Visual
     modules_.push_back(std::make_unique<visual::Crosshair>());
     // Utilidad
     modules_.push_back(std::make_unique<utility::ToggleKey>(render::input::HoldSlot::Sprint));
     modules_.push_back(std::make_unique<utility::ToggleKey>(render::input::HoldSlot::Sneak));
+    modules_.push_back(std::make_unique<utility::ScrollWheelDisabler>());
+    modules_.push_back(std::make_unique<utility::SensitivityMultiplier>());
+    modules_.push_back(std::make_unique<utility::CpsCap>());
+    modules_.push_back(std::make_unique<hud::DurabilityWarning>());
     // Rendimiento
     modules_.push_back(std::make_unique<performance::PerfOverlay>());
     modules_.push_back(std::make_unique<performance::ProcessPriority>());
@@ -45,6 +59,7 @@ void Manager::RegisterAll() {
     // Reservar espacio para la lista de activos de una vez: así activar o
     // desactivar módulos nunca pide memoria nueva.
     activeHud_.reserve(modules_.size());
+    activeTick_.reserve(modules_.size());
 }
 
 }  // namespace luma::modules

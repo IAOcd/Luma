@@ -243,6 +243,12 @@ void PostHoldSync() {
     }
 }
 
+// ¿Estás jugando? (no en el chat, un cartel, el inventario o la pausa: ahí
+// el juego suelta el mouse). Si no se sabe (firmas no encontradas), sí.
+bool PlayingInGame() {
+    return sdk::mouse::GameMouseState() != 0;
+}
+
 // --- WndProc --------------------------------------------------------------------
 
 LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -279,7 +285,10 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         }
         // 3. La tecla del menú. Si ImGui espera texto (la caja de búsqueda),
         //    la letra se escribe en vez de cerrar el menú.
-        if (vk == config::g_menuKey.load(std::memory_order_relaxed) && !overlay::WantsTextInput()) {
+        // Solo jugando o para CERRAR el menú: si escribes en el chat, un
+        //    cartel o el inventario, la letra es para el juego.
+        if (vk == config::g_menuKey.load(std::memory_order_relaxed) && !overlay::WantsTextInput() &&
+            (overlay::IsMenuOpen() || PlayingInGame())) {
             if (!isRepeat) {
                 overlay::ToggleMenu();
             }
@@ -287,7 +296,8 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
             return 0;  // El juego no ve esta tecla.
         }
         // 4. Teclas de los módulos (el juego también las recibe).
-        if (!isRepeat && !overlay::WantsTextInput()) {
+        //    También solo jugando o con el menú de Luma abierto.
+        if (!isRepeat && !overlay::WantsTextInput() && (overlay::IsMenuOpen() || PlayingInGame())) {
             overlay::OnKeyDown(vk);
         }
     }

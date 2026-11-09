@@ -36,11 +36,14 @@
 #include "perf/timer.h"
 #include "render/dx12_hooks.h"
 #include "render/input.h"
+#include "render/item_icons.h"
 #include "render/assets.h"
 #include "render/loading.h"
 #include "render/overlay.h"
 #include "sdk/mouse_grab.h"
 #include "sdk/mouse_queue.h"
+#include "sdk/network.h"
+#include "sdk/player.h"
 
 namespace luma {
 
@@ -189,6 +192,11 @@ bool Startup(HMODULE module) {
     if (g_hooksReady) {
         render::loading::SetStep("Conectando con el mouse del juego...", 0.95f);
         sdk::mousequeue::Init();
+        // El jugador local (Fase 6): se captura al mover el mouse en un mundo.
+        sdk::player::Init();
+        sdk::network::Init();  // ping y detección de servidor
+        std::lock_guard lock(StateMutex());
+        modules::Manager::DisableUnavailable();
     }
     render::loading::Finish();
 
@@ -240,8 +248,13 @@ void WaitForUnload() {
         }
         config::SaveIfDirty();  // guardado automático (solo si hubo cambios)
         render::input::PollHolds();             // toggle sprint/sneak: menús del juego y foco
-        perf::benchmark::Poll();                // terminar pruebas (cálculos y CSV fuera del render)
+        perf::benchmark::Poll();
+        render::icons_items::Poll();            // íconos de ítems pedidos por el HUD                // terminar pruebas (cálculos y CSV fuera del render)
         modules::performance::PollRenderThread();  // prioridad del hilo de render
+        {
+            std::lock_guard lock(StateMutex());
+            modules::Manager::Tick();  // módulos que revisan algo cada 50 ms (aviso de durabilidad...)
+        }
         if (GetTickCount64() - lastSummary >= kSummaryEveryMs) {
             lastSummary = GetTickCount64();
             LogPerformanceSummary();
@@ -269,6 +282,8 @@ void Shutdown() {
     if (g_configLoaded) {
         config::SaveNow();
     }
+    sdk::network::BeginUnload();
+    sdk::player::BeginUnload();
     sdk::mousequeue::BeginUnload();
     sdk::mouse::BeginUnload();  // si el menú estaba abierto, devolverle el mouse al juego
     render::dx12::BeginUnload();

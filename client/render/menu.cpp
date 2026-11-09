@@ -64,6 +64,8 @@
 #include "render/notifications.h"
 #include "render/sound.h"
 #include "render/theme.h"
+#include "sdk/network.h"
+#include "sdk/player.h"
 
 namespace luma::render::menu {
 
@@ -564,8 +566,9 @@ void ModuleCard(Module& module, float width, float height, int index) {
     draw->PushClipRect(cMin, ImVec2(cMax.x - fs * 0.6f, cMax.y), true);
     draw->AddText(medium, medium->FontSize, ImVec2(cMin.x + fs * 1.1f, textY), Col(p.text, enter), module.Name().c_str());
     draw->AddText(ImVec2(cMin.x + fs * 1.1f, textY + medium->FontSize + fs * 0.15f), Col(p.textDim, enter),
-                  hover > 0.5f ? (module.IsEnabled() ? "Clic: desactivar" : "Clic: activar")
-                               : modules::CategoryName(module.GetCategory()));
+                  !Manager::IsAvailable(module) ? "No disponible en esta versión"
+                  : hover > 0.5f ? (module.IsEnabled() ? "Clic: desactivar" : "Clic: activar")
+                                 : modules::CategoryName(module.GetCategory()));
     draw->PopClipRect();
 
     // Interruptor, abajo a la derecha (un botón aparte sobre la tarjeta).
@@ -874,6 +877,8 @@ void DrawThemePage() {
         hudChanged |= Toggle("##hudborder", &h.border, ImGui::GetFrameHeight() * 0.95f);
         RowLabel("Color del texto");
         hudChanged |= ImGui::ColorEdit3("##hudtext", h.text, ImGuiColorEditFlags_NoInputs);
+        RowLabel("Esconder en los menús", "(pausa, inventario, chat)");
+        hudChanged |= Toggle("##hudhide", &h.hideInGameMenus, ImGui::GetFrameHeight() * 0.95f);
         RowLabel("Tecla apretada", "(keystrokes)");
         hudChanged |= ImGui::ColorEdit3("##hudpressed", h.pressed, ImGuiColorEditFlags_NoInputs);
         RowLabel("Posiciones");
@@ -1332,6 +1337,19 @@ void DrawDiagnosticsPage(const RenderInfo& info) {
     ImGui::Text("Menú abierto (ahora, con el vidrio): %.3f ms promedio, %.3f ms máximo",
                 stats.openCostAvgUs / 1000.0f, stats.openCostMaxUs / 1000.0f);
     ImGui::TextDisabled("DirectX 12 · %u x %u · %s · %u buffers", info.width, info.height, info.formatName, info.bufferCount);
+    EndGroupCard();
+
+    // Estado del SDK: qué datos del juego encontró Luma en esta versión.
+    SectionHeader(icons::kWorld, "Datos del juego (SDK)");
+    BeginGroupCard("sdk");
+    RowLabel("Jugador local");
+    ImGui::TextUnformatted(!sdk::player::Available() ? "No disponible"
+                           : sdk::player::LocalPlayer() != 0 ? "Encontrado"
+                                                             : "Mueve el mouse dentro de un mundo");
+    RowLabel("Red (ping)");
+    ImGui::TextUnformatted(sdk::network::Available() ? "Disponible" : "No disponible");
+    RowLabel("Dónde estás");
+    ImGui::TextUnformatted(sdk::network::OnServer() ? "En un servidor" : "Mundo local (o menú)");
     EndGroupCard();
 }
 

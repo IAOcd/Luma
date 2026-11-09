@@ -92,6 +92,12 @@ public:
     // cuando Luma sepa distinguir mundo local de servidor.)
     bool IsLocalOnly() const { return localOnly_; }
 
+    // ¿Necesita leer al jugador del juego (sdk/player.h)? Si el SDK no lo
+    // encuentra en esta versión del juego, el módulo queda "no disponible".
+    virtual bool NeedsPlayer() const { return false; }
+    // ¿Necesita el hook de red (ping)? (sdk/network.h)
+    virtual bool NeedsNetwork() const { return false; }
+
     // --- Lo que cada módulo puede reemplazar ----------------------------------
 
     // Su ícono: un path SVG en una cuadrícula de 24x24 (ver render/icons.h).
@@ -114,6 +120,12 @@ public:
     // Rectángulo que ocupó en el último frame (en píxeles de pantalla).
     ImVec2 LastPos() const { return lastPos_; }
     ImVec2 LastSize() const { return lastSize_; }
+
+    // ¿Necesita revisar algo periódicamente aunque no dibuje? (por ejemplo,
+    // el aviso de durabilidad). OnTick se llama cada ~50 ms desde el hilo
+    // principal de Luma, solo mientras el módulo está activo.
+    virtual bool HasTick() const { return false; }
+    virtual void OnTick() {}
 
     // Al activarse / desactivarse.
     virtual void OnEnable() {}

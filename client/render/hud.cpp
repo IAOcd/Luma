@@ -188,6 +188,7 @@ void Save(nlohmann::json& out) {
     h["border"] = g_style.border;
     h["text"] = {g_style.text[0], g_style.text[1], g_style.text[2]};
     h["pressed"] = {g_style.pressed[0], g_style.pressed[1], g_style.pressed[2]};
+    h["hideInGameMenus"] = g_style.hideInGameMenus;
     out["hud"] = std::move(h);
 }
 
@@ -203,6 +204,7 @@ void Load(const nlohmann::json& in) {
     g_style.textShadow = h.value("textShadow", defaults.textShadow);
     g_style.rounding = std::clamp(h.value("rounding", defaults.rounding), 0.0f, 8.0f);
     g_style.border = h.value("border", defaults.border);
+    g_style.hideInGameMenus = h.value("hideInGameMenus", defaults.hideInGameMenus);
     auto color = [&](const char* key, float* out) {
         if (h.contains(key) && h[key].is_array() && h[key].size() == 3) {
             for (int i = 0; i < 3; ++i) {

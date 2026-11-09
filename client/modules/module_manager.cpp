@@ -12,6 +12,8 @@
 #include "core/logger.h"
 #include "render/notifications.h"
 #include "render/sound.h"
+#include "sdk/network.h"
+#include "sdk/player.h"
 
 namespace luma::modules {
 
@@ -39,6 +41,7 @@ const char* CategoryName(Category category) {
 
 std::vector<std::unique_ptr<Module>> Manager::modules_;
 std::vector<Module*> Manager::activeHud_;
+std::vector<Module*> Manager::activeTick_;
 std::atomic<bool> Manager::hasHud_{false};
 
 const std::vector<std::unique_ptr<Module>>& Manager::All() {
@@ -58,17 +61,47 @@ void Manager::RebuildActiveLists() {
     // activeHud_ tiene capacidad reservada (ver RegisterAll), así que clear y
     // push_back no piden memoria nueva.
     activeHud_.clear();
+    activeTick_.clear();
     for (const auto& module : modules_) {
         if (module->IsEnabled() && module->HasHud()) {
             activeHud_.push_back(module.get());
+        }
+        if (module->IsEnabled() && module->HasTick()) {
+            activeTick_.push_back(module.get());
         }
     }
     hasHud_.store(!activeHud_.empty(), std::memory_order_relaxed);
 }
 
+bool Manager::IsAvailable(const Module& module) {
+    return (!module.NeedsPlayer() || sdk::player::Available()) &&
+           (!module.NeedsNetwork() || sdk::network::Available());
+}
+
+void Manager::DisableUnavailable() {
+    for (const auto& module : modules_) {
+        if (module->IsEnabled() && !IsAvailable(*module)) {
+            SetEnabled(*module, false, false);
+            log::Warn("Módulo {} desactivado: el SDK no encontró lo que necesita.", module->Name());
+        }
+    }
+}
+
 void Manager::SetEnabled(Module& module, bool enabled, bool notify) {
     if (module.IsEnabled() == enabled) {
         return;
+    }
+    if (enabled && module.IsLocalOnly() && sdk::network::OnServer()) {
+        notify::Push(notify::Kind::Warning, std::format("{}: solo funciona en mundos locales", module.Name()));
+        return;
+    }
+    if (enabled && !IsAvailable(module)) {
+        // Con la config de arranque (notify = false) se permite: las firmas
+        // todavía no se buscaron. DisableUnavailable lo corrige después.
+        if (notify || sdk::player::Initialized()) {
+            notify::Push(notify::Kind::Warning, std::format("{}: no disponible en esta versión del juego", module.Name()));
+            return;
+        }
     }
     module.SetEnabledInternal(enabled);
     if (enabled) {
@@ -123,6 +156,21 @@ void Manager::RenderHud(bool editing) {
         const ImVec2 size = module->OnRenderHud(frame);
         module->lastPos_ = frame.pos;
         module->lastSize_ = size;
+    }
+}
+
+void Manager::Tick() {
+    for (Module* module : activeTick_) {
+        module->OnTick();
+    }
+    // Regla del proyecto: los módulos "solo local" se apagan al entrar a un servidor.
+    if (sdk::network::OnServer()) {
+        for (const auto& module : modules_) {
+            if (module->IsEnabled() && module->IsLocalOnly()) {
+                SetEnabled(*module, false, false);
+                notify::Push(notify::Kind::Warning, std::format("{} desactivado: estás en un servidor", module->Name()));
+            }
+        }
     }
 }
 
@@ -191,6 +239,7 @@ void Manager::Shutdown() {
         }
     }
     activeHud_.clear();
+    activeTick_.clear();
     hasHud_.store(false);
     modules_.clear();
 }

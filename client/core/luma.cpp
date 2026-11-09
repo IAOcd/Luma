@@ -35,6 +35,7 @@
 #include "render/input.h"
 #include "render/input_diag.h"
 #include "render/overlay.h"
+#include "sdk/mouse_grab.h"
 
 namespace luma {
 
@@ -138,6 +139,12 @@ bool Startup(HMODULE module) {
         }
         g_hooksReady = dx12 && hooks::EnableAll();
     }
+    // SDK (memoria del juego): las funciones con las que el juego agarra y
+    // suelta el mouse. Si no se encuentran, solo se pierde el bloqueo de la
+    // cámara con el menú abierto.
+    if (g_hooksReady) {
+        sdk::mouse::Init();
+    }
     if (g_hooksReady) {
         log::Info("Hooks de DirectX 12 activos. Esperando el primer frame...");
     } else {
@@ -233,6 +240,7 @@ void Shutdown() {
     if (g_configLoaded) {
         config::SaveNow();
     }
+    sdk::mouse::BeginUnload();  // si el menú estaba abierto, devolverle el mouse al juego
     render::dx12::BeginUnload();
     render::gameinput::BeginUnload();
     hooks::DisableAll();

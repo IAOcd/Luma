@@ -28,6 +28,8 @@ add_library(Luma SHARED
     render/notifications.cpp
     render/overlay.cpp
     render/theme.cpp
+    sdk/mouse_grab.cpp
+    sdk/scanner.cpp
 )
 
 # Permite escribir #include "core/version.h" desde cualquier archivo de client/.

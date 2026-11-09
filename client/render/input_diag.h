@@ -39,4 +39,10 @@ inline void Count(std::atomic<std::uint32_t>& counter) {
 // Escribe los contadores en el log y los pone en 0.
 void LogAndReset(const char* context);
 
+// Escribe en el log la "pila de llamadas" actual: la cadena de funciones que
+// llevó hasta aquí, como "módulo+desplazamiento". Así sabemos QUÉ función del
+// juego llamó a una función de Windows. Cada pila distinta se escribe una
+// sola vez (como mucho 40), para no llenar el log.
+void LogCallStack(const char* api, const char* detail);
+
 }  // namespace luma::render::diag

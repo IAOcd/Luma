@@ -48,6 +48,7 @@
 #include "render/menu.h"
 #include "render/notifications.h"
 #include "render/theme.h"
+#include "sdk/mouse_grab.h"
 
 // El backend de Win32 declara esta función "comentada" en su header para que
 // cada programa la declare por su cuenta. La declaramos aquí.
@@ -386,7 +387,9 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     // toca) ni cambiar el cursor de Windows (el juego lo tiene escondido).
     const bool menuOpen = g_menuOpen.load(std::memory_order_relaxed);
     ImGuiIO& io = ImGui::GetIO();
-    io.MouseDrawCursor = menuOpen;
+    // Si el juego soltó el mouse (sdk/mouse_grab.h), ya muestra su propio
+    // cursor; si no, ImGui dibuja uno.
+    io.MouseDrawCursor = menuOpen && !sdk::mouse::ReleasedByLuma();
     if (menuOpen) {
         io.ConfigFlags &= ~(ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange);
     } else {

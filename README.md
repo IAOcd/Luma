@@ -100,7 +100,15 @@ client/               Luma.dll
   perf/               Medición, benchmark y optimizaciones
 ```
 
-La carpeta `sdk/` todavía está vacía (se llena en la Fase 6).
+`sdk/` ya tiene el escáner de firmas y el control del mouse del juego. Ambos se adelantaron de la Fase 6 para resolver el bloqueo de la cámara.
+
+## Cómo actualizar las firmas (cuando el juego se actualiza)
+Si tras una actualización de Minecraft aparece el aviso *"Firma no encontrada"*, el log indica cuál falló. Para la del mouse:
+1. Pon el patrón antiguo en `client/sdk/mouse_grab.cpp` y busca la función equivalente en la versión nueva, repitiendo el método de arriba:
+   - registra las pilas de `ShowCursor` y `ClipCursor` al pausar;
+   - desensambla las funciones que aparezcan con `dumpbin /disasm /range:...`.
+2. Escribe la firma nueva con los bytes del inicio de la función. Pon `??` en todo lo que sea una dirección o un desplazamiento.
+3. Comprueba que aparece **exactamente una vez** en el ejecutable.
 
 ## Cómo agregar un módulo
 
@@ -183,7 +191,19 @@ Las dos son funciones de Windows, así que no dependen de la versión del juego.
 
 - **GameInput (segundo intento):** también se hookean `IGameInput::GetCurrentReading/GetNextReading/GetPreviousReading`, para descubrir las clases de lectura que usa el juego. El resultado fue **0 lecturas pedidas por el juego**. Además, `GameInputCreate` y `GameInputInitialize` llevan al mismo código, así que no hay otra clase escondida.
 
-> **Problema conocido (pendiente):** con el menú abierto, el teclado ya queda bloqueado (el juego lo lee con `GetAsyncKeyState`), pero **la cámara y los clics siguen llegando al juego**. Están descartados los mensajes de la ventana, raw input, `GetCursorPos`, GameInput, otras ventanas y funciones cargadas por nombre. El siguiente paso es trabajar dentro del juego: encontrar su propia función de "soltar el mouse", la que usa al abrir el menú de pausa o el inventario, y llamarla desde Luma. Ese trabajo pertenece al SDK (Fase 6).
+**La solución: usar las funciones del propio juego** (`client/sdk/mouse_grab.cpp`). Ninguna vía de Windows explicaba la cámara y los clics, así que se pasó a trabajar dentro del juego:
+1. Luma registró la **pila de llamadas** cada vez que el juego llamaba a `ShowCursor` o `ClipCursor`, y mientras tanto se pulsó Esc varias veces en un mundo.
+2. Siempre aparecían dos funciones vecinas del ejecutable. Desensambladas con `dumpbin /disasm`, hacen lo siguiente:
+   - **Agarrar el mouse:** esconde el cursor, lo encierra en el centro de la ventana, captura el mouse y pone `ventana+0x398 = 1`.
+   - **Soltar el mouse:** muestra el cursor, lo libera, suelta la captura y pone `ventana+0x398 = 0`.
+3. Al abrir su menú, Luma llama a *soltar*, lo mismo que hace la pausa. Al cerrarlo llama a *agarrar*, solo si el juego tenía el mouse. Mientras el menú está abierto, frena los intentos del juego de volver a agarrarlo.
+4. Las funciones se encuentran **por firma** (`client/sdk/scanner.cpp`). El desplazamiento `+0x398` no está fijo en el código: se lee de la propia instrucción encontrada. Si las firmas fallan tras una actualización, aparece un aviso y solo se pierde este bloqueo.
+
+El teclado se sigue bloqueando por `GetAsyncKeyState`, porque así lo lee el juego.
+
+**Detalle:** Luma aprende cuál es el objeto de la ventana del juego la primera vez que este agarra o suelta el mouse. Si abres el menú justo después de cargar Luma, pulsa Esc dos veces en el juego antes.
+
+**Pendiente (limpieza):** varios hooks de la investigación (GameInput, raw input, el congelado de `GetCursorPos` y el registro de pilas) ya no hacen falta y se pueden quitar.
 
 **Descarga segura**, en este orden:
 1. Los hooks dejan de tocar el estado de Luma.

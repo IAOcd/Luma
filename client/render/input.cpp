@@ -21,16 +21,21 @@
 
 #include <intrin.h>  // _ReturnAddress: desde dónde nos llamaron
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cwctype>
+#include <format>
 #include <mutex>
+#include <string>
 
 #include "core/config.h"
 #include "core/hooks.h"
 #include "core/logger.h"
+#include "core/paths.h"
 #include "render/input_diag.h"
 #include "render/overlay.h"
+#include "sdk/mouse_grab.h"
 
 namespace luma::render::input {
 
@@ -195,6 +200,10 @@ BOOL WINAPI GetCursorPosDetour(LPPOINT point) {
 
 BOOL WINAPI ClipCursorDetour(const RECT* rect) {
     hooks::ActiveCallGuard guard;
+    if (!IsLumaAddress(_ReturnAddress())) {
+        // Diagnóstico (temporal): quién del juego encierra / libera el cursor.
+        diag::LogCallStack("ClipCursor", rect != nullptr ? "encerrar" : "liberar");
+    }
     {
         // Recordamos SIEMPRE lo que pide el juego, para restaurarlo después.
         std::lock_guard lock(g_clipMutex);
@@ -208,6 +217,19 @@ BOOL WINAPI ClipCursorDetour(const RECT* rect) {
         return TRUE;  // Con el menú abierto, el cursor queda libre.
     }
     return g_originalClipCursor(rect);
+}
+
+// ShowCursor: el juego esconde el cursor al "agarrar" el mouse (jugar) y lo
+// muestra al soltarlo (pausa, inventario). Solo lo usamos para diagnóstico.
+using ShowCursorFn = int(WINAPI*)(BOOL);
+ShowCursorFn g_originalShowCursor = nullptr;
+
+int WINAPI ShowCursorDetour(BOOL show) {
+    hooks::ActiveCallGuard guard;
+    if (!IsLumaAddress(_ReturnAddress())) {
+        diag::LogCallStack("ShowCursor", show ? "mostrar" : "esconder");
+    }
+    return g_originalShowCursor(show);
 }
 
 // Llama a la ClipCursor real (sin pasar por nuestro detour).
@@ -394,6 +416,8 @@ bool CreateHooks() {
          reinterpret_cast<void**>(&g_originalGetAsyncKeyState), "user32!GetAsyncKeyState"},
         {"GetKeyState", reinterpret_cast<void*>(&GetKeyStateDetour),
          reinterpret_cast<void**>(&g_originalGetKeyState), "user32!GetKeyState"},
+        {"ShowCursor", reinterpret_cast<void*>(&ShowCursorDetour),
+         reinterpret_cast<void**>(&g_originalShowCursor), "user32!ShowCursor"},
         {"ClipCursor", reinterpret_cast<void*>(&ClipCursorDetour),
          reinterpret_cast<void**>(&g_originalClipCursor), "user32!ClipCursor"},
     };
@@ -435,6 +459,10 @@ bool Install(HWND gameWindow) {
 
 void OnMenuToggled(bool open) {
     if (open) {
+        // Lo principal: pedirle al juego que suelte el mouse, como hace la
+        // pausa (ver sdk/mouse_grab.h). Lo de abajo es la red de seguridad
+        // por si esas funciones no se encontraron.
+        sdk::mouse::OnMenuOpened();
         {
             // Si el juego encerró el cursor antes de que Luma se cargara, no
             // pasó por nuestro hook: lo leemos de Windows para poder restaurarlo.
@@ -462,6 +490,7 @@ void OnMenuToggled(bool open) {
         // juego, el cursor nunca se movió y la cámara no salta al cerrar.
         SetCursorPos(g_frozenCursorX.load(), g_frozenCursorY.load());
         RestoreGameClip();
+        sdk::mouse::OnMenuClosed();  // devolverle el mouse al juego (si lo tenía)
         log::Info("Menú cerrado. Eventos de raw input de mouse ocultados al juego: {}.",
                   g_blockedMouseEvents.load());
         diag::LogAndReset("con el menú abierto");
@@ -504,6 +533,68 @@ void LogAndReset(const char* context) {
               take(g_counters.gameInputMouseState),
               take(g_counters.gameInputKeyState), take(g_counters.peekMessageBlocked),
               take(g_counters.getAsyncKeyStateGame), take(g_counters.getKeyStateGame));
+}
+
+namespace {
+
+std::mutex g_stackMutex;
+std::array<std::uint64_t, 40> g_seenStacks{};
+std::size_t g_seenCount = 0;
+
+// "Minecraft.Windows.exe+0x1A2B3C": nombre corto del módulo y desplazamiento
+// desde su inicio. El desplazamiento no cambia entre ejecuciones (aunque
+// Windows cargue el módulo en otra dirección), así que sirve para buscarlo
+// en el archivo del juego.
+std::string DescribeAddress(void* address) {
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            static_cast<LPCWSTR>(address), &module)) {
+        return std::format("0x{:X}", reinterpret_cast<std::uintptr_t>(address));
+    }
+    wchar_t path[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(module, path, MAX_PATH);
+    std::wstring name(path, length);
+    const std::size_t slash = name.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) {
+        name = name.substr(slash + 1);
+    }
+    return std::format("{}+0x{:X}", paths::ToUtf8(name),
+                       reinterpret_cast<std::uintptr_t>(address) - reinterpret_cast<std::uintptr_t>(module));
+}
+
+}  // namespace
+
+void LogCallStack(const char* api, const char* detail) {
+    void* frames[20];
+    // Saltamos 1 marco (esta misma función). RtlCaptureStackBackTrace lee
+    // las direcciones de retorno de la pila del hilo actual.
+    const USHORT count = RtlCaptureStackBackTrace(1, 20, frames, nullptr);
+
+    // "Huella" de la pila para no escribir dos veces la misma.
+    std::uint64_t hash = 1469598103934665603ull;
+    for (USHORT i = 0; i < count; ++i) {
+        hash = (hash ^ reinterpret_cast<std::uintptr_t>(frames[i])) * 1099511628211ull;
+    }
+    {
+        std::lock_guard lock(g_stackMutex);
+        for (std::size_t i = 0; i < g_seenCount; ++i) {
+            if (g_seenStacks[i] == hash) {
+                return;
+            }
+        }
+        if (g_seenCount == g_seenStacks.size()) {
+            return;
+        }
+        g_seenStacks[g_seenCount++] = hash;
+    }
+
+    std::string text;
+    for (USHORT i = 0; i < count; ++i) {
+        text += "\n      ";
+        text += DescribeAddress(frames[i]);
+    }
+    log::Info("PILA {} ({}) en el hilo {}:{}", api, detail, GetCurrentThreadId(), text);
 }
 
 }  // namespace luma::render::diag

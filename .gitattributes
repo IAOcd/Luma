@@ -1,0 +1,2 @@
+# Normaliza los finales de linea para que git no muestre avisos.
+* text=auto

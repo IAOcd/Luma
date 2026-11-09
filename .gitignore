@@ -1,0 +1,26 @@
+# .gitignore: lista de archivos que git NO debe guardar en el historial.
+# Son archivos que se generan solos al compilar, así que no tiene sentido
+# guardarlos (y ocupan mucho).
+
+# Carpeta de compilación (incluye las dependencias descargadas)
+build/
+out/
+
+# Archivos generados por Visual Studio
+.vs/
+*.user
+*.suo
+CMakeUserPresets.json
+
+# Resultados de compilación sueltos
+*.dll
+*.exe
+*.lib
+*.pdb
+*.obj
+*.ilk
+*.exp
+
+# Archivos del sistema
+Thumbs.db
+desktop.ini

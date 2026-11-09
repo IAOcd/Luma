@@ -1,0 +1,30 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "x64",
+      "displayName": "Windows x64 (Visual Studio 2022)",
+      "description": "Genera el proyecto de Visual Studio 2022 para 64 bits en la carpeta build/",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "displayName": "Release x64",
+      "description": "Compilación optimizada: la que se usa para jugar",
+      "configurePreset": "x64",
+      "configuration": "Release"
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug x64",
+      "description": "Compilación con información de depuración: para buscar errores",
+      "configurePreset": "x64",
+      "configuration": "Debug"
+    }
+  ]
+}

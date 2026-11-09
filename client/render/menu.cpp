@@ -515,7 +515,11 @@ void ModuleCard(Module& module, float width, float height, int index) {
     const float enterOffset = (1.0f - enter) * fs * 1.2f;
 
     const float toggleHeight = fs * 1.35f;
-    const bool open = ImGui::InvisibleButton("##card", ImVec2(width, height));
+    // Clic en la tarjeta = activar/desactivar. "AllowOverlap" deja que los
+    // botones de encima (engranaje e interruptor) reciban su propio clic.
+    ImGui::SetNextItemAllowOverlap();
+    const bool clicked = ImGui::InvisibleButton("##card", ImVec2(width, height));
+    const bool rightClicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
     const bool hovered = ImGui::IsItemHovered();
     HoverFeedback(hovered);
     const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 14.0f);
@@ -560,7 +564,8 @@ void ModuleCard(Module& module, float width, float height, int index) {
     draw->PushClipRect(cMin, ImVec2(cMax.x - fs * 0.6f, cMax.y), true);
     draw->AddText(medium, medium->FontSize, ImVec2(cMin.x + fs * 1.1f, textY), Col(p.text, enter), module.Name().c_str());
     draw->AddText(ImVec2(cMin.x + fs * 1.1f, textY + medium->FontSize + fs * 0.15f), Col(p.textDim, enter),
-                  hover > 0.5f ? "Ver opciones  »" : modules::CategoryName(module.GetCategory()));
+                  hover > 0.5f ? (module.IsEnabled() ? "Clic: desactivar" : "Clic: activar")
+                               : modules::CategoryName(module.GetCategory()));
     draw->PopClipRect();
 
     // Interruptor, abajo a la derecha (un botón aparte sobre la tarjeta).
@@ -571,11 +576,33 @@ void ModuleCard(Module& module, float width, float height, int index) {
         Manager::SetEnabled(module, enabled, /*notify=*/false);
         config::MarkDirty();
     }
+    const bool overToggle = ImGui::IsItemHovered();
 
-    if (hovered && !ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", module.Description().c_str());
+    // Engranaje a la izquierda del interruptor: abre las opciones del módulo.
+    const float gear = toggleHeight * 1.1f;
+    ImGui::SetCursorScreenPos(ImVec2(cMax.x - fs * 1.6f - toggleWidth - gear, cMax.y - fs * 1.0f - toggleHeight - (gear - toggleHeight) * 0.5f));
+    const bool openOptions = ImGui::InvisibleButton("##options", ImVec2(gear, gear));
+    const bool overGear = ImGui::IsItemHovered();
+    HoverFeedback(overGear);
+    const float gearHover = Animate(ImGui::GetItemID(), overGear ? 1.0f : 0.0f, 18.0f);
+    const ImVec2 gearCenter(ImGui::GetItemRectMin().x + gear * 0.5f, ImGui::GetItemRectMin().y + gear * 0.5f);
+    if (gearHover > 0.01f) {
+        draw->AddCircleFilled(gearCenter, gear * 0.5f, Col(p.surfaceHover, gearHover * enter), 32);
     }
-    if (open) {
+    icons::Draw(draw, icons::kSettings, gearCenter, gear * 0.72f, Col(theme::WithAlpha(p.text, 0.55f + 0.45f * hover), enter));
+
+    if (overGear) {
+        ImGui::SetTooltip("Opciones y tecla");
+    } else if (hovered && !overToggle) {
+        ImGui::SetTooltip("%s\n\nClic: activar o desactivar · Engranaje o clic derecho: opciones",
+                          module.Description().c_str());
+    }
+    if (clicked) {
+        Manager::SetEnabled(module, !module.IsEnabled(), /*notify=*/false);
+        sound::Play(module.IsEnabled() ? sound::Effect::ToggleOn : sound::Effect::ToggleOff);
+        config::MarkDirty();
+    }
+    if (openOptions || rightClicked) {
         g_detail = &module;
         OnNavigate();
     }

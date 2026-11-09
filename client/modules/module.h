@@ -31,6 +31,7 @@
 #include <string_view>
 
 #include "core/keys.h"
+#include "render/hud.h"
 
 namespace luma::modules {
 
@@ -118,6 +119,9 @@ public:
     HudLayout& Layout() { return layout_; }
     const HudLayout& DefaultLayout() const { return defaultLayout_; }
     // Rectángulo que ocupó en el último frame (en píxeles de pantalla).
+    // Estilo propio del elemento (si customStyle es false, usa el global).
+    bool& CustomStyle() { return customStyle_; }
+    render::hud::Style& ElementStyle() { return style_; }
     ImVec2 LastPos() const { return lastPos_; }
     ImVec2 LastSize() const { return lastSize_; }
 
@@ -165,6 +169,8 @@ private:
     int keybind_ = keys::kNone;
     HudLayout layout_;
     HudLayout defaultLayout_;
+    bool customStyle_ = false;
+    render::hud::Style style_;
     ImVec2 lastPos_{0, 0};
     ImVec2 lastSize_{0, 0};
 };

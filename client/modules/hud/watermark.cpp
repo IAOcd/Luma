@@ -14,10 +14,12 @@
 #include "render/hud.h"
 #include "render/icons.h"
 #include "render/theme.h"
+#include "render/ui.h"
 
 namespace luma::modules::hud {
 
 namespace rh = render::hud;
+namespace ui = render::ui;
 
 Watermark::Watermark()
     : Module("watermark", "Marca de agua", "Muestra el logo y el nombre de Luma en pantalla.", Category::Hud) {
@@ -43,11 +45,11 @@ ImVec2 Watermark::OnRenderHud(const HudFrame& frame) {
     if (showVersion_) {
         std::snprintf(version, sizeof(version), "%s", kVersion);
     }
-    const ImVec2 nameSize = rh::TextSize(m, kName);
+    const ImVec2 nameSize = showName_ ? rh::TextSize(m, kName) : ImVec2(0, 0);
     const ImVec2 versionSize = showVersion_ ? rh::TextSize(small, version) : ImVec2(0, 0);
     const float pad = box_ ? 5.0f * u : 0.0f;
-    const float logo = std::floor(m.capHeight * 1.5f);
-    const float gap = 3.0f * u;
+    const float logo = showLogo_ ? std::floor(m.capHeight * 1.5f) : 0.0f;
+    const float gap = showLogo_ && showName_ ? 3.0f * u : 0.0f;
     const float width = pad * 2.0f + logo + gap + nameSize.x + (showVersion_ ? 2.0f * u + versionSize.x : 0.0f);
     const float height = std::floor(std::max(logo, m.capHeight) + pad * 2.0f + (box_ ? 0.0f : 2.0f * u));
     const ImVec2 o = frame.pos;
@@ -57,12 +59,16 @@ ImVec2 Watermark::OnRenderHud(const HudFrame& frame) {
     // El logo, en marfil, con la misma sombra que el texto.
     const ImU32 color = ImGui::ColorConvertFloat4ToU32(theme::kIvory);
     const ImVec2 logoCenter(o.x + pad + logo * 0.5f, o.y + height * 0.5f);
-    render::assets::DrawLogo(frame.draw, ImVec2(logoCenter.x + u, logoCenter.y + u), logo, IM_COL32(0, 0, 0, 110));
-    render::assets::DrawLogo(frame.draw, logoCenter, logo, color);
+    if (showLogo_) {
+        render::assets::DrawLogo(frame.draw, ImVec2(logoCenter.x + u, logoCenter.y + u), logo, IM_COL32(0, 0, 0, 110));
+        render::assets::DrawLogo(frame.draw, logoCenter, logo, color);
+    }
     // "Luma" con las mayúsculas centradas respecto del logo.
     const float textX = o.x + pad + logo + gap;
     const float textY = o.y + (height - m.capHeight) * 0.5f - m.capTop;
-    rh::Text(frame.draw, m, ImVec2(textX, textY), kName, color);
+    if (showName_) {
+        rh::Text(frame.draw, m, ImVec2(textX, textY), kName, color);
+    }
     if (showVersion_) {
         // La versión, chiquita, alineada abajo con el nombre.
         const float vy = textY + m.capTop + m.capHeight - small.capTop - small.capHeight;
@@ -73,20 +79,28 @@ ImVec2 Watermark::OnRenderHud(const HudFrame& frame) {
 
 bool Watermark::DrawSettings() {
     bool changed = false;
-    changed |= ImGui::Checkbox("Mostrar versión", &showVersion_);
-    changed |= ImGui::Checkbox("Con caja de fondo", &box_);
-    ImGui::TextDisabled("Posición y tamaño: con el editor de HUD.");
+    changed |= ui::Toggle("Logo", &showLogo_);
+    changed |= ui::Toggle("Nombre", &showName_);
+    changed |= ui::Toggle("Versión", &showVersion_);
+    changed |= ui::Toggle("Caja de fondo", &box_);
     return changed;
 }
 
 void Watermark::SaveSettings(nlohmann::json& out) const {
     out["showVersion"] = showVersion_;
     out["box"] = box_;
+    out["showLogo"] = showLogo_;
+    out["showName"] = showName_;
 }
 
 void Watermark::LoadSettings(const nlohmann::json& in) {
     showVersion_ = in.value("showVersion", true);
     box_ = in.value("box", false);
+    showLogo_ = in.value("showLogo", true);
+    showName_ = in.value("showName", true);
+    if (!showLogo_ && !showName_) {
+        showName_ = true;  // algo tiene que verse
+    }
 }
 
 }  // namespace luma::modules::hud

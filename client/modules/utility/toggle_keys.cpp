@@ -8,9 +8,12 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <string>
 
 #include "modules/module_manager.h"
 #include "render/hud.h"
+#include "render/ui.h"
 
 namespace luma::modules::utility {
 
@@ -76,7 +79,7 @@ ImVec2 ToggleKey::OnRenderHud(const HudFrame& frame) {
     if (!active && !frame.editing) {
         return ImVec2(0, 0);
     }
-    const char* text = IsSprint(slot_) ? "[Corriendo (alternado)]" : "[Agachado (alternado)]";
+    const char* text = label_[0] != 0 ? label_ : IsSprint(slot_) ? "[Corriendo (alternado)]" : "[Agachado (alternado)]";
     const rh::Metrics m = rh::Measure(frame.scale);
     const ImVec2 size = rh::TextSize(m, text);
     // Sin caja: solo texto con sombra (como el aviso de otros clients).
@@ -85,31 +88,30 @@ ImVec2 ToggleKey::OnRenderHud(const HudFrame& frame) {
 }
 
 bool ToggleKey::DrawSettings() {
+    namespace ui = render::ui;
     bool changed = false;
-    const char* preview = kKeys[std::clamp(keyIndex_, 0, kKeyCount - 1)].name;
-    if (ImGui::BeginCombo(IsSprint(slot_) ? "Tecla de correr del juego" : "Tecla de agacharse del juego", preview)) {
-        for (int i = 0; i < kKeyCount; ++i) {
-            if (ImGui::Selectable(kKeys[i].name, i == keyIndex_) && i != keyIndex_) {
-                keyIndex_ = i;
-                changed = true;
-            }
+    if (ui::Choice(IsSprint(slot_) ? "Tecla de correr" : "Tecla de agacharse", &keyIndex_,
+                   {"Ctrl", "Shift", "Alt", "Bloq Mayús", "C", "R", "X", "Z"})) {
+        changed = true;
+        if (IsEnabled()) {
+            render::input::ConfigureHold(slot_, true, GameKey());
         }
-        ImGui::EndCombo();
     }
-    if (changed && IsEnabled()) {
-        render::input::ConfigureHold(slot_, true, GameKey());
-    }
-    if (ImGui::Checkbox("Mostrar texto en el HUD", &showText_)) {
+    ui::Hint("Tiene que ser la misma tecla que usas en el juego (Opciones > Controles).");
+    if (ui::Toggle("Texto en el HUD", &showText_)) {
         changed = true;
         Manager::RefreshActive();  // agrega o quita el módulo de la lista de dibujo
     }
-    ImGui::TextDisabled("Tiene que ser la misma tecla que usas en el juego.");
+    if (showText_) {
+        changed |= ui::Text("Texto", label_, sizeof(label_), IsSprint(slot_) ? "[Corriendo (alternado)]" : "[Agachado (alternado)]");
+    }
     return changed;
 }
 
 void ToggleKey::SaveSettings(nlohmann::json& out) const {
     out["key"] = GameKey();
     out["showText"] = showText_;
+    out["label"] = label_;
 }
 
 void ToggleKey::LoadSettings(const nlohmann::json& in) {
@@ -120,6 +122,7 @@ void ToggleKey::LoadSettings(const nlohmann::json& in) {
         }
     }
     showText_ = in.value("showText", true);
+    std::snprintf(label_, sizeof(label_), "%s", in.value("label", std::string()).c_str());
     if (IsEnabled()) {
         render::input::ConfigureHold(slot_, true, GameKey());  // por si cambió la tecla
     }

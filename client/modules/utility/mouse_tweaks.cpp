@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+#include "render/ui.h"
 #include "sdk/mouse_queue.h"
 #include "sdk/player.h"
 
@@ -50,10 +51,11 @@ void SensitivityMultiplier::OnDisable() {
 }
 
 bool SensitivityMultiplier::DrawSettings() {
-    const bool changed = ImGui::SliderFloat("Multiplicador", &multiplier_, 0.1f, 3.0f, "%.2fx");
+    const bool changed = render::ui::Slider("Multiplicador", &multiplier_, 0.1f, 3.0f, "%.2fx");
     if (changed && IsEnabled()) {
         sdk::player::SetSensitivity(multiplier_);
     }
+    render::ui::Hint("1.00x = igual que el juego; 0.50x = la mitad de rápido.");
     return changed;
 }
 
@@ -87,7 +89,7 @@ void CpsCap::OnDisable() {
 }
 
 bool CpsCap::DrawSettings() {
-    const bool changed = ImGui::SliderInt("Máximo", &cap_, 5, 30, "%d CPS");
+    const bool changed = render::ui::SliderInt("Máximo", &cap_, 5, 30, "%d CPS");
     if (changed && IsEnabled()) {
         sdk::mousequeue::SetCpsCap(cap_);
     }

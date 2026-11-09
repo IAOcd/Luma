@@ -40,6 +40,7 @@ private:
     render::input::HoldSlot slot_;
     int keyIndex_ = 0;        // posición en la lista de teclas (ver .cpp)
     bool showText_ = true;
+    char label_[48] = "";  // texto propio para el HUD (vacío = el de fábrica)
 };
 
 }  // namespace luma::modules::utility

@@ -10,6 +10,7 @@
 
 #include "render/hud.h"
 #include "render/overlay.h"
+#include "render/ui.h"
 #include "sdk/mouse_grab.h"
 
 namespace luma::modules::visual {
@@ -70,15 +71,15 @@ ImVec2 Crosshair::OnRenderHud(const HudFrame& frame) {
 }
 
 bool Crosshair::DrawSettings() {
+    namespace ui = render::ui;
     bool changed = false;
-    const char* styles[] = {"Cruz", "Cruz con punto", "Punto", "Círculo"};
-    changed |= ImGui::Combo("Forma", &style_, styles, IM_ARRAYSIZE(styles));
-    changed |= ImGui::SliderFloat("Largo", &length_, 1.0f, 15.0f, "%.0f");
-    changed |= ImGui::SliderFloat("Grosor", &thickness_, 0.5f, 4.0f, "%.1f");
-    changed |= ImGui::SliderFloat("Separación", &gap_, 0.0f, 10.0f, "%.0f");
-    changed |= ImGui::ColorEdit4("Color", color_, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
-    changed |= ImGui::Checkbox("Contorno", &outline_);
-    changed |= ImGui::Checkbox("Esconder en los menús del juego", &hideInMenus_);
+    changed |= ui::Choice("Forma", &style_, {"Cruz", "Cruz con punto", "Punto", "Círculo"});
+    changed |= ui::Slider("Largo", &length_, 1.0f, 15.0f, "%.0f");
+    changed |= ui::Slider("Grosor", &thickness_, 0.5f, 4.0f, "%.1f");
+    changed |= ui::Slider("Separación", &gap_, 0.0f, 10.0f, "%.0f");
+    changed |= ui::ColorAlpha("Color", color_);
+    changed |= ui::Toggle("Contorno", &outline_, "(se ve sobre fondos claros)");
+    changed |= ui::Toggle("Esconder en los menús", &hideInMenus_);
     return changed;
 }
 

@@ -11,12 +11,14 @@
 
 #include "perf/timer.h"
 #include "render/hud.h"
+#include "render/ui.h"
 #include "sdk/network.h"
 #include "sdk/player.h"
 
 namespace luma::modules::hud {
 
 namespace rh = render::hud;
+namespace ui = render::ui;
 
 namespace {
 
@@ -128,10 +130,14 @@ ImVec2 Coordinates::OnRenderHud(const HudFrame& frame) {
 
 bool Coordinates::DrawSettings() {
     bool changed = false;
-    changed |= ImGui::Checkbox("En una sola línea", &oneLine_);
-    changed |= ImGui::Checkbox("Con decimales", &decimals_);
-    changed |= ImGui::Checkbox("Hacia dónde miras", &showFacing_);
-    changed |= ImGui::Checkbox("Coordenadas del Nether (/8)", &showNether_);
+    int layout = oneLine_ ? 1 : 0;
+    if (ui::Choice("Diseño", &layout, {"Tres líneas", "Una línea"})) {
+        oneLine_ = layout == 1;
+        changed = true;
+    }
+    changed |= ui::Toggle("Decimales", &decimals_);
+    changed |= ui::Toggle("Hacia dónde miras", &showFacing_);
+    changed |= ui::Toggle("Coordenadas del Nether", &showNether_, "(÷ 8)");
     return changed;
 }
 
@@ -177,7 +183,7 @@ ImVec2 Compass::OnRenderHud(const HudFrame& frame) {
     }
     const rh::Metrics m = rh::Measure(frame.scale);
     const float u = m.px;
-    const float width = std::floor(140.0f * u);
+    const float width = std::floor(static_cast<float>(width_) * u);
     const float height = std::floor(rh::LineBoxHeight(m) + (showDegrees_ ? m.capHeight + 4.0f * u : 0.0f));
     const ImVec2 o = frame.pos;
     ImDrawList* draw = frame.draw;
@@ -231,15 +237,20 @@ ImVec2 Compass::OnRenderHud(const HudFrame& frame) {
 }
 
 bool Compass::DrawSettings() {
-    return ImGui::Checkbox("Mostrar grados", &showDegrees_);
+    bool changed = false;
+    changed |= ui::Toggle("Grados", &showDegrees_);
+    changed |= ui::SliderInt("Ancho", &width_, 80, 240, "%d");
+    return changed;
 }
 
 void Compass::SaveSettings(nlohmann::json& out) const {
     out["showDegrees"] = showDegrees_;
+    out["width"] = width_;
 }
 
 void Compass::LoadSettings(const nlohmann::json& in) {
     showDegrees_ = in.value("showDegrees", true);
+    width_ = std::clamp(in.value("width", 140), 80, 240);
 }
 
 // =============================================================================
@@ -280,20 +291,31 @@ ImVec2 SpeedDisplay::OnRenderHud(const HudFrame& frame) {
         }
     }
     char text[32];
-    std::snprintf(text, sizeof(text), "%.2f m/s", ok ? shown_ : 4.32f);
+    const float speed = ok ? shown_ : 4.32f;
+    if (unit_ == 1) {
+        std::snprintf(text, sizeof(text), "%.1f km/h", speed * 3.6f);
+    } else {
+        std::snprintf(text, sizeof(text), "%.2f m/s", speed);
+    }
     return rh::TextBox(frame.draw, rh::Measure(frame.scale), frame.pos, text, 58.0f);
 }
 
 bool SpeedDisplay::DrawSettings() {
-    return ImGui::Checkbox("Incluir la velocidad vertical", &vertical_);
+    bool changed = false;
+    changed |= ui::Choice("Unidad", &unit_, {"m/s", "km/h"});
+    changed |= ui::Toggle("Incluir la vertical", &vertical_, "(caer y saltar)");
+    ui::Hint("1 bloque = 1 metro.");
+    return changed;
 }
 
 void SpeedDisplay::SaveSettings(nlohmann::json& out) const {
     out["vertical"] = vertical_;
+    out["unit"] = unit_;
 }
 
 void SpeedDisplay::LoadSettings(const nlohmann::json& in) {
     vertical_ = in.value("vertical", false);
+    unit_ = std::clamp(in.value("unit", 0), 0, 1);
 }
 
 // =============================================================================
@@ -319,19 +341,34 @@ ImVec2 PingDisplay::OnRenderHud(const HudFrame& frame) {
     } else {
         return ImVec2(0, 0);
     }
-    return rh::TextBox(frame.draw, rh::Measure(frame.scale), frame.pos, text, 58.0f);
+    if (ping < 0 || !colorize_) {
+        return rh::TextBox(frame.draw, rh::Measure(frame.scale), frame.pos, text, 58.0f);
+    }
+    // Con color: verde (< 80 ms), amarillo (< 150 ms) o rojo.
+    const rh::Metrics m = rh::Measure(frame.scale);
+    const float width = std::floor(std::max(rh::TextSize(m, text).x + 10.0f * m.px, 58.0f * m.px));
+    const ImVec2 max(frame.pos.x + width, frame.pos.y + std::floor(rh::LineBoxHeight(m)));
+    rh::Box(frame.draw, m, frame.pos, max);
+    const ImU32 color = ping < 80 ? IM_COL32(110, 230, 110, 255) : ping < 150 ? IM_COL32(240, 210, 80, 255) : IM_COL32(240, 90, 80, 255);
+    rh::CenteredText(frame.draw, m, frame.pos, max, text, color);
+    return ImVec2(width, max.y - frame.pos.y);
 }
 
 bool PingDisplay::DrawSettings() {
-    return ImGui::Checkbox("Mostrar \"Mundo local\" sin servidor", &showInLocal_);
+    bool changed = false;
+    changed |= ui::Toggle("Color según el ping", &colorize_, "(verde, amarillo, rojo)");
+    changed |= ui::Toggle("\"Mundo local\" sin servidor", &showInLocal_);
+    return changed;
 }
 
 void PingDisplay::SaveSettings(nlohmann::json& out) const {
     out["showInLocal"] = showInLocal_;
+    out["colorize"] = colorize_;
 }
 
 void PingDisplay::LoadSettings(const nlohmann::json& in) {
     showInLocal_ = in.value("showInLocal", false);
+    colorize_ = in.value("colorize", true);
 }
 
 }  // namespace luma::modules::hud

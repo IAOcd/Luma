@@ -153,7 +153,9 @@ void Manager::RenderHud(bool editing) {
             y = std::clamp(y, 0.0f, std::max(0.0f, display.y - size.y));
             frame.pos = ImVec2(std::floor(x), std::floor(y));
         }
+        render::hud::UseStyle(module->customStyle_ ? &module->style_ : nullptr);
         const ImVec2 size = module->OnRenderHud(frame);
+        render::hud::UseStyle(nullptr);
         module->lastPos_ = frame.pos;
         module->lastSize_ = size;
     }
@@ -190,6 +192,12 @@ void Manager::Save(nlohmann::json& out) {
         if (module->IsHudElement()) {
             const HudLayout& l = module->layout_;
             entry["hud"] = {{"x", l.x}, {"y", l.y}, {"anchorX", l.anchorX}, {"anchorY", l.anchorY}, {"scale", l.scale}};
+            entry["customStyle"] = module->customStyle_;
+            if (module->customStyle_) {
+                nlohmann::json style;
+                render::hud::SaveStyle(module->style_, style);
+                entry["style"] = std::move(style);
+            }
         }
         all[module->Id()] = std::move(entry);
     }
@@ -205,6 +213,8 @@ void Manager::Load(const nlohmann::json& in) {
         bool enabled = false;
         int keybind = keys::kNone;
         module->layout_ = module->defaultLayout_;
+        module->customStyle_ = false;
+        module->style_ = render::hud::GetStyle();
         if (all != nullptr && all->contains(module->Id())) {
             const nlohmann::json& entry = (*all)[module->Id()];
             // .value(clave, por_defecto) devuelve el valor guardado, o el
@@ -214,6 +224,10 @@ void Manager::Load(const nlohmann::json& in) {
             keybind = entry.value("keybind", keys::kNone);
             if (entry.contains("settings") && entry["settings"].is_object()) {
                 module->LoadSettings(entry["settings"]);
+            }
+            module->customStyle_ = entry.value("customStyle", false);
+            if (module->customStyle_ && entry.contains("style")) {
+                render::hud::LoadStyle(entry["style"], module->style_);
             }
             if (entry.contains("hud") && entry["hud"].is_object()) {
                 const nlohmann::json& h = entry["hud"];

@@ -26,6 +26,8 @@ public:
 private:
     bool showVersion_ = true;
     bool box_ = false;  // con caja de fondo, como los demás elementos
+    bool showLogo_ = true;
+    bool showName_ = true;
 };
 
 }  // namespace luma::modules::hud

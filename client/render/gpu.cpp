@@ -20,7 +20,7 @@ namespace luma::render::gpu {
 namespace {
 
 // --- Tabla de descriptores ----------------------------------------------------------
-constexpr UINT kSlotCount = 64;
+constexpr UINT kSlotCount = 128;  // fuente, desenfoque, logo y los íconos de ítems
 constexpr UINT kSceneSlot = 1;      // copia de la imagen del juego
 constexpr UINT kBlurSlots[2] = {2, 3};  // las dos texturas del desenfoque (ping-pong)
 constexpr UINT kFirstFreeSlot = 4;  // de aquí en adelante: logo, íconos, etc.

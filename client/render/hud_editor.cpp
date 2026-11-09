@@ -13,6 +13,8 @@
 #include "core/config.h"
 #include "modules/module_manager.h"
 #include "render/glass.h"
+#include "render/module_options.h"
+#include "render/ui.h"
 #include "render/sound.h"
 #include "render/theme.h"
 
@@ -32,6 +34,9 @@ float g_guideX = -1.0f;      // línea guía vertical a dibujar (-1 = ninguna)
 float g_guideY = -1.0f;
 ImVec2 g_toolbarMin{0, 0};   // barra de herramientas (del frame anterior)
 ImVec2 g_toolbarMax{0, 0};
+Module* g_panel = nullptr;   // elemento con el panel de opciones abierto (clic derecho)
+ImVec2 g_panelMin{0, 0};     // rectángulo del panel (del frame anterior)
+ImVec2 g_panelMax{0, 0};
 
 bool Contains(ImVec2 min, ImVec2 size, ImVec2 p) {
     return p.x >= min.x && p.y >= min.y && p.x < min.x + size.x && p.y < min.y + size.y;
@@ -125,7 +130,7 @@ void DrawToolbar(ImVec2 display) {
         ImGui::PushFont(theme::GetFonts().medium);
         ImGui::TextUnformatted("Editor de HUD");
         ImGui::PopFont();
-        ImGui::TextDisabled("Arrastra para mover · rueda: tamaño · clic derecho: restablecer · Shift: sin imanes");
+        ImGui::TextDisabled("Arrastra para mover · rueda: tamaño · clic derecho: opciones · Shift: sin imanes");
 
         const float buttonsWidth = fs * 15.5f;
         ImGui::SetCursorPos(ImVec2(size.x - buttonsWidth - fs * 0.9f, (size.y - ImGui::GetFrameHeight()) * 0.5f));
@@ -153,6 +158,60 @@ void DrawToolbar(ImVec2 display) {
     ImGui::PopStyleVar();
 }
 
+// El panel de opciones de un elemento: a la derecha de la pantalla (o a la
+// izquierda, si el elemento está a la derecha, para no taparlo).
+void DrawPanel(ImVec2 display) {
+    if (g_panel == nullptr) {
+        g_panelMin = g_panelMax = ImVec2(0, 0);
+        return;
+    }
+    // Si el módulo se desactivó, ya no está en pantalla: cerrar el panel.
+    bool stillActive = false;
+    for (Module* m : Manager::ActiveHud()) {
+        stillActive |= m == g_panel;
+    }
+    if (!stillActive) {
+        g_panel = nullptr;
+        return;
+    }
+    const float fs = ImGui::GetFontSize();
+    const ImVec2 size(fs * 27.0f, std::min(display.y - fs * 8.0f, fs * 40.0f));
+    const bool elementOnRight = g_panel->LastPos().x + g_panel->LastSize().x * 0.5f > display.x * 0.5f;
+    const ImVec2 pos(elementOnRight ? fs * 1.2f : display.x - size.x - fs * 1.2f, fs * 6.0f);
+    g_panelMin = pos;
+    g_panelMax = ImVec2(pos.x + size.x, pos.y + size.y);
+
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(fs * 1.0f, fs * 0.9f));
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground |
+                                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+    if (ImGui::Begin("##hud_editor_panel", nullptr, kFlags)) {
+        glass::Panel(ImGui::GetWindowDrawList(), g_panelMin, g_panelMax, theme::Get().rounding, 1.0f);
+        ImGui::PushFont(theme::GetFonts().medium);
+        ImGui::TextUnformatted(g_panel->Name().c_str());
+        ImGui::PopFont();
+        ImGui::SameLine(size.x - fs * 3.2f);
+        if (ImGui::Button(" X ")) {
+            g_panel = nullptr;
+            sound::Play(sound::Effect::Click);
+        }
+        if (g_panel != nullptr) {
+            ImGui::BeginChild("##panel_scroll", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+            ui::SetLabelColumn(11.0f);
+            ImGui::PushItemWidth(-1.0f);
+            if (moduleoptions::Draw(*g_panel)) {
+                config::MarkDirty();
+            }
+            ImGui::PopItemWidth();
+            ui::SetLabelColumn(15.0f);
+            ImGui::EndChild();
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
 }  // namespace
 
 bool IsActive() {
@@ -162,6 +221,7 @@ bool IsActive() {
 void Begin() {
     g_active = true;
     g_dragging = nullptr;
+    g_panel = nullptr;
     sound::Play(sound::Effect::Open);
 }
 
@@ -171,6 +231,7 @@ void End() {
     }
     g_active = false;
     g_dragging = nullptr;
+    g_panel = nullptr;
     config::MarkDirty();
     // (El sonido lo pone el menú al volver a aparecer.)
 }
@@ -180,8 +241,9 @@ void Draw() {
     const ImVec2 display = io.DisplaySize;
     const ImVec2 mouse = io.MousePos;
     const float threshold = 8.0f * theme::UiScale();
-    const bool overToolbar = mouse.x >= g_toolbarMin.x && mouse.y >= g_toolbarMin.y && mouse.x < g_toolbarMax.x &&
-                             mouse.y < g_toolbarMax.y;
+    auto inside = [&](ImVec2 a, ImVec2 b) { return mouse.x >= a.x && mouse.y >= a.y && mouse.x < b.x && mouse.y < b.y; };
+    // Sobre la barra o el panel, el mouse es para ellos (no para mover elementos).
+    const bool overToolbar = inside(g_toolbarMin, g_toolbarMax) || inside(g_panelMin, g_panelMax);
 
     // Ventana invisible que cubre la pantalla: así ImGui sabe que el mouse
     // es nuestro (y no hay clics "al vacío").
@@ -201,9 +263,9 @@ void Draw() {
             g_grabOffset = ImVec2(mouse.x - hovered->LastPos().x, mouse.y - hovered->LastPos().y);
             sound::Play(sound::Effect::Click);
         } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            Manager::ResetLayout(*hovered);
-            config::MarkDirty();
-            sound::Play(sound::Effect::ToggleOff);
+            // Clic derecho: abrir (o cerrar) su panel de opciones.
+            g_panel = g_panel == hovered ? nullptr : hovered;
+            sound::Play(sound::Effect::Click);
         } else if (io.MouseWheel != 0.0f) {
             // Saltos de 0.25: con la letra pixelada, cada salto de 0.5 es un
             // tamaño nítido nuevo.
@@ -247,7 +309,7 @@ void Draw() {
         ++count;
         const ImVec2 min(m->LastPos().x - 2.0f, m->LastPos().y - 2.0f);
         const ImVec2 max(m->LastPos().x + m->LastSize().x + 2.0f, m->LastPos().y + m->LastSize().y + 2.0f);
-        const bool active = m == hovered;
+        const bool active = m == hovered || m == g_panel;
         if (active) {
             draw->AddRectFilled(min, max, IM_COL32(255, 255, 255, 22));
         }
@@ -280,6 +342,7 @@ void Draw() {
     }
 
     DrawToolbar(display);
+    DrawPanel(display);
 }
 
 }  // namespace luma::render::hudeditor

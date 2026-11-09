@@ -36,6 +36,7 @@ enum class FontChoice { Pixel = 0, Luma = 1 };
 struct Style {
     FontChoice font = FontChoice::Pixel;
     float background = 0.5f;    // opacidad de las cajas (0 = sin caja)
+    float backgroundColor[3] = {0.0f, 0.0f, 0.0f};  // color de las cajas
     bool textShadow = true;     // sombra del texto, como en el juego
     float rounding = 0.0f;      // esquinas de las cajas, en píxeles de HUD
     bool border = false;        // borde fino alrededor de las cajas
@@ -46,7 +47,19 @@ struct Style {
     // "suelta" el mouse al abrir un menú (sdk/mouse_grab.h).
     bool hideInGameMenus = true;
 };
+// El estilo GLOBAL (Tema -> HUD en pantalla).
 Style& GetStyle();
+
+// ESTILO PROPIO POR ELEMENTO: un módulo puede tener su propio estilo (por
+// ejemplo, el FPS en verde y sin caja). El gestor de módulos llama a
+// UseStyle(&suEstilo) antes de dibujarlo y UseStyle(nullptr) después; todas
+// las funciones de dibujo de aquí usan el estilo "actual".
+void UseStyle(const Style* style);
+const Style& CurrentStyle();
+
+// Guardar / cargar un estilo (el global o el de un elemento).
+void SaveStyle(const Style& style, nlohmann::json& out);
+void LoadStyle(const nlohmann::json& in, Style& style);
 
 // Lo necesario para dibujar a una escala: qué fuente, de qué tamaño y
 // cuántos píxeles de pantalla mide un píxel de HUD.

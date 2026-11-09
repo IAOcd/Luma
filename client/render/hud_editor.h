@@ -8,7 +8,8 @@
 //      centro de la pantalla y a los bordes de los otros elementos (con una
 //      línea guía). Mantén Shift para moverlo libre.
 //    - Rueda del mouse sobre un elemento: cambiar su tamaño.
-//    - Clic derecho: volverlo a su posición de fábrica.
+//    - Clic derecho: abrir su panel de opciones (tamaño, estilo propio y
+//      todas las opciones del módulo), ahí mismo.
 //    - Esc o "Listo": volver al menú.
 //
 //  Técnicamente es un "modo" del menú: el input sigue bloqueado para el juego

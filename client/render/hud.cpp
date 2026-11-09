@@ -19,6 +19,7 @@ namespace luma::render::hud {
 namespace {
 
 Style g_style;
+const Style* g_current = &g_style;  // el que se usa para dibujar
 
 // La fuente pixelada se carga a 8 tamaños EXACTOS. Su cuadrícula: ImGui la
 // escala para que (ascendente + descendente) = tamaño, y en esa fuente eso
@@ -92,7 +93,7 @@ Metrics Measure(float scale) {
     Metrics m;
     // 2 píxeles de pantalla por píxel de HUD a 1080p y escala 1.
     const float target = 2.0f * g_uiScale * scale;
-    const bool pixel = g_style.font == FontChoice::Pixel && g_pixelAvailable;
+    const bool pixel = g_current->font == FontChoice::Pixel && g_pixelAvailable;
     if (pixel) {
         const int k = std::clamp(static_cast<int>(std::lround(target)), 1, kPixelSizes);
         m.font = g_pixel[k - 1];
@@ -116,11 +117,11 @@ ImVec2 TextSize(const Metrics& m, const char* text) {
 }
 
 ImU32 TextColor(float alpha) {
-    return ToU32(g_style.text, alpha);
+    return ToU32(g_current->text, alpha);
 }
 
 ImU32 PressedColor(float alpha) {
-    return ToU32(g_style.pressed, alpha);
+    return ToU32(g_current->pressed, alpha);
 }
 
 void Text(ImDrawList* draw, const Metrics& m, ImVec2 pos, const char* text, ImU32 color) {
@@ -128,7 +129,7 @@ void Text(ImDrawList* draw, const Metrics& m, ImVec2 pos, const char* text, ImU3
     // decimales la dibuja "entre píxeles" y se ve borrosa.
     pos.x = std::floor(pos.x);
     pos.y = std::floor(pos.y);
-    if (g_style.textShadow) {
+    if (g_current->textShadow) {
         // La sombra es el mismo color, oscurecido al 25%, un píxel de HUD
         // abajo a la derecha (como la del juego).
         const ImVec4 c = ImGui::ColorConvertU32ToFloat4(color);
@@ -142,15 +143,15 @@ void Text(ImDrawList* draw, const Metrics& m, ImVec2 pos, const char* text, ImU3
 void Box(ImDrawList* draw, const Metrics& m, ImVec2 min, ImVec2 max, float pressed) {
     min = ImVec2(std::floor(min.x), std::floor(min.y));
     max = ImVec2(std::floor(max.x), std::floor(max.y));
-    const float rounding = g_style.rounding * m.px;
-    if (g_style.background > 0.001f) {
-        draw->AddRectFilled(min, max, IM_COL32(0, 0, 0, static_cast<int>(g_style.background * 255.0f)), rounding);
+    const float rounding = g_current->rounding * m.px;
+    if (g_current->background > 0.001f) {
+        draw->AddRectFilled(min, max, ToU32(g_current->backgroundColor, g_current->background), rounding);
     }
     if (pressed > 0.001f) {
         // Tecla apretada: la caja se llena del color de "apretado".
         draw->AddRectFilled(min, max, PressedColor(0.85f * pressed), rounding);
     }
-    if (g_style.border) {
+    if (g_current->border) {
         draw->AddRect(min, max, IM_COL32(255, 255, 255, 40), rounding, 0, std::max(1.0f, std::floor(m.px * 0.5f)));
     }
 }
@@ -179,32 +180,38 @@ ImVec2 TextBox(ImDrawList* draw, const Metrics& m, ImVec2 pos, const char* text,
     return ImVec2(width, height);
 }
 
-void Save(nlohmann::json& out) {
-    nlohmann::json h;
-    h["font"] = g_style.font == FontChoice::Luma ? "luma" : "pixel";
-    h["background"] = g_style.background;
-    h["textShadow"] = g_style.textShadow;
-    h["rounding"] = g_style.rounding;
-    h["border"] = g_style.border;
-    h["text"] = {g_style.text[0], g_style.text[1], g_style.text[2]};
-    h["pressed"] = {g_style.pressed[0], g_style.pressed[1], g_style.pressed[2]};
-    h["hideInGameMenus"] = g_style.hideInGameMenus;
-    out["hud"] = std::move(h);
+void UseStyle(const Style* style) {
+    g_current = style != nullptr ? style : &g_style;
 }
 
-void Load(const nlohmann::json& in) {
+const Style& CurrentStyle() {
+    return *g_current;
+}
+
+void SaveStyle(const Style& st, nlohmann::json& h) {
+    h["font"] = st.font == FontChoice::Luma ? "luma" : "pixel";
+    h["background"] = st.background;
+    h["backgroundColor"] = {st.backgroundColor[0], st.backgroundColor[1], st.backgroundColor[2]};
+    h["textShadow"] = st.textShadow;
+    h["rounding"] = st.rounding;
+    h["border"] = st.border;
+    h["text"] = {st.text[0], st.text[1], st.text[2]};
+    h["pressed"] = {st.pressed[0], st.pressed[1], st.pressed[2]};
+    h["hideInGameMenus"] = st.hideInGameMenus;
+}
+
+void LoadStyle(const nlohmann::json& h, Style& st) {
     const Style defaults;
-    g_style = defaults;
-    if (!in.is_object() || !in.contains("hud") || !in["hud"].is_object()) {
+    st = defaults;
+    if (!h.is_object()) {
         return;
     }
-    const nlohmann::json& h = in["hud"];
-    g_style.font = h.value("font", std::string("pixel")) == "luma" ? FontChoice::Luma : FontChoice::Pixel;
-    g_style.background = std::clamp(h.value("background", defaults.background), 0.0f, 1.0f);
-    g_style.textShadow = h.value("textShadow", defaults.textShadow);
-    g_style.rounding = std::clamp(h.value("rounding", defaults.rounding), 0.0f, 8.0f);
-    g_style.border = h.value("border", defaults.border);
-    g_style.hideInGameMenus = h.value("hideInGameMenus", defaults.hideInGameMenus);
+    st.font = h.value("font", std::string("pixel")) == "luma" ? FontChoice::Luma : FontChoice::Pixel;
+    st.background = std::clamp(h.value("background", defaults.background), 0.0f, 1.0f);
+    st.textShadow = h.value("textShadow", defaults.textShadow);
+    st.rounding = std::clamp(h.value("rounding", defaults.rounding), 0.0f, 8.0f);
+    st.border = h.value("border", defaults.border);
+    st.hideInGameMenus = h.value("hideInGameMenus", defaults.hideInGameMenus);
     auto color = [&](const char* key, float* out) {
         if (h.contains(key) && h[key].is_array() && h[key].size() == 3) {
             for (int i = 0; i < 3; ++i) {
@@ -212,8 +219,23 @@ void Load(const nlohmann::json& in) {
             }
         }
     };
-    color("text", g_style.text);
-    color("pressed", g_style.pressed);
+    color("backgroundColor", st.backgroundColor);
+    color("text", st.text);
+    color("pressed", st.pressed);
+}
+
+void Save(nlohmann::json& out) {
+    nlohmann::json h;
+    SaveStyle(g_style, h);
+    out["hud"] = std::move(h);
+}
+
+void Load(const nlohmann::json& in) {
+    if (in.is_object() && in.contains("hud")) {
+        LoadStyle(in["hud"], g_style);
+    } else {
+        g_style = Style{};
+    }
 }
 
 }  // namespace luma::render::hud

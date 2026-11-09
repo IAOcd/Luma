@@ -31,7 +31,7 @@ namespace {
 // "a lo bloque" (cada píxel se vuelve un cuadrado de 4x4) para que al
 // dibujarlos grandes se vean nítidos y no borrosos.
 constexpr UINT kUpscale = 4;
-constexpr std::size_t kMaxIcons = 40;  // hay lugares limitados para texturas en la GPU
+constexpr std::size_t kMaxIcons = 96;  // hay lugares limitados para texturas en la GPU
 
 // Ids cuyo nombre de textura no coincide con el del ítem.
 struct Alias {

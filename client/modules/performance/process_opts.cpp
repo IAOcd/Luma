@@ -15,6 +15,7 @@
 #include "core/logger.h"
 #include "perf/frame_stats.h"
 #include "render/icons.h"
+#include "render/ui.h"
 
 // Esta bandera es de Windows 11 (SDK 22000+). Si el SDK es más viejo, la
 // definimos con su valor oficial.
@@ -100,8 +101,7 @@ void ProcessPriority::OnDisable() {
 }
 
 bool ProcessPriority::DrawSettings() {
-    const char* levels[] = {"Por encima de lo normal", "Alta"};
-    const bool changed = ImGui::Combo("Nivel", &level_, levels, IM_ARRAYSIZE(levels));
+    const bool changed = render::ui::Choice("Nivel", &level_, {"Sobre lo normal", "Alta"});
     if (changed && IsEnabled()) {
         Apply();
     }
@@ -192,14 +192,13 @@ void RenderThreadPriority::OnDisable() {
 }
 
 bool RenderThreadPriority::DrawSettings() {
-    const char* levels[] = {"Por encima de lo normal", "La más alta"};
-    const bool changed = ImGui::Combo("Nivel", &level_, levels, IM_ARRAYSIZE(levels));
+    const bool changed = render::ui::Choice("Nivel", &level_, {"Sobre lo normal", "La más alta"});
     if (changed && IsEnabled()) {
         g_threadDesired.store(level_);
         PollRenderThread();
     }
     if (perf::RenderThreadId() == 0) {
-        ImGui::TextDisabled("Todavía no se vio el hilo de render.");
+        render::ui::Hint("Todavía no se vio el hilo de render.");
     }
     return changed;
 }

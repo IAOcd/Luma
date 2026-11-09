@@ -46,6 +46,7 @@ public:
 
 private:
     bool showDegrees_ = true;
+    int width_ = 140;  // ancho de la tira, en píxeles de HUD
 };
 
 class SpeedDisplay : public Module {
@@ -62,6 +63,7 @@ public:
 
 private:
     bool vertical_ = false;  // incluir la velocidad vertical (3D)
+    int unit_ = 0;            // 0 = m/s, 1 = km/h
     float lastPos_[3]{};
     std::int64_t lastSample_ = 0;
     float shown_ = 0.0f;
@@ -81,6 +83,7 @@ public:
 
 private:
     bool showInLocal_ = false;  // mostrar "Mundo local" cuando no hay ping
+    bool colorize_ = true;      // verde / amarillo / rojo según el ping
 };
 
 }  // namespace luma::modules::hud

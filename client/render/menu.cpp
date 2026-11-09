@@ -60,10 +60,12 @@
 #include "render/hud.h"
 #include "render/hud_editor.h"
 #include "render/icons.h"
+#include "render/module_options.h"
 #include "render/input.h"
 #include "render/notifications.h"
 #include "render/sound.h"
 #include "render/theme.h"
+#include "render/ui.h"
 #include "sdk/network.h"
 #include "sdk/player.h"
 
@@ -797,9 +799,15 @@ void DrawModuleDetail(Module& module) {
 
     SectionHeader(icons::kUtility, "Opciones");
     BeginGroupCard("options");
-    if (module.HasSettings()) {
-        if (module.DrawSettings()) {
+    if (module.HasSettings() || module.IsHudElement()) {
+        if (moduleoptions::Draw(module)) {
             config::MarkDirty();
+        }
+        if (module.IsHudElement()) {
+            ImGui::Dummy(ImVec2(0, fs * 0.3f));
+            if (GlassButton("Abrir el editor de HUD", icons::kMove, ImVec2(0, 0))) {
+                hudeditor::Begin();
+            }
         }
     } else {
         ImGui::TextDisabled("Este módulo no tiene opciones.");
@@ -869,6 +877,8 @@ void DrawThemePage() {
         }
         RowLabel("Fondo de las cajas");
         hudChanged |= ImGui::SliderFloat("##hudbg", &h.background, 0.0f, 1.0f, "%.2f");
+        RowLabel("Color de las cajas");
+        hudChanged |= ImGui::ColorEdit3("##hudbgcolor", h.backgroundColor, ImGuiColorEditFlags_NoInputs);
         RowLabel("Sombra del texto");
         hudChanged |= Toggle("##hudshadow", &h.textShadow, ImGui::GetFrameHeight() * 0.95f);
         RowLabel("Esquinas");
@@ -1646,3 +1656,151 @@ void Draw(const RenderInfo& info) {
 }
 
 }  // namespace luma::render::menu
+
+// =============================================================================
+//  Controles para las opciones de los módulos (render/ui.h)
+// =============================================================================
+//  Usan los widgets de este archivo, así las opciones de cada módulo se ven
+//  igual que el resto del menú (y que el panel del editor de HUD).
+
+namespace luma::render::ui {
+
+namespace m = luma::render::menu;
+
+namespace {
+
+float g_labelColumn = 15.0f;  // ancho de la columna de etiquetas (en tamaños de letra)
+
+void Row(const char* label, const char* hint) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    if (hint != nullptr) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", hint);
+    }
+    ImGui::SameLine(ImGui::GetFontSize() * g_labelColumn);
+}
+
+// El ancho que queda para el control a la derecha de la etiqueta.
+void FillWidth() {
+    ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 6.0f, ImGui::GetContentRegionAvail().x - ImGui::GetFontSize() * 0.5f));
+}
+
+}  // namespace
+
+void SetLabelColumn(float fontSizes) {
+    g_labelColumn = fontSizes;
+}
+
+void Section(const char* title) {
+    ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize() * 0.3f));
+    const theme::Palette& p = theme::P();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImFont* medium = theme::GetFonts().medium;
+    draw->AddText(medium, medium->FontSize * 0.85f, pos, m::Col(p.textDim), title);
+    const float tw = medium->CalcTextSizeA(medium->FontSize * 0.85f, FLT_MAX, 0.0f, title).x;
+    const float lineY = pos.y + medium->FontSize * 0.45f;
+    const float right = pos.x + ImGui::GetContentRegionAvail().x;
+    draw->AddRectFilled(ImVec2(pos.x + tw + ImGui::GetFontSize() * 0.6f, lineY), ImVec2(right, lineY + 1.0f),
+                        m::Col(p.border, 0.6f));
+    ImGui::Dummy(ImVec2(0.0f, medium->FontSize * 0.85f + ImGui::GetFontSize() * 0.25f));
+}
+
+void Hint(const char* text) {
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", text);
+    ImGui::PopTextWrapPos();
+}
+
+bool Toggle(const char* label, bool* value, const char* hint) {
+    ImGui::PushID(label);
+    Row(label, hint);
+    const bool changed = m::Toggle("##t", value, ImGui::GetFrameHeight() * 0.95f);
+    ImGui::PopID();
+    return changed;
+}
+
+bool Choice(const char* label, int* index, std::initializer_list<const char*> options) {
+    ImGui::PushID(label);
+    Row(label, nullptr);
+    const int count = static_cast<int>(options.size());
+    *index = std::clamp(*index, 0, count - 1);
+    bool changed = false;
+    // ¿Entran como control segmentado? (cada segmento mide 7 letras de ancho)
+    std::size_t longest = 0;
+    for (const char* o : options) {
+        longest = std::max(longest, std::strlen(o));
+    }
+    if (count <= 4 && longest <= 11 && ImGui::GetContentRegionAvail().x >= ImGui::GetFontSize() * 7.0f * count) {
+        changed = m::Segmented("##s", options.begin(), count, index);
+    } else {
+        FillWidth();
+        const char* preview = options.begin()[*index];
+        if (ImGui::BeginCombo("##c", preview)) {
+            for (int i = 0; i < count; ++i) {
+                if (ImGui::Selectable(options.begin()[i], i == *index) && i != *index) {
+                    *index = i;
+                    changed = true;
+                    sound::Play(sound::Effect::Click);
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+bool Slider(const char* label, float* value, float min, float max, const char* format) {
+    ImGui::PushID(label);
+    Row(label, nullptr);
+    FillWidth();
+    const bool changed = ImGui::SliderFloat("##v", value, min, max, format);
+    ImGui::PopID();
+    return changed;
+}
+
+bool SliderInt(const char* label, int* value, int min, int max, const char* format) {
+    ImGui::PushID(label);
+    Row(label, nullptr);
+    FillWidth();
+    const bool changed = ImGui::SliderInt("##v", value, min, max, format);
+    ImGui::PopID();
+    return changed;
+}
+
+bool Color(const char* label, float* rgb) {
+    ImGui::PushID(label);
+    Row(label, nullptr);
+    const bool changed = ImGui::ColorEdit3("##c", rgb, ImGuiColorEditFlags_NoInputs);
+    ImGui::PopID();
+    return changed;
+}
+
+bool ColorAlpha(const char* label, float* rgba) {
+    ImGui::PushID(label);
+    Row(label, nullptr);
+    const bool changed =
+        ImGui::ColorEdit4("##c", rgba, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
+    ImGui::PopID();
+    return changed;
+}
+
+bool Text(const char* label, char* buffer, int size, const char* placeholder) {
+    ImGui::PushID(label);
+    Row(label, nullptr);
+    FillWidth();
+    const bool changed = ImGui::InputTextWithHint("##t", placeholder, buffer, static_cast<std::size_t>(size));
+    ImGui::PopID();
+    return changed;
+}
+
+bool Button(const char* label, const char* rowLabel) {
+    if (rowLabel != nullptr) {
+        Row(rowLabel, nullptr);
+    }
+    return m::GlassButton(label, nullptr, ImVec2(0, 0));
+}
+
+}  // namespace luma::render::ui

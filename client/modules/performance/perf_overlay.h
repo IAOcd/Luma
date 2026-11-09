@@ -29,6 +29,8 @@ public:
 private:
     bool showGraph_ = true;
     bool showLumaCost_ = true;
+    int graphHeight_ = 20;  // alto del gráfico, en píxeles de HUD
+    int graphFrames_ = 120; // cuántos frames muestra
     // Valores mostrados (se actualizan 4 veces por segundo para poder leerlos).
     double fps_ = 0.0;
     double frameMs_ = 0.0;

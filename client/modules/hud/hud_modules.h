@@ -2,7 +2,8 @@
 //  hud_modules.h - Los módulos del HUD que NO leen memoria del juego (Fase 5)
 // =============================================================================
 //  FPS, CPS, Keystrokes y Reloj. Todos usan el estilo común del HUD
-//  (render/hud.h) y se pueden mover y escalar con el editor de HUD.
+//  (render/hud.h), se pueden mover y escalar con el editor de HUD y tener su
+//  propio estilo (render/module_options.h).
 //
 //  De dónde sale cada dato (todo funciones de Windows o de Luma, estables):
 //    - FPS: la medición de frames de Luma (perf/frame_stats.h).
@@ -35,8 +36,12 @@ public:
     void LoadSettings(const nlohmann::json& in) override;
 
 private:
-    int format_ = 0;  // 0 = "60 FPS", 1 = "FPS: 60"
+    int format_ = 0;        // 0 = "60 FPS", 1 = "FPS: 60", 2 = "60"
+    int rate_ = 1;          // actualización: 0 = rápida, 1 = normal, 2 = lenta
+    bool showMs_ = false;   // agregar el frametime
+    bool colorize_ = false; // verde/amarillo/rojo según los FPS
     double shown_ = 0.0;
+    double shownMs_ = 0.0;
     std::int64_t lastUpdate_ = 0;
 };
 
@@ -55,6 +60,7 @@ public:
 
 private:
     bool showRight_ = true;  // "3 | 1 CPS" (izquierdo | derecho)
+    int format_ = 0;         // 0 = "3 CPS", 1 = "CPS: 3"
 };
 
 class Keystrokes : public Module {
@@ -73,7 +79,11 @@ public:
 private:
     bool showMouse_ = true;
     bool showSpace_ = true;
-    bool showCps_ = true;          // los botones del mouse muestran los CPS al hacer clic
+    bool showCps_ = true;     // los botones del mouse muestran los CPS al hacer clic
+    int keySize_ = 18;        // lado de una tecla, en píxeles de HUD
+    int gap_ = 2;             // separación
+    int animation_ = 1;       // 0 = instantánea, 1 = rápida, 2 = suave
+    int mouseLabels_ = 0;     // 0 = "LMB / RMB", 1 = "Izq. / Der."
     // Animación de cada tecla (0 = suelta, 1 = apretada): W A S D, espacio, izq., der.
     std::array<float, 7> anim_{};
 };
@@ -90,8 +100,9 @@ public:
     void LoadSettings(const nlohmann::json& in) override;
 
 private:
-    bool twelveHour_ = false;
+    int format_ = 0;      // 0 = 24 h, 1 = 12 h
     bool seconds_ = false;
+    int date_ = 0;        // 0 = sin fecha, 1 = "09/11", 2 = "09/11/2026"
 };
 
 }  // namespace luma::modules::hud

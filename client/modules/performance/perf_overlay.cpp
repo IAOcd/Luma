@@ -14,14 +14,16 @@
 #include "perf/timer.h"
 #include "render/hud.h"
 #include "render/icons.h"
+#include "render/ui.h"
 
 namespace luma::modules::performance {
 
 namespace rh = render::hud;
+namespace ui = render::ui;
 
 namespace {
 
-constexpr std::size_t kGraphFrames = 120;  // frames que muestra el gráfico
+constexpr std::size_t kGraphFrames = 240;  // máximo de frames que muestra el gráfico
 
 }  // namespace
 
@@ -66,7 +68,7 @@ ImVec2 PerfOverlay::OnRenderHud(const HudFrame& frame) {
         width = std::max(width, rh::TextSize(m, lines[i]).x + pad * 2.0f);
     }
     width = std::floor(width);
-    const float graphH = showGraph_ ? 20.0f * u : 0.0f;
+    const float graphH = showGraph_ ? static_cast<float>(graphHeight_) * u : 0.0f;
     const float height = std::floor(pad * 2.0f + line * static_cast<float>(count) - 4.0f * u +
                                     (showGraph_ ? graphH + 4.0f * u : 0.0f));
     const ImVec2 o = frame.pos;
@@ -87,7 +89,7 @@ ImVec2 PerfOverlay::OnRenderHud(const HudFrame& frame) {
         const float gy = y;
         const float gw = width - pad * 2.0f;
         draw->AddRectFilled(ImVec2(gx, gy), ImVec2(gx + gw, gy + graphH), IM_COL32(255, 255, 255, 14));
-        const std::size_t n = std::min(kGraphFrames, history.count);
+        const std::size_t n = std::min({kGraphFrames, history.count, static_cast<std::size_t>(graphFrames_)});
         float peak = 33.3f;
         for (std::size_t i = 0; i < n; ++i) {
             peak = std::max(peak, history.frameMs[(history.next + perf::kHistorySize - n + i) % perf::kHistorySize]);
@@ -95,7 +97,7 @@ ImVec2 PerfOverlay::OnRenderHud(const HudFrame& frame) {
         std::array<ImVec2, kGraphFrames> points{};
         for (std::size_t i = 0; i < n; ++i) {
             const float ms = history.frameMs[(history.next + perf::kHistorySize - n + i) % perf::kHistorySize];
-            const float px = gx + gw * static_cast<float>(i) / static_cast<float>(kGraphFrames - 1);
+            const float px = gx + gw * static_cast<float>(i) / static_cast<float>(std::max<std::size_t>(1, n - 1));
             const float py = gy + graphH - std::min(1.0f, ms / peak) * graphH;
             points[i] = ImVec2(px, py);
         }
@@ -107,20 +109,28 @@ ImVec2 PerfOverlay::OnRenderHud(const HudFrame& frame) {
 
 bool PerfOverlay::DrawSettings() {
     bool changed = false;
-    changed |= ImGui::Checkbox("Gráfico de frametime", &showGraph_);
-    changed |= ImGui::Checkbox("Mostrar costo de Luma", &showLumaCost_);
-    ImGui::TextDisabled("Con un elemento del HUD activo, Luma dibuja cada frame y su costo sube un poco.");
+    changed |= ui::Toggle("Costo de Luma", &showLumaCost_, "(ms por frame)");
+    changed |= ui::Toggle("Gráfico de frametime", &showGraph_);
+    if (showGraph_) {
+        changed |= ui::SliderInt("Alto del gráfico", &graphHeight_, 10, 50, "%d");
+        changed |= ui::SliderInt("Frames en el gráfico", &graphFrames_, 30, 240, "%d");
+    }
+    ui::Hint("Con un elemento del HUD activo, Luma dibuja cada frame y su costo sube un poco.");
     return changed;
 }
 
 void PerfOverlay::SaveSettings(nlohmann::json& out) const {
     out["showGraph"] = showGraph_;
     out["showLumaCost"] = showLumaCost_;
+    out["graphHeight"] = graphHeight_;
+    out["graphFrames"] = graphFrames_;
 }
 
 void PerfOverlay::LoadSettings(const nlohmann::json& in) {
     showGraph_ = in.value("showGraph", true);
     showLumaCost_ = in.value("showLumaCost", true);
+    graphHeight_ = std::clamp(in.value("graphHeight", 20), 10, 50);
+    graphFrames_ = std::clamp(in.value("graphFrames", 120), 30, 240);
 }
 
 }  // namespace luma::modules::performance

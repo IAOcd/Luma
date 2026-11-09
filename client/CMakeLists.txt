@@ -42,6 +42,7 @@ add_library(Luma SHARED
     render/item_icons.cpp
     render/loading.cpp
     render/menu.cpp
+    render/module_options.cpp
     render/notifications.cpp
     render/overlay.cpp
     render/sound.cpp

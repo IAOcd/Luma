@@ -10,6 +10,9 @@
 # así el archivo resultante se llama Luma.dll.
 add_library(Luma SHARED
     core/dllmain.cpp
+    core/logger.cpp
+    core/luma.cpp
+    core/paths.cpp
 )
 
 # Permite escribir #include "core/version.h" desde cualquier archivo de client/.
@@ -20,4 +23,6 @@ target_link_libraries(Luma PRIVATE
     minhook                   # hooks (se usa desde la Fase 1/2)
     imgui                     # interfaz (se usa desde la Fase 2)
     nlohmann_json::nlohmann_json  # configuración JSON (se usa desde la Fase 3)
+    shell32                   # SHGetKnownFolderPath (carpeta %APPDATA%)
+    ole32                     # CoTaskMemFree (liberar el texto que devuelve la anterior)
 )

@@ -1,43 +1,75 @@
 // =============================================================================
 //  dllmain.cpp - Punto de entrada de Luma.dll
 // =============================================================================
-//  Fase 0: esta DLL todavía no hace nada. Solo existe para comprobar que el
-//  proyecto compila. En la Fase 1 aquí arrancará Luma (logger, hilo
-//  principal, tecla de descarga).
+//  Windows llama a DllMain cuando la DLL entra o sale del proceso del juego.
+//  Aquí hacemos lo MÍNIMO posible: crear el hilo propio de Luma y nada más.
+//
+//  ¿Por qué? Mientras DllMain se ejecuta, Windows tiene tomado un candado
+//  interno llamado "loader lock". Si dentro de DllMain hiciéramos cosas como
+//  cargar otras DLLs o esperar a otros hilos, podríamos quedar esperando algo
+//  que a su vez espera ese candado: el juego se congelaría para siempre
+//  (un "deadlock"). Por eso todo el trabajo real va en MainThread.
 // =============================================================================
 
 #include <windows.h>
 
-#include "core/version.h"
+#include "core/luma.h"
 
-// DllMain es la función que Windows llama automáticamente cuando la DLL se
-// carga o se descarga de un proceso.
-//
-//   module  -> identificador de nuestra propia DLL dentro del proceso.
-//   reason  -> por qué nos llaman (carga, descarga, nuevo hilo, ...).
-//   reserved-> dato interno de Windows; no lo usamos.
-//
-// IMPORTANTE (para fases siguientes): dentro de DllMain Windows tiene
-// "bloqueado" el cargador de DLLs. Hacer trabajo pesado aquí (cargar otras
-// DLLs, esperar hilos, etc.) puede congelar el juego. Por eso en la Fase 1
-// solo crearemos un hilo aparte y haremos todo el trabajo desde ese hilo.
+namespace {
+
+// Función que ejecuta el hilo de Luma. Windows la arranca recién cuando
+// DllMain terminó, así que acá ya podemos hacer cualquier cosa.
+DWORD WINAPI MainThread(LPVOID parameter) {
+    HMODULE module = static_cast<HMODULE>(parameter);
+
+    // "try / catch (...)" atrapa cualquier error de C++ (excepción) que se
+    // escape. Una excepción sin atrapar dentro del juego lo cerraría de golpe.
+    try {
+        luma::Run(module);
+    } catch (...) {
+        // No hay mucho más que hacer: seguimos al paso de descarga.
+    }
+
+    // Quita Luma.dll de la memoria del juego y termina este hilo, en un solo
+    // paso. Tiene que ser una única llamada: si primero liberáramos la DLL y
+    // después intentáramos terminar el hilo, esa segunda instrucción ya no
+    // existiría en memoria (formaba parte de la DLL) y el juego crashearía.
+    FreeLibraryAndExitThread(module, 0);
+}
+
+}  // namespace
+
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
-    // Todavía no usamos estos parámetros. (void) le dice al compilador que
-    // es intencional, para que no muestre una advertencia.
-    (void)module;
-    (void)reserved;
-
     switch (reason) {
-        case DLL_PROCESS_ATTACH:
-            // La DLL se acaba de cargar en el juego. (Fase 1)
+        case DLL_PROCESS_ATTACH: {
+            // Le decimos a Windows que no nos avise cada vez que el juego crea
+            // o termina un hilo: no nos interesa y así ahorramos trabajo.
+            DisableThreadLibraryCalls(module);
+
+            HANDLE thread = CreateThread(nullptr, 0, MainThread, module, 0, nullptr);
+            if (thread == nullptr) {
+                // Sin hilo no hay Luma. Devolver FALSE hace que Windows
+                // descarte la DLL y el launcher reporta que falló.
+                return FALSE;
+            }
+            // No necesitamos esperar ni controlar el hilo desde aquí, así que
+            // soltamos nuestra referencia (el hilo sigue corriendo igual).
+            CloseHandle(thread);
             break;
+        }
         case DLL_PROCESS_DETACH:
-            // La DLL se está descargando. (Fase 1)
+            // Llegamos aquí en dos casos:
+            //  a) Descarga normal (reserved == nullptr): Shutdown() ya limpió
+            //     todo antes de FreeLibraryAndExitThread. Nada que hacer.
+            //  b) El juego se está cerrando (reserved != nullptr): Windows ya
+            //     terminó a la fuerza todos los hilos, incluido el nuestro,
+            //     quizá en mitad de algo. Tocar el log o cualquier candado
+            //     podría congelar el cierre del juego, así que NO hacemos nada.
+            //     El log ya está a salvo porque cada línea se guarda al instante.
+            (void)reserved;
             break;
         default:
             break;
     }
-
-    // TRUE = "todo bien, la DLL puede quedarse cargada".
     return TRUE;
 }

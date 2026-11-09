@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include "perf/frame_stats.h"
+#include "render/icons.h"
 #include "render/theme.h"
 
 namespace luma::modules::performance {
@@ -18,6 +19,10 @@ namespace {
 constexpr std::size_t kAverageFrames = 60;
 
 }  // namespace
+
+const char* PerfOverlay::IconSvg() const {
+    return render::icons::kChart;
+}
 
 PerfOverlay::PerfOverlay()
     : Module("perf_overlay", "Overlay de rendimiento",

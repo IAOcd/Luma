@@ -44,6 +44,8 @@
 #include "core/paths.h"
 #include "core/state.h"
 #include "modules/module_manager.h"
+#include "render/assets.h"
+#include "render/gpu.h"
 #include "render/input.h"
 #include "render/loading.h"
 #include "render/menu.h"
@@ -87,7 +89,6 @@ struct Renderer {
     HWND window = nullptr;
     ComPtr<ID3D12Device> device;
     ComPtr<ID3D12DescriptorHeap> rtvHeap;
-    ComPtr<ID3D12DescriptorHeap> srvHeap;  // para la textura de la fuente de ImGui
     ComPtr<ID3D12GraphicsCommandList> commandList;
 
     // Un "fence" es un contador que la GPU incrementa al terminar trabajo.
@@ -166,9 +167,9 @@ void DestroyDeviceResources() {
     for (FrameContext& frame : g_r.frames) {
         frame = FrameContext{};  // libera allocator y back buffer (ComPtr)
     }
+    gpu::DestroyBlurTargets();  // dependen del tamaño de la pantalla
     g_r.commandList.Reset();
     g_r.rtvHeap.Reset();
-    g_r.srvHeap.Reset();
     g_r.bufferCount = 0;
 }
 
@@ -195,15 +196,6 @@ bool CreateDeviceResources(IDXGISwapChain3* swapchain) {
         return false;
     }
 
-    D3D12_DESCRIPTOR_HEAP_DESC srvDesc{};
-    srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    srvDesc.NumDescriptors = 1;
-    srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    if (FAILED(device->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&g_r.srvHeap)))) {
-        log::Error("No se pudo crear el heap de SRV.");
-        return false;
-    }
-
     const UINT rtvSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = g_r.rtvHeap->GetCPUDescriptorHandleForHeapStart();
     for (UINT i = 0; i < g_r.bufferCount; ++i) {
@@ -227,10 +219,10 @@ bool CreateDeviceResources(IDXGISwapChain3* swapchain) {
     }
     g_r.commandList->Close();  // Se crea "abierta"; la cerramos hasta usarla.
 
-    if (!ImGui_ImplDX12_Init(device, static_cast<int>(g_r.bufferCount), g_r.format,
-                             g_r.srvHeap.Get(),
-                             g_r.srvHeap->GetCPUDescriptorHandleForHeapStart(),
-                             g_r.srvHeap->GetGPUDescriptorHandleForHeapStart())) {
+    // La fuente de ImGui va en el lugar 0 de la tabla de descriptores de Luma
+    // (render/gpu.h), que dura toda la sesión.
+    if (!ImGui_ImplDX12_Init(device, static_cast<int>(g_r.bufferCount), g_r.format, gpu::SrvHeap(),
+                             gpu::CpuSlot(gpu::kFontSlot), gpu::GpuSlot(gpu::kFontSlot))) {
         log::Error("No se pudo iniciar el backend DX12 de ImGui.");
         return false;
     }
@@ -238,6 +230,9 @@ bool CreateDeviceResources(IDXGISwapChain3* swapchain) {
     // Compilar ya los shaders y crear la textura de la fuente (si no, ImGui lo
     // hace en el primer frame con el menú abierto y ese frame daría un tirón).
     ImGui_ImplDX12_CreateDeviceObjects();
+
+    // Texturas del desenfoque del vidrio (dependen del tamaño de pantalla).
+    gpu::CreateBlurTargets(g_r.width, g_r.height, g_r.format);
     return true;
 }
 
@@ -350,6 +345,12 @@ bool Initialize(IDXGISwapChain* swapchain) {
     }
     g_r.fenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
+    // Tabla de descriptores, subida de texturas y desenfoque (render/gpu.h).
+    if (!gpu::Init(device.Get(), queue)) {
+        g_state.store(State::Failed);
+        return false;
+    }
+
     // Necesitamos el alto de la imagen antes de crear ImGui (para la escala).
     DXGI_SWAP_CHAIN_DESC1 desc{};
     swapchain3->GetDesc1(&desc);
@@ -383,6 +384,7 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     if (theme::ConsumeFontRebuildRequest()) {
         RebuildFonts();
     }
+    assets::UploadPending();  // el logo, la primera vez que está listo
 
     // Con el menú cerrado, ImGui no debe reaccionar al mouse (el HUD no se
     // toca) ni cambiar el cursor de Windows (el juego lo tiene escondido).
@@ -396,6 +398,11 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     } else {
         io.ConfigFlags |= ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange;
     }
+
+    // El vidrio solo usa el desenfoque si en este frame se va a desenfocar
+    // (con el menú visible); si no, la textura tendría una imagen vieja.
+    const bool glassVisible = menuOpen || menu::IsAnimatingClose();
+    gpu::SetBlurActive(glassVisible && theme::Get().blur > 0.0f);
 
     // 1. ImGui: describir la interfaz de este frame. Orden de dibujo (de
     //    abajo hacia arriba): HUD de los módulos, menú, avisos.
@@ -426,17 +433,24 @@ void RenderFrame(IDXGISwapChain* swapchain) {
 
     // 3. "Barrera": avisar a la GPU que el buffer pasa de "listo para mostrar"
     //    a "se va a dibujar encima". Al final, lo devolvemos al estado original.
+    //    Con el menú visible, antes copiamos el frame del juego y lo
+    //    desenfocamos para el vidrio (render/gpu.h); RecordBlur deja el buffer
+    //    listo para dibujar.
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = frame.backBuffer.Get();
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    g_r.commandList->ResourceBarrier(1, &barrier);
+    if (glassVisible && theme::Get().blur > 0.0f) {
+        gpu::RecordBlur(g_r.commandList.Get(), frame.backBuffer.Get(), theme::Get().blur);
+    } else {
+        g_r.commandList->ResourceBarrier(1, &barrier);
+    }
 
     // 4. Dibujar ImGui.
     g_r.commandList->OMSetRenderTargets(1, &frame.rtv, FALSE, nullptr);
-    ID3D12DescriptorHeap* heaps[] = {g_r.srvHeap.Get()};
+    ID3D12DescriptorHeap* heaps[] = {gpu::SrvHeap()};
     g_r.commandList->SetDescriptorHeaps(1, heaps);
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), g_r.commandList.Get());
 
@@ -624,6 +638,7 @@ void Shutdown() {
     g_menuOpen.store(false);
 
     DestroyDeviceResources();
+    gpu::Shutdown();
     if (g_r.win32Backend) {
         ImGui_ImplWin32_Shutdown();
         g_r.win32Backend = false;

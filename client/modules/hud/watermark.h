@@ -11,6 +11,7 @@ class Watermark : public Module {
 public:
     Watermark();
 
+    const char* IconSvg() const override;
     bool HasHud() const override { return true; }
     void OnRenderHud() override;
 

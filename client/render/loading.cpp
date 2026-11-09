@@ -16,6 +16,8 @@
 
 #include "core/version.h"
 #include "perf/timer.h"
+#include "render/assets.h"
+#include "render/glass.h"
 #include "render/theme.h"
 
 namespace luma::render::loading {
@@ -120,43 +122,35 @@ void Render() {
     const ImVec2 min((display.x - width) * 0.5f, (display.y - height) * 0.5f + rise);
     const ImVec2 max(min.x + width, min.y + height);
     const float rounding = theme::Get().rounding * theme::UiScale() * 1.2f;
-    draw->AddRectFilled(ImVec2(min.x + 4, min.y + 8), ImVec2(max.x + 4, max.y + 8),
-                        col(ImVec4(0, 0, 0, 0.35f)), rounding);
-    draw->AddRectFilled(min, max, col(theme::palette::kPanel), rounding);
-    draw->AddRect(min, max, col(theme::Accent(0.25f)), rounding, 0, 1.0f);
+    const theme::Palette& p = theme::P();
+    // Tarjeta de vidrio (sin desenfoque: con el menú cerrado no se desenfoca
+    // el juego, así que el vidrio lleva más tinte).
+    glass::Panel(draw, min, max, rounding, alpha);
 
-    // Logo: un sol cuyos rayos giran lentamente.
+    // Logo de Luma que "respira": crece y se achica muy levemente.
     const float time = static_cast<float>(MsSince(g_beganAt) / 1000.0);
     const ImVec2 center(min.x + width * 0.5f, min.y + height * 0.30f);
-    const float radius = fontSize * 1.3f;
+    const float breathe = 1.0f + 0.04f * std::sin(time * 3.0f);
+    const float logoSize = fontSize * 3.0f * breathe;
+    assets::DrawLogo(draw, center, logoSize, col(p.text));
     const ImU32 accent = col(theme::Accent(1.0f));
-    draw->AddCircleFilled(center, radius * 0.42f, accent, 32);
-    for (int i = 0; i < 8; ++i) {
-        const float angle = time * 0.8f + static_cast<float>(i) * 3.14159265f / 4.0f;
-        // Cada rayo "respira" con un pequeño desfase: efecto de brillo.
-        const float pulse = 0.85f + 0.15f * std::sin(time * 4.0f + static_cast<float>(i));
-        const ImVec2 dir(std::cos(angle), std::sin(angle));
-        draw->AddLine(ImVec2(center.x + dir.x * radius * 0.62f, center.y + dir.y * radius * 0.62f),
-                      ImVec2(center.x + dir.x * radius * (0.62f + 0.38f * pulse),
-                             center.y + dir.y * radius * (0.62f + 0.38f * pulse)),
-                      accent, std::max(2.0f, fontSize * 0.14f));
-    }
+    const float radius = fontSize * 1.3f;
 
     // Título y paso actual.
     ImFont* title = fonts.title != nullptr ? fonts.title : ImGui::GetFont();
     const ImVec2 titleSize = title->CalcTextSizeA(title->FontSize, FLT_MAX, 0.0f, kName);
     draw->AddText(title, title->FontSize, ImVec2(center.x - titleSize.x * 0.5f, center.y + radius * 1.15f),
-                  col(theme::palette::kText), kName);
+                  col(p.text), kName);
     const ImVec2 stepSize = ImGui::CalcTextSize(g_step.c_str());
     const float stepY = center.y + radius * 1.15f + titleSize.y + fontSize * 0.35f;
-    draw->AddText(ImVec2(center.x - stepSize.x * 0.5f, stepY), col(theme::palette::kTextDim), g_step.c_str());
+    draw->AddText(ImVec2(center.x - stepSize.x * 0.5f, stepY), col(p.textDim), g_step.c_str());
 
     // Barra de progreso con un brillo que la recorre.
     const float barWidth = width * 0.72f;
     const float barHeight = std::max(4.0f, fontSize * 0.28f);
     const ImVec2 barMin(center.x - barWidth * 0.5f, max.y - fontSize * 1.6f);
     const ImVec2 barMax(barMin.x + barWidth, barMin.y + barHeight);
-    draw->AddRectFilled(barMin, barMax, col(theme::palette::kPanelDark), barHeight);
+    draw->AddRectFilled(barMin, barMax, col(p.trackOff), barHeight);
     const float fillX = barMin.x + barWidth * g_shownProgress;
     if (fillX > barMin.x + 1.0f) {
         draw->AddRectFilled(barMin, ImVec2(fillX, barMax.y), accent, barHeight);
@@ -171,8 +165,7 @@ void Render() {
     std::snprintf(percent, sizeof(percent), "%d%%  ·  %s", static_cast<int>(g_shownProgress * 100.0f + 0.5f),
                   kVersion);
     const ImVec2 percentSize = ImGui::CalcTextSize(percent);
-    draw->AddText(ImVec2(center.x - percentSize.x * 0.5f, barMax.y + fontSize * 0.3f),
-                  col(theme::palette::kTextDim), percent);
+    draw->AddText(ImVec2(center.x - percentSize.x * 0.5f, barMax.y + fontSize * 0.3f), col(p.textDim), percent);
 }
 
 }  // namespace luma::render::loading

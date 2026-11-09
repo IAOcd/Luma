@@ -14,6 +14,7 @@ class PerfOverlay : public Module {
 public:
     PerfOverlay();
 
+    const char* IconSvg() const override;
     bool HasHud() const override { return true; }
     void OnRenderHud() override;
 

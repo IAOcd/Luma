@@ -1,0 +1,10 @@
+// =============================================================================
+//  luma.rc - Recursos incrustados en Luma.dll
+// =============================================================================
+//  Un archivo .rc le dice al compilador de recursos de Windows qué archivos
+//  meter DENTRO de la DLL. Así Luma no depende de archivos sueltos.
+//  101 = el número con el que lo buscamos después (ver render/assets.cpp).
+//  RCDATA = "datos crudos" (los bytes del PNG tal cual).
+// =============================================================================
+
+101 RCDATA "luma-icon.png"

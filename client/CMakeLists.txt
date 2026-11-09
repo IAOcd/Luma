@@ -21,7 +21,11 @@ add_library(Luma SHARED
     modules/hud/watermark.cpp
     modules/performance/perf_overlay.cpp
     perf/frame_stats.cpp
+    render/assets.cpp
     render/dx12_hooks.cpp
+    render/glass.cpp
+    render/gpu.cpp
+    render/icons.cpp
     render/input.cpp
     render/loading.cpp
     render/menu.cpp
@@ -32,6 +36,8 @@ add_library(Luma SHARED
     sdk/mouse_grab.cpp
     sdk/mouse_queue.cpp
     sdk/scanner.cpp
+    # Recursos incrustados en la DLL (el logo). Visual Studio compila los .rc solo.
+    assets/luma.rc
 )
 
 # Permite escribir #include "core/version.h" desde cualquier archivo de client/.
@@ -43,6 +49,9 @@ target_link_libraries(Luma PRIVATE
     imgui                     # interfaz (se usa desde la Fase 2)
     nlohmann_json::nlohmann_json  # configuración JSON (se usa desde la Fase 3)
     shell32                   # SHGetKnownFolderPath (carpeta %APPDATA%)
-    ole32                     # CoTaskMemFree (liberar el texto que devuelve la anterior)
-    winmm                     # PlaySound (efectos de sonido del menú)
+    ole32                     # CoTaskMemFree y COM (lo usan WIC y XAudio2)
+    xaudio2                   # efectos de sonido del menú (viene con Windows 10/11)
+    windowscodecs             # WIC: decodificar el PNG del logo
+    d3d12                     # el desenfoque del vidrio (render/gpu.cpp)
+    d3dcompiler               # compilar el shader del desenfoque
 )

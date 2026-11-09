@@ -34,6 +34,7 @@
 #include "perf/timer.h"
 #include "render/dx12_hooks.h"
 #include "render/input.h"
+#include "render/assets.h"
 #include "render/loading.h"
 #include "render/overlay.h"
 #include "sdk/mouse_grab.h"
@@ -150,6 +151,7 @@ bool Startup(HMODULE module) {
     // Desde aquí, la pantalla de carga muestra cada paso (el overlay ya
     // dibuja en cuanto llega el primer frame, en paralelo con este hilo).
     render::loading::Begin();
+    render::assets::Decode();  // el logo (se sube a la GPU en el próximo frame)
     render::loading::SetStep("Cargando la configuración...", 0.10f);
 
     // --- Módulos y configuración (Fase 3) --------------------------------------

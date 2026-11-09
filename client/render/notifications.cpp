@@ -16,6 +16,8 @@
 
 #include "core/logger.h"
 #include "perf/timer.h"
+#include "render/glass.h"
+#include "render/icons.h"
 #include "render/theme.h"
 
 namespace luma::notify {
@@ -118,25 +120,35 @@ void Render() {
             slide = (1.0f - in) * fontSize * 4.0f;
         }
 
+        // Píldora de vidrio con un ícono en un círculo de color según el tipo.
         const ImVec2 textSize = ImGui::CalcTextSize(toast.text.c_str());
-        const float width = textSize.x + padding * 2.0f + fontSize * 0.35f;
-        const float height = textSize.y + padding * 1.6f;
+        const float height = textSize.y + padding * 1.8f;
+        const float circle = height - padding * 0.9f;
+        const float width = textSize.x + padding * 2.4f + circle;
         const ImVec2 min(display.x - margin - width + slide, y - height);
         const ImVec2 max(min.x + width, y);
+        const float r = std::min(height * 0.5f, rounding * 1.4f);
+        render::glass::Panel(draw, min, max, r, alpha);
 
-        draw->AddRectFilled(min, max, ImGui::ColorConvertFloat4ToU32(ImVec4(0.08f, 0.08f, 0.10f, 0.92f * alpha)),
-                            rounding);
-        // Barra de color a la izquierda según el tipo de aviso.
         ImVec4 color = KindColor(toast.kind);
         color.w = alpha;
-        draw->AddRectFilled(min, ImVec2(min.x + fontSize * 0.22f, max.y),
-                            ImGui::ColorConvertFloat4ToU32(color), rounding,
-                            ImDrawFlags_RoundCornersLeft);
-        draw->AddText(ImVec2(min.x + padding + fontSize * 0.2f, min.y + padding * 0.8f),
-                      ImGui::ColorConvertFloat4ToU32(ImVec4(0.95f, 0.95f, 0.95f, alpha)),
-                      toast.text.c_str());
+        const ImVec2 c(min.x + padding * 0.45f + circle * 0.5f, min.y + height * 0.5f);
+        draw->AddCircleFilled(c, circle * 0.5f, ImGui::ColorConvertFloat4ToU32(color), 32);
+        const char* icon = toast.kind == Kind::Success   ? render::icons::kCheck
+                           : toast.kind == Kind::Info    ? render::icons::kSparkle
+                                                         : render::icons::kClose;
+        ImVec4 onColor = theme::P().onAccentText;
+        if (toast.kind != Kind::Info) {
+            onColor = ImVec4(1, 1, 1, 1);
+        }
+        onColor.w = alpha;
+        render::icons::Draw(draw, icon, c, circle * 0.6f, ImGui::ColorConvertFloat4ToU32(onColor));
+        ImVec4 text = theme::P().text;
+        text.w *= alpha;
+        draw->AddText(ImVec2(c.x + circle * 0.5f + padding * 0.7f, min.y + (height - textSize.y) * 0.5f),
+                      ImGui::ColorConvertFloat4ToU32(text), toast.text.c_str());
 
-        y -= height + fontSize * 0.4f;
+        y -= height + fontSize * 0.45f;
     }
 }
 

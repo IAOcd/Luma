@@ -70,6 +70,10 @@ public:
 
     // --- Lo que cada módulo puede reemplazar ----------------------------------
 
+    // Su ícono: un path SVG en una cuadrícula de 24x24 (ver render/icons.h).
+    // nullptr = el ícono de su categoría.
+    virtual const char* IconSvg() const { return nullptr; }
+
     // ¿Dibuja algo en pantalla cada frame mientras está activo?
     virtual bool HasHud() const { return false; }
     // Dibuja su parte del HUD (se llama dentro de un frame de ImGui).

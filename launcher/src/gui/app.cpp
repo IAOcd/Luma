@@ -87,6 +87,7 @@ constexpr const char* kIconSliders = "M4 6.5h9 M17 6.5h3 M15 4.5v4 M4 12h3 M11 1
 constexpr const char* kIconCalendar = "M4.5 6h15v14h-15z M4.5 10h15 M8.5 3.5v4 M15.5 3.5v4";
 constexpr const char* kIconWindows = "M4 5.5l7-1v7H4z M13 4.2l7-1v8.3h-7z M4 13h7v7l-7-1z M13 13h7v8.3l-7-1z";
 constexpr const char* kIconStar = "F M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.8z";
+constexpr const char* kIconCheck = "M5 12.5l4.5 4.5L19 7.5";
 constexpr const char* kIconChevron = "M9.5 6l6 6-6 6";
 constexpr const char* kIconFolder = "M3.5 6.5h6l2 2h9v10h-17z";
 constexpr const char* kIconUser = "M8 8C8 5.8 9.8 4 12 4S16 5.8 16 8S14.2 12 12 12S8 10.2 8 8z M4.5 20c.8-3.8 3.9-6 7.5-6s6.7 2.2 7.5 6";
@@ -1705,6 +1706,9 @@ void DrawSkinsGrid(ImDrawList* d, ImVec2 min, ImVec2 max) {
         if (s.favorite) {
             icons::Draw(d, kIconStar, ImVec2(tmax.x - S(16.0f), tmin.y + S(16.0f)), S(15.0f), C(p.warning));
         }
+        if (s.id == skins::Active()) {
+            icons::Draw(d, kIconCheck, ImVec2(tmax.x - S(16.0f), tmax.y - S(50.0f)), S(16.0f), C(p.accent), S(2.2f));
+        }
         if (s.id == g_currentGameSkin) {
             const char* badge = T("skins.current");
             const ImVec2 bs = TextSize(g_fonts.tiny, badge);
@@ -1785,9 +1789,13 @@ void DrawSkinDetail(ImDrawList* d, ImVec2 min, ImVec2 max) {
         g_deleteArmedAt = ImGui::GetTime();
     }
     y += S(50.0f);
-    // Usar en Minecraft: llega con los cosméticos.
-    Button("##skin_use", ImVec2(x, y), T("skins.use_in_game"), true, &bw, false);
-    TextWrap(d, g_fonts.tiny, ImVec2(x + bw + S(12.0f), y + S(4.0f)), C(p.textDim), T("skins.use_soon"), w - bw - S(12.0f));
+    // Equipar: la skin de Luma (la que usan el Closet del juego y los
+    // cosméticos). Cambiar tu skin real de Minecraft llega más adelante.
+    const bool equipped = skins::Active() == s->id;
+    if (Button("##skin_equip", ImVec2(x, y), equipped ? T("closet.equipped") : T("closet.equip"), !equipped, &bw, !equipped)) {
+        skins::SetActive(s->id);
+    }
+    TextWrap(d, g_fonts.tiny, ImVec2(x + bw + S(12.0f), y + S(2.0f)), C(p.textDim), T("closet.equip_hint"), w - bw - S(12.0f));
 }
 
 void DrawSkinsPage(ImDrawList* d, ImVec2 min, ImVec2 max) {

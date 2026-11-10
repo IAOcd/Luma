@@ -40,16 +40,20 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
 #include <imgui.h>
 #include <imgui_internal.h>  // ImLerp
 
+#include <nlohmann/json.hpp>
+
 #include "core/config.h"
 #include "core/keys.h"
 #include "core/paths.h"
 #include "core/version.h"
+#include "i18n.h"
 #include "modules/module_manager.h"
 #include "perf/benchmark.h"
 #include "perf/frame_stats.h"
@@ -63,6 +67,7 @@
 #include "render/module_options.h"
 #include "render/input.h"
 #include "render/notifications.h"
+#include "render/skin_heads.h"
 #include "render/sound.h"
 #include "render/theme.h"
 #include "render/ui.h"
@@ -81,7 +86,7 @@ using modules::Module;
 //  Estado
 // =============================================================================
 
-enum class Page { Modules, Theme, Profiles, Settings, Benchmark, Diagnostics };
+enum class Page { Modules, Theme, Profiles, Settings, Benchmark, Diagnostics, Closet };
 
 Page g_page = Page::Modules;
 Category g_categoryFilter = Category::Count;  // Count = todas
@@ -1369,6 +1374,253 @@ void DrawDiagnosticsPage(const RenderInfo& info) {
 
 // Una entrada de la barra lateral: ícono + texto. La "píldora" que marca la
 // elegida se dibuja aparte y se desliza de una a otra (ver Sidebar).
+// =============================================================================
+//  Menú radial (lo primero que aparece al pulsar L) y página Closet
+// =============================================================================
+//  Un círculo de vidrio con 4 botones alrededor de la cara de tu skin:
+//            [ Mods ]
+//   [ HUD ]   (cara)   [ Closet ]
+//          [ Ajustes ]
+//  Mods / Closet / Ajustes abren el menú grande en esa página; HUD abre el
+//  editor de HUD. Desde el menú grande, "Inicio" vuelve al radial.
+
+bool g_radial = true;  // ¿se muestra el radial (true) o el menú grande (false)?
+
+enum class RadialItem { Mods = 0, Closet = 1, Settings = 2, Hud = 3, Count = 4 };
+
+void OpenPage(Page page) {
+    g_radial = false;
+    g_page = page;
+    g_detail = nullptr;
+    g_categoryFilter = Category::Count;
+    OnNavigate();
+}
+
+void DrawRadial(float appear, float scale) {
+    const theme::Palette& p = theme::P();
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float fs = Fs();
+    ImGui::SetNextWindowPos(viewport->Pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(viewport->Size, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, appear);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground |
+                                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse;
+    if (ImGui::Begin("##luma_radial", nullptr, kFlags)) {
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        const float outer = fs * 13.0f * scale;
+        const float inner = fs * 5.4f * scale;
+        const ImVec2 c(viewport->Pos.x + viewport->Size.x * 0.5f,
+                       viewport->Pos.y + viewport->Size.y * 0.5f + (1.0f - appear) * fs * 1.5f);
+
+        // El disco de vidrio (desenfoca el juego) y el círculo del centro.
+        glass::Panel(draw, ImVec2(c.x - outer, c.y - outer), ImVec2(c.x + outer, c.y + outer), outer, appear);
+        draw->AddCircleFilled(c, inner, Col(p.surface, 0.9f), 64);
+        draw->AddCircle(c, inner, Col(p.border), 64, 1.0f);
+
+        // ¿Sobre qué botón está el mouse? (por el ángulo y la distancia al centro)
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        const float dx = mouse.x - c.x;
+        const float dy = mouse.y - c.y;
+        const float dist = std::sqrt(dx * dx + dy * dy);
+        int hovered = -1;
+        if (dist > inner && dist < outer * 1.08f) {
+            float a = std::atan2(dy, dx) * 180.0f / 3.14159265f;  // 0 = derecha, 90 = abajo
+            if (a < 0.0f) a += 360.0f;
+            hovered = a >= 315.0f || a < 45.0f ? static_cast<int>(RadialItem::Closet)
+                      : a < 135.0f             ? static_cast<int>(RadialItem::Settings)
+                      : a < 225.0f             ? static_cast<int>(RadialItem::Hud)
+                                               : static_cast<int>(RadialItem::Mods);
+        }
+        ImGui::SetCursorScreenPos(ImVec2(c.x - outer, c.y - outer));
+        const bool clicked = ImGui::InvisibleButton("##radial", ImVec2(outer * 2.0f, outer * 2.0f)) && hovered >= 0;
+        HoverFeedback(hovered >= 0 && ImGui::IsItemHovered());
+        static int lastHovered = -1;
+        if (hovered != lastHovered && hovered >= 0) sound::Play(sound::Effect::Hover);
+        lastHovered = hovered;
+
+        struct Item {
+            const char* label;
+            const char* icon;
+            float angle;  // grados (0 = derecha, 90 = abajo)
+        };
+        const Item items[4] = {
+            {i18n::T("radial.mods"), icons::kAll, 270.0f},
+            {i18n::T("radial.closet"), icons::kProfiles, 0.0f},
+            {i18n::T("radial.settings"), icons::kSettings, 90.0f},
+            {i18n::T("radial.hud"), icons::kHud, 180.0f},
+        };
+        constexpr float kToRad = 3.14159265f / 180.0f;
+        for (int i = 0; i < 4; ++i) {
+            const float h = Animate(ImGui::GetID("##radial") + 10 + i, hovered == i ? 1.0f : 0.0f, 16.0f);
+            const float half = 45.0f - 2.5f;  // separación entre botones
+            const float a0 = (items[i].angle - half) * kToRad;
+            const float a1 = (items[i].angle + half) * kToRad;
+            const float ro = outer - fs * 0.35f + h * fs * 0.25f;
+            const float ri = inner + fs * 0.35f;
+            // el "gajo" del botón
+            draw->PathArcTo(c, ro, a0, a1, 32);
+            draw->PathArcTo(c, ri, a1, a0, 20);
+            draw->PathFillConcave(Col(theme::Accent(1.0f), 0.05f + 0.20f * h));
+            draw->PathArcTo(c, ro, a0, a1, 32);
+            draw->PathArcTo(c, ri, a1, a0, 20);
+            draw->PathStroke(Col(Mix(p.border, theme::Accent(1.0f), h * 0.6f)), ImDrawFlags_Closed, 1.0f);
+            // ícono y nombre en el medio del gajo
+            const float mid = (ro + ri) * 0.5f;
+            const ImVec2 at(c.x + std::cos(items[i].angle * kToRad) * mid, c.y + std::sin(items[i].angle * kToRad) * mid);
+            const float iconSize = fs * (1.7f + 0.2f * h);
+            icons::Draw(draw, items[i].icon, ImVec2(at.x, at.y - fs * 0.55f), iconSize, Col(Mix(p.textDim, p.text, h)));
+            ImFont* font = theme::GetFonts().medium;
+            const ImVec2 ts = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, items[i].label);
+            draw->AddText(font, font->FontSize, ImVec2(at.x - ts.x * 0.5f, at.y + fs * 0.75f), Col(Mix(p.textDim, p.text, h)),
+                          items[i].label);
+        }
+
+        // El centro: la cara de tu skin (o el logo, si todavía no hay skin).
+        const ImTextureID face = skinheads::Own();
+        const float half = inner * 0.62f;
+        if (face != 0) {
+            draw->AddImageRounded(face, ImVec2(c.x - half, c.y - half), ImVec2(c.x + half, c.y + half), ImVec2(0, 0),
+                                  ImVec2(1, 1), Col(ImVec4(1, 1, 1, 1)), fs * 0.5f);
+        } else {
+            assets::DrawLogo(draw, c, inner * 1.1f, Col(p.text));
+        }
+        // Debajo del círculo: cómo cerrar.
+        char hint[96];
+        std::snprintf(hint, sizeof(hint), i18n::T("radial.hint"), keys::Name(config::g_menuKey.load()).c_str());
+        const ImVec2 hs = ImGui::CalcTextSize(hint);
+        draw->AddText(ImVec2(c.x - hs.x * 0.5f, c.y + outer + fs * 0.9f), Col(p.textDim), hint);
+
+        if (clicked) {
+            sound::Play(sound::Effect::Click);
+            switch (static_cast<RadialItem>(hovered)) {
+                case RadialItem::Mods: OpenPage(Page::Modules); break;
+                case RadialItem::Closet: OpenPage(Page::Closet); break;
+                case RadialItem::Settings: OpenPage(Page::Settings); break;
+                case RadialItem::Hud: hudeditor::Begin(); break;
+                default: break;
+            }
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
+// --- Closet: tus skins (y pronto, los cosméticos) ------------------------------------
+struct ClosetSkin {
+    std::string id;
+    std::string name;
+    std::wstring file;
+    bool favorite = false;
+};
+std::vector<ClosetSkin> g_closet;
+std::string g_activeSkin;
+bool g_closetDirty = true;
+
+std::filesystem::path SkinsDir() { return paths::DataDir() / L"skins"; }
+
+void LoadCloset() {
+    g_closetDirty = false;
+    g_closet.clear();
+    g_activeSkin.clear();
+    std::error_code ec;
+    {
+        std::ifstream file(SkinsDir() / L"library.json");
+        const nlohmann::json root = file ? nlohmann::json::parse(file, nullptr, false) : nlohmann::json();
+        if (root.is_object() && root.contains("skins") && root["skins"].is_array()) {
+            for (const nlohmann::json& j : root["skins"]) {
+                if (!j.is_object()) continue;
+                ClosetSkin s;
+                s.id = j.value("id", std::string());
+                s.name = j.value("name", std::string());
+                s.file = (SkinsDir() / std::filesystem::path(j.value("file", std::string()))).native();
+                s.favorite = j.value("favorite", false);
+                if (!s.id.empty() && std::filesystem::exists(s.file, ec)) g_closet.push_back(std::move(s));
+            }
+        }
+    }
+    std::ifstream active(SkinsDir() / L"active.json");
+    const nlohmann::json a = active ? nlohmann::json::parse(active, nullptr, false) : nlohmann::json();
+    if (a.is_object()) g_activeSkin = a.value("id", std::string());
+}
+
+void Equip(const ClosetSkin& s) {
+    std::error_code ec;
+    std::filesystem::create_directories(SkinsDir(), ec);
+    nlohmann::json j;
+    j["id"] = s.id;
+    std::ofstream(SkinsDir() / L"active.json", std::ios::trunc) << j.dump(2);
+    g_activeSkin = s.id;
+    char text[160];
+    std::snprintf(text, sizeof(text), i18n::T("closet.equipped_toast"), s.name.c_str());
+    notify::Push(notify::Kind::Info, text);
+}
+
+void DrawClosetPage() {
+    if (g_closetDirty) LoadCloset();
+    const theme::Palette& p = theme::P();
+    const float fs = Fs();
+    PageHeader(i18n::T("closet.title"), i18n::T("closet.subtitle"));
+    SectionHeader(icons::kProfiles, i18n::T("closet.skins"), static_cast<int>(g_closet.size()));
+    if (g_closet.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", i18n::T("closet.empty"));
+        ImGui::PopTextWrapPos();
+    } else {
+        const float gap = fs * 0.7f;
+        const float tileW = fs * 8.5f;
+        const float tileH = fs * 11.0f;
+        const int columns = std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + gap) / (tileW + gap)));
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        for (std::size_t i = 0; i < g_closet.size(); ++i) {
+            const ClosetSkin& s = g_closet[i];
+            if (i % columns != 0) ImGui::SameLine(0.0f, gap);
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const ImVec2 max(pos.x + tileW, pos.y + tileH);
+            const bool equipped = s.id == g_activeSkin;
+            glass::Surface(draw, pos, max, Rounding() * 0.8f, ImGui::GetStyle().Alpha, equipped ? 0.6f : 0.0f);
+            if (equipped) draw->AddRect(pos, max, Col(theme::Accent(1.0f)), Rounding() * 0.8f, 0, 2.0f);
+            // la cara
+            const float face = tileW * 0.55f;
+            const ImVec2 fmin(pos.x + (tileW - face) * 0.5f, pos.y + fs * 0.9f);
+            const ImTextureID tex = skinheads::FromFile(s.file);
+            if (tex != 0) {
+                draw->AddImageRounded(tex, fmin, ImVec2(fmin.x + face, fmin.y + face), ImVec2(0, 0), ImVec2(1, 1),
+                                      Col(ImVec4(1, 1, 1, 1)), fs * 0.35f);
+            } else {
+                draw->AddRectFilled(fmin, ImVec2(fmin.x + face, fmin.y + face), Col(p.surface), fs * 0.35f);
+            }
+            if (s.favorite) icons::Draw(draw, icons::kSparkle, ImVec2(max.x - fs * 0.9f, pos.y + fs * 0.9f), fs, Col(p.text));
+            // nombre (recortado) y botón
+            std::string name = s.name;
+            while (name.size() > 1 && ImGui::CalcTextSize(name.c_str()).x > tileW - fs) name.pop_back();
+            const ImVec2 ns = ImGui::CalcTextSize(name.c_str());
+            draw->AddText(ImVec2(pos.x + (tileW - ns.x) * 0.5f, fmin.y + face + fs * 0.5f), Col(p.text), name.c_str());
+            ImGui::SetCursorScreenPos(ImVec2(pos.x + fs * 0.6f, max.y - fs * 2.5f));
+            ImGui::PushID(static_cast<int>(i));
+            if (equipped) ImGui::BeginDisabled();
+            if (GlassButton(equipped ? i18n::T("closet.equipped") : i18n::T("closet.equip"), nullptr,
+                            ImVec2(tileW - fs * 1.2f, 0), !equipped)) {
+                Equip(s);
+            }
+            if (equipped) ImGui::EndDisabled();
+            ImGui::PopID();
+            ImGui::SetCursorScreenPos(pos);
+            ImGui::Dummy(ImVec2(tileW, tileH));
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", i18n::T("closet.equip_hint"));
+        ImGui::PopTextWrapPos();
+    }
+    SectionHeader(icons::kSparkle, i18n::T("closet.cosmetics"));
+    BeginGroupCard("cosmetics");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", i18n::T("closet.cosmetics_soon"));
+    ImGui::PopTextWrapPos();
+    EndGroupCard();
+}
+
 bool NavItem(const char* label, const char* icon, bool selected) {
     const theme::Palette& p = theme::P();
     const float height = Fs() * 2.35f;
@@ -1421,6 +1673,11 @@ void Sidebar() {
     draw->ChannelsSetCurrent(1);
     g_navPillTarget = -1.0f;
 
+    // Volver al menú radial (el de los 4 botones).
+    if (NavItem(i18n::T("radial.home"), icons::kBack, false)) {
+        g_radial = true;
+        OnNavigate();
+    }
     NavLabel("MÓDULOS");
     auto category = [](const char* label, const char* icon, Category c) {
         const bool selected = g_page == Page::Modules && g_categoryFilter == c;
@@ -1447,6 +1704,7 @@ void Sidebar() {
             OnNavigate();
         }
     };
+    page(i18n::T("closet.title"), icons::kProfiles, Page::Closet);
     page("Tema", icons::kTheme, Page::Theme);
     page("Perfiles", icons::kProfiles, Page::Profiles);
     page("Ajustes", icons::kSettings, Page::Settings);
@@ -1488,6 +1746,8 @@ void Sidebar() {
 // =============================================================================
 
 void OnOpened() {
+    g_radial = !hudeditor::IsActive();  // siempre empieza en el radial
+    g_closetDirty = true;
     g_openedAt = perf::Now();
     g_pageChangedAt = g_openedAt;
     g_closing.store(false);
@@ -1592,6 +1852,12 @@ void Draw(const RenderInfo& info) {
 
     // Ventana anfitriona invisible que cubre la pantalla; los paneles de
     // vidrio se dibujan dentro, centrados y de tamaño fijo.
+    // Al abrir: el menú radial (Mods, HUD, Closet, Ajustes).
+    if (g_radial) {
+        DrawRadial(appear, scale);
+        return;
+    }
+
     ImGui::SetNextWindowPos(viewport->Pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(viewport->Size, ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, appear);
@@ -1646,6 +1912,7 @@ void Draw(const RenderInfo& info) {
                 case Page::Benchmark:   DrawBenchmarkPage(); break;
                 case Page::Diagnostics: DrawDiagnosticsPage(info); break;
                 case Page::Modules:     DrawModulesPage(); break;
+                case Page::Closet:      DrawClosetPage(); break;
             }
         }
         ImGui::EndChild();

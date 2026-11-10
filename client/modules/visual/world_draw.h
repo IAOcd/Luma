@@ -61,4 +61,25 @@ private:
     bool showSelf_ = false;
 };
 
+class ChunkBorders : public Module {
+public:
+    ChunkBorders();
+    const char* IconSvg() const override;
+    bool SdkReady() const override;
+    void OnEnable() override;
+    void OnDisable() override;
+    bool HasSettings() const override { return true; }
+    bool DrawSettings() override;
+    void SaveSettings(nlohmann::json& out) const override;
+    void LoadSettings(const nlohmann::json& in) override;
+
+private:
+    void Push() const;
+    float inner_[4] = {1.0f, 0.85f, 0.25f, 0.9f};
+    float corner_[4] = {0.35f, 0.65f, 1.0f, 1.0f};
+    float neighbor_[4] = {1.0f, 0.35f, 0.3f, 0.9f};
+    bool neighbors_ = true;
+    int range_ = 24;
+};
+
 }  // namespace luma::modules::visual

@@ -270,25 +270,26 @@ ImVec2 SpeedDisplay::OnRenderHud(const HudFrame& frame) {
     sdk::player::Snapshot p;
     const bool ok = PlayerThisFrame(p);
     if (!ok && !frame.editing) {
-        lastSample_ = 0;
+        lastTick_ = -1;
         return ImVec2(0, 0);
     }
-    if (ok) {
-        // Distancia recorrida desde la última muestra, dividida por el tiempo.
-        // Muestras cada 100 ms y un suavizado leve para que no tiemble.
-        const std::int64_t now = perf::Now();
-        const double elapsed = lastSample_ == 0 ? 0.0 : perf::TicksToMs(now - lastSample_) / 1000.0;
-        if (lastSample_ == 0 || elapsed >= 0.1) {
-            if (lastSample_ != 0 && elapsed < 1.0) {
-                const float dx = p.feet[0] - lastPos_[0];
-                const float dy = vertical_ ? p.feet[1] - lastPos_[1] : 0.0f;
-                const float dz = p.feet[2] - lastPos_[2];
-                const float speed = static_cast<float>(std::sqrt(dx * dx + dy * dy + dz * dz) / elapsed);
-                shown_ = speed > 200.0f ? 0.0f : shown_ + (speed - shown_) * 0.6f;  // >200: teletransporte
-            }
-            lastSample_ = now;
-            std::copy(p.feet, p.feet + 3, lastPos_);
-        }
+    if (ok && p.ticks != lastTick_) {
+        // VELOCIDAD EXACTA: el juego mueve al jugador en "ticks" (20 por
+        // segundo) y guarda dónde estaba en el tick anterior. Lo que te moviste
+        // en ese tick x 20 = bloques por segundo. (Antes medíamos con el reloj
+        // cada 100 ms y a veces caían 1, 2 o 3 ticks: el número saltaba.)
+        lastTick_ = p.ticks;
+        const float dx = p.eye[0] - p.eyeOld[0];
+        const float dy = vertical_ ? p.eye[1] - p.eyeOld[1] : 0.0f;
+        const float dz = p.eye[2] - p.eyeOld[2];
+        float speed = std::sqrt(dx * dx + dy * dy + dz * dz) * 20.0f;
+        if (!std::isfinite(speed) || speed > 200.0f) speed = 0.0f;  // teletransporte
+        samples_[sampleIndex_] = speed;
+        sampleIndex_ = (sampleIndex_ + 1) % kSamples;
+        // Promedio de los últimos 5 ticks (un cuarto de segundo): estable pero rápido.
+        float sum = 0.0f;
+        for (float v : samples_) sum += v;
+        shown_ = sum / static_cast<float>(kSamples);
     }
     char text[32];
     const float speed = ok ? shown_ : 4.32f;

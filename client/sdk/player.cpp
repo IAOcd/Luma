@@ -143,7 +143,7 @@ bool Read(Snapshot& out) {
     std::uintptr_t rotation = 0;
     float rot[2]{};
     if (!Component(player, offsets::kActorStateVector, state) || !Component(player, offsets::kActorAabb, aabb) ||
-        !Component(player, offsets::kActorRotation, rotation) || !SafeRead(state + offsets::kStatePos, out.eye) ||
+        !Component(player, offsets::kActorRotation, rotation) || !SafeRead(state + offsets::kStatePos, out.eye) || !SafeRead(state + offsets::kStatePosOld, out.eyeOld) ||
         !SafeRead(state + offsets::kStateVelocity, out.velocity) || !SafeRead(aabb + offsets::kAabbMin, out.feet) ||
         !SafeRead(rotation + offsets::kRotPitch, rot)) {
         return false;

@@ -54,6 +54,7 @@ void Manager::RegisterAll() {
     modules_.push_back(std::make_unique<visual::FovChanger>());
     modules_.push_back(std::make_unique<visual::BlockOutline>());
     modules_.push_back(std::make_unique<visual::Hitboxes>());
+    modules_.push_back(std::make_unique<visual::ChunkBorders>());
     // Utilidad
     modules_.push_back(std::make_unique<utility::ToggleKey>(render::input::HoldSlot::Sprint));
     modules_.push_back(std::make_unique<utility::ToggleKey>(render::input::HoldSlot::Sneak));

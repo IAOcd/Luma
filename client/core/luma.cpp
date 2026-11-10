@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cwchar>
 #include <format>
+#include <fstream>
 #include <mutex>
 #include <string>
 
@@ -45,7 +46,11 @@
 #include "sdk/camera.h"
 #include "sdk/draw3d.h"
 #include "sdk/paperdoll.h"
+#include <nlohmann/json.hpp>
+
 #include "core/stats.h"
+#include "i18n.h"
+#include "render/skin_heads.h"
 #include "sdk/network.h"
 #include "sdk/player.h"
 
@@ -172,6 +177,14 @@ bool Startup(HMODULE module) {
     }
     config::LoadAtStartup();
     g_configLoaded = true;
+    // Idioma: el que elegiste en el launcher (los dos usan las mismas traducciones).
+    {
+        std::ifstream file(paths::DataDir() / L"launcher.json");
+        const nlohmann::json json = file ? nlohmann::json::parse(file, nullptr, false) : nlohmann::json();
+        if (json.is_object()) {
+            i18n::SetLanguage(i18n::LanguageFromCode(json.value("language", std::string("en")).c_str()));
+        }
+    }
     sound::Init();  // después de la config: usa el volumen guardado
     log::Info("{} módulos registrados. Perfil activo: {}.", modules::Manager::All().size(),
               config::ActiveProfile());
@@ -257,7 +270,8 @@ void WaitForUnload() {
         config::SaveIfDirty();  // guardado automático (solo si hubo cambios)
         render::input::PollHolds();             // toggle sprint/sneak: menús del juego y foco
         perf::benchmark::Poll();
-        stats::Poll();                          // tiempo jugado y nombre del jugador (para el launcher)
+        stats::Poll();
+        render::skinheads::Poll();              // caras de skins pedidas por el menú (Closet)                          // tiempo jugado y nombre del jugador (para el launcher)
         render::icons_items::Poll();            // íconos de ítems pedidos por el HUD                // terminar pruebas (cálculos y CSV fuera del render)
         modules::performance::PollRenderThread();  // prioridad del hilo de render
         {

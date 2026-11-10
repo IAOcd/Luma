@@ -24,6 +24,7 @@
 #include "sdk/offsets.h"
 #include "sdk/player.h"
 #include "sdk/skin.h"
+#include "render/skin_heads.h"
 
 namespace luma::stats {
 
@@ -167,6 +168,7 @@ void CheckSkin() {
         return;
     }
     g_lastSkinHash = hash;
+    render::skinheads::SetOwn(image.rgba.data(), image.width, image.height);  // la cara del menú radial
     std::error_code ec;
     fs::create_directories(paths::DataDir(), ec);
     fs::path temp = paths::DataDir() / L"skin.png.tmp";
@@ -206,6 +208,8 @@ void Begin() {
     g_begun = true;
     Save();
     SaveGameDir();
+    // Tu cara para el menú desde la última skin guardada (antes de entrar a un mundo).
+    render::skinheads::LoadOwnFromFile((paths::DataDir() / L"skin.png").native());
 }
 
 void Poll() {

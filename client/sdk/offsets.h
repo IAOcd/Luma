@@ -32,6 +32,7 @@ inline constexpr std::uintptr_t kActorRotation = 0x250;        // -> ActorRotati
 // --- StateVectorComponent -----------------------------------------------------------
 // Vec3 pos (a la altura de los OJOS: pies + 1,62), Vec3 posOld, Vec3 velocity
 inline constexpr std::uintptr_t kStatePos = 0x0;
+inline constexpr std::uintptr_t kStatePosOld = 0xC;   // la posición del tick anterior
 inline constexpr std::uintptr_t kStateVelocity = 0x18;
 
 // --- AABBShapeComponent (la caja del jugador) --------------------------------------

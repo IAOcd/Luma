@@ -197,4 +197,72 @@ void Hitboxes::LoadSettings(const nlohmann::json& in) {
     Push();
 }
 
+// =============================================================================
+//  Bordes de chunk
+// =============================================================================
+
+ChunkBorders::ChunkBorders()
+    : Module("chunk_borders", "Bordes de chunk",
+             "Muestra los bordes de los chunks (columnas de 16x16 bloques), como el F3+G de Java.", Category::Visual) {}
+
+const char* ChunkBorders::IconSvg() const {
+    return "M4 4h16v16H4z M12 4v16 M4 12h16";
+}
+
+bool ChunkBorders::SdkReady() const {
+    return sdk::draw3d::Available();
+}
+
+void ChunkBorders::Push() const {
+    sdk::draw3d::ChunkBorderSettings s;
+    s.enabled = IsEnabled();
+    s.inner = ToColor(inner_);
+    s.corner = ToColor(corner_);
+    s.neighbor = ToColor(neighbor_);
+    s.neighbors = neighbors_;
+    s.range = range_;
+    sdk::draw3d::SetChunkBorders(s);
+}
+
+void ChunkBorders::OnEnable() {
+    Push();
+}
+
+void ChunkBorders::OnDisable() {
+    Push();
+}
+
+bool ChunkBorders::DrawSettings() {
+    bool changed = false;
+    changed |= ui::ColorAlpha("Paredes del chunk", inner_);
+    changed |= ui::ColorAlpha("Esquinas del chunk", corner_);
+    changed |= ui::Toggle("Esquinas de los vecinos", &neighbors_);
+    if (neighbors_) {
+        changed |= ui::ColorAlpha("Color de los vecinos", neighbor_);
+    }
+    changed |= ui::SliderInt("Altura", &range_, 8, 64, "%d bloques");
+    ui::Hint("Se dibujan dentro del mundo: las paredes los tapan.");
+    if (changed) {
+        Push();
+    }
+    return changed;
+}
+
+void ChunkBorders::SaveSettings(nlohmann::json& out) const {
+    SaveColor(out, "inner", inner_);
+    SaveColor(out, "corner", corner_);
+    SaveColor(out, "neighbor", neighbor_);
+    out["neighbors"] = neighbors_;
+    out["range"] = range_;
+}
+
+void ChunkBorders::LoadSettings(const nlohmann::json& in) {
+    LoadColor(in, "inner", inner_);
+    LoadColor(in, "corner", corner_);
+    LoadColor(in, "neighbor", neighbor_);
+    neighbors_ = in.value("neighbors", true);
+    range_ = std::clamp(in.value("range", 24), 8, 64);
+    Push();
+}
+
 }  // namespace luma::modules::visual

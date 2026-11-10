@@ -43,6 +43,7 @@ std::uintptr_t LocalPlayer();
 
 struct Snapshot {
     float eye[3]{};        // posición de los ojos
+    float eyeOld[3]{};     // la misma, en el tick anterior (para medir la velocidad exacta)
     float feet[3]{};       // posición de los pies (lo que muestra el juego como coordenadas)
     float velocity[3]{};   // bloques por tick
     float yaw = 0.0f;      // 0 = sur, 90 = oeste, 180 = norte, -90 = este (convención del juego)

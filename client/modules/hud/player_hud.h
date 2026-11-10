@@ -64,8 +64,10 @@ public:
 private:
     bool vertical_ = false;  // incluir la velocidad vertical (3D)
     int unit_ = 0;            // 0 = m/s, 1 = km/h
-    float lastPos_[3]{};
-    std::int64_t lastSample_ = 0;
+    static constexpr int kSamples = 5;
+    float samples_[kSamples]{};   // velocidad de los últimos ticks
+    int sampleIndex_ = 0;
+    std::int32_t lastTick_ = -1;
     float shown_ = 0.0f;
 };
 

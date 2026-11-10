@@ -43,6 +43,9 @@ std::string SyncFromGame(const std::wstring& png);
 std::string ImportWithDialog(void* ownerWindow, std::string& errorKey);
 
 void SetFavorite(const std::string& id, bool favorite);
+// La skin EQUIPADA de Luma (active.json, la misma que usa el Closet del juego).
+std::string Active();
+void SetActive(const std::string& id);
 void Remove(const std::string& id);
 std::wstring Folder();
 

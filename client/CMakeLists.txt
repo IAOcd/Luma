@@ -18,6 +18,7 @@ add_library(Luma SHARED
     core/luma.cpp
     core/paths.cpp
     core/stats.cpp
+    ${PROJECT_SOURCE_DIR}/shared/i18n.cpp   # textos en inglés, español y portugués (los mismos del launcher)
     modules/module_manager.cpp
     modules/registry.cpp
     modules/hud/hud_modules.cpp
@@ -52,6 +53,7 @@ add_library(Luma SHARED
     render/notifications.cpp
     render/overlay.cpp
     render/postfx.cpp
+    render/skin_heads.cpp
     render/sound.cpp
     render/theme.cpp
     sdk/mouse_grab.cpp
@@ -71,7 +73,7 @@ add_library(Luma SHARED
 )
 
 # Permite escribir #include "core/version.h" desde cualquier archivo de client/.
-target_include_directories(Luma PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(Luma PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/shared)
 
 target_link_libraries(Luma PRIVATE
     luma_options              # nuestras opciones de compilación (ver CMakeLists raíz)

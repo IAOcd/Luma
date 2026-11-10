@@ -59,6 +59,17 @@ struct HitboxSettings {
 };
 void SetHitboxes(const HitboxSettings& settings);
 
+// Bordes de chunk (como el F3+G de Java).
+struct ChunkBorderSettings {
+    bool enabled = false;
+    Color inner{1.0f, 0.85f, 0.25f, 0.9f};    // paredes del chunk actual (cada 2 bloques)
+    Color corner{0.35f, 0.65f, 1.0f, 1.0f};   // sus esquinas
+    Color neighbor{1.0f, 0.35f, 0.3f, 0.9f};  // esquinas de los chunks vecinos
+    bool neighbors = true;
+    int range = 24;                            // bloques arriba y abajo de ti
+};
+void SetChunkBorders(const ChunkBorderSettings& settings);
+
 // sdk/camera.cpp las llama alrededor de LevelRenderer::renderLevel.
 void BeginLevel(std::uintptr_t levelRenderer);
 void EndLevel();

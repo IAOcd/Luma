@@ -105,6 +105,7 @@ bool g_fillTried[kFillMaterialCount]{};
 std::mutex g_settingsMutex;
 OutlineSettings g_outline;
 HitboxSettings g_hitboxes;
+ChunkBorderSettings g_chunks;
 
 // --- HashedString (un texto con su "huella" precalculada) -----------------------------
 std::uint64_t Fnv1a64(const char* text) {
@@ -547,6 +548,68 @@ HitboxSettings CopyHitboxes() {
     return g_hitboxes;
 }
 
+ChunkBorderSettings CopyChunks() {
+    std::lock_guard lock(g_settingsMutex);
+    return g_chunks;
+}
+
+// ¿Hay algo para dibujar en el mundo además del contorno? (hitboxes o bordes de chunk)
+bool WorldWanted() {
+    std::lock_guard lock(g_settingsMutex);
+    return g_hitboxes.enabled || g_chunks.enabled;
+}
+
+// --- Bordes de chunk (como el F3+G de Java) --------------------------------------------
+//  Un chunk es una columna de 16x16 bloques. Dibujamos, alrededor de donde
+//  estás (de "range" bloques abajo a "range" arriba):
+//    - el chunk actual: líneas cada 2 bloques en sus 4 paredes (amarillo),
+//    - sus 4 esquinas: columnas de arriba a abajo (azul),
+//    - las esquinas de los 8 chunks vecinos (rojo).
+//  Cada grupo de color es una llamada al juego (el color lo da la "tinta").
+void Grow(float* lo, float* hi, const float* a, const float* b);  // (más abajo)
+
+void ChunkLines(const Frame& f, const Color& c, const ChunkBorderSettings& cs, int group, float* lo, float* hi) {
+    const float cx = std::floor(f.origin[0] / 16.0f) * 16.0f;
+    const float cz = std::floor(f.origin[2] / 16.0f) * 16.0f;
+    const float y0 = std::floor(f.origin[1]) - static_cast<float>(cs.range);
+    const float y1 = std::floor(f.origin[1]) + static_cast<float>(cs.range);
+    auto line = [&](float ax, float ay, float az, float bx, float by, float bz) {
+        Line(f, c, ax, ay, az, bx, by, bz);
+        const float a[3] = {std::min(ax, bx), std::min(ay, by), std::min(az, bz)};
+        const float b[3] = {std::max(ax, bx), std::max(ay, by), std::max(az, bz)};
+        Grow(lo, hi, a, b);
+    };
+    if (group == 0) {  // paredes del chunk actual
+        for (float t = 2.0f; t < 16.0f; t += 2.0f) {
+            line(cx + t, y0, cz, cx + t, y1, cz);
+            line(cx + t, y0, cz + 16, cx + t, y1, cz + 16);
+            line(cx, y0, cz + t, cx, y1, cz + t);
+            line(cx + 16, y0, cz + t, cx + 16, y1, cz + t);
+        }
+        for (float y = y0; y <= y1; y += 2.0f) {
+            line(cx, y, cz, cx + 16, y, cz);
+            line(cx, y, cz + 16, cx + 16, y, cz + 16);
+            line(cx, y, cz, cx, y, cz + 16);
+            line(cx + 16, y, cz, cx + 16, y, cz + 16);
+        }
+    } else if (group == 1) {  // esquinas del chunk actual
+        for (int i = 0; i < 4; ++i) {
+            const float x = cx + ((i & 1) ? 16.0f : 0.0f);
+            const float z = cz + ((i & 2) ? 16.0f : 0.0f);
+            line(x, y0 - 32.0f, z, x, y1 + 32.0f, z);
+        }
+    } else if (cs.neighbors) {  // esquinas de los vecinos
+        for (int ix = -1; ix <= 2; ++ix) {
+            for (int iz = -1; iz <= 2; ++iz) {
+                if ((ix == 0 || ix == 1) && (iz == 0 || iz == 1)) continue;  // esas son las del chunk actual
+                const float x = cx + ix * 16.0f;
+                const float z = cz + iz * 16.0f;
+                line(x, y0, z, x, y1, z);
+            }
+        }
+    }
+}
+
 thread_local bool t_inLevel = false;          // dentro de renderLevel
 thread_local bool t_levelDrawn = false;       // ¿ya dibujamos los hitboxes en este frame?
 thread_local int t_levelAttempts = 0;
@@ -642,9 +705,24 @@ void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, v
             Tint(haveColor, colorPtr, o.fillColor);
             Submit(sc, tess, fillMaterial, copy, a5, a6, blo, bhi);
         }
-        // 2. Hitboxes: una llamada por color.
+        // 2. Bordes de chunk.
         int drawn = 0;
-        if (hitboxes) {
+        const ChunkBorderSettings cs = CopyChunks();
+        if (hitboxes && cs.enabled) {
+            const Color* colors[3] = {&cs.inner, &cs.corner, &cs.neighbor};
+            for (int g = 0; g < 3; ++g) {
+                float lo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
+                float hi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
+                ChunkLines(f, haveColor ? white : *colors[g], cs, g, lo, hi);
+                if (lo[0] <= hi[0]) {
+                    Tint(haveColor, colorPtr, *colors[g]);
+                    Submit(sc, tess, material, copy, a5, a6, lo, hi);
+                    ++drawn;
+                }
+            }
+        }
+        // 3. Hitboxes: una llamada por color.
+        if (hitboxes && h.enabled) {
             float hlo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
             float hhi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
             CollectHitboxes(f, h, hlo, hhi);
@@ -770,7 +848,7 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
         }
         const OutlineSettings o = CopyOutline();
         const HitboxSettings h = CopyHitboxes();
-        const bool hitboxes = h.enabled && !t_levelDrawn;
+        const bool hitboxes = WorldWanted() && !t_levelDrawn;  // hitboxes o bordes de chunk
         if (((o.enabled && o.fill) || hitboxes) && LooksLikeParams(params)) {
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, o, h, o.enabled ? t_outlinePos : nullptr,
                         hitboxes, o.fill ? FillMaterial(o.fillMaterial) : nullptr);
@@ -831,7 +909,7 @@ void __fastcall OutlineCallerDetour(void* lrp, void* screenContext, void* region
     hooks::ActiveCallGuard guard;
     t_outlineHappened = false;
     g_outlineCaller(lrp, screenContext, region, pos, flag);
-    if (t_outlineHappened || t_levelDrawn || !g_ready.load(std::memory_order_relaxed) || !CopyHitboxes().enabled) {
+    if (t_outlineHappened || t_levelDrawn || !g_ready.load(std::memory_order_relaxed) || !WorldWanted()) {
         return;  // ya se dibujaron (junto a tu contorno) o no hacen falta
     }
     // Necesitamos un bloque SÓLIDO (para que el juego arme un contorno), pero
@@ -1004,6 +1082,11 @@ void SetOutline(const OutlineSettings& settings) {
 void SetHitboxes(const HitboxSettings& settings) {
     std::lock_guard lock(g_settingsMutex);
     g_hitboxes = settings;
+}
+
+void SetChunkBorders(const ChunkBorderSettings& settings) {
+    std::lock_guard lock(g_settingsMutex);
+    g_chunks = settings;
 }
 
 void OnRenderLevel(std::uintptr_t levelRenderer, std::uintptr_t screenContext) {

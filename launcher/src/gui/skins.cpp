@@ -173,6 +173,31 @@ std::string ImportWithDialog(void* owner, std::string& errorKey) {
     return id;
 }
 
+std::string Active() {
+    // Se lee del archivo cada vez que se pide desde la interfaz... pero barato:
+    // se guarda en memoria y se vuelve a leer solo si el archivo cambió (el Closet
+    // del juego también lo escribe).
+    static fs::file_time_type lastWrite{};
+    static std::string active;
+    std::error_code ec;
+    const fs::path file = Dir() / L"active.json";
+    const auto written = fs::last_write_time(file, ec);
+    if (ec) return {};
+    if (written != lastWrite) {
+        lastWrite = written;
+        std::ifstream in(file);
+        const json j = in ? json::parse(in, nullptr, false) : json();
+        active = j.is_object() ? j.value("id", std::string()) : std::string();
+    }
+    return active;
+}
+
+void SetActive(const std::string& id) {
+    std::error_code ec;
+    fs::create_directories(Dir(), ec);
+    std::ofstream(Dir() / L"active.json", std::ios::trunc) << json{{"id", id}}.dump(2);
+}
+
 void SetFavorite(const std::string& id, bool favorite) {
     if (Skin* s = Find(id)) {
         s->favorite = favorite;

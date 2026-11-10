@@ -9,6 +9,7 @@
 #include "core/hooks.h"
 #include "core/logger.h"
 #include "render/notifications.h"
+#include "sdk/camera.h"
 #include "sdk/memory.h"
 #include "sdk/offsets.h"
 #include "sdk/scanner.h"
@@ -37,6 +38,8 @@ std::atomic<bool> g_offsetsBad{false};   // la comprobación de offsets falló
 std::atomic<bool> g_validated{false};
 std::atomic<float> g_sensitivity{1.0f};
 std::atomic<float> g_zoomSensitivity{1.0f};
+std::atomic<bool> g_followZoom{false};
+std::atomic<float> g_followStrength{1.0f};
 
 // Lee un puntero del jugador a uno de sus componentes.
 bool Component(std::uintptr_t player, std::uintptr_t offset, std::uintptr_t& out) {
@@ -78,7 +81,13 @@ void __fastcall ApplyTurnDeltaDetour(void* self, const float* delta) {
         }
     }
     // Sensibilidad: multiplicar el giro que el juego va a aplicar.
-    const float sensitivity = g_sensitivity.load(std::memory_order_relaxed) * g_zoomSensitivity.load(std::memory_order_relaxed);
+    float sensitivity = g_sensitivity.load(std::memory_order_relaxed) * g_zoomSensitivity.load(std::memory_order_relaxed);
+    if (g_followZoom.load(std::memory_order_relaxed)) {
+        const float m = sdk::camera::CurrentFovMultiplier();
+        if (m < 1.0f) {
+            sensitivity *= std::pow(m, g_followStrength.load(std::memory_order_relaxed));
+        }
+    }
     if (sensitivity != 1.0f && delta != nullptr) {
         const float scaled[2] = {delta[0] * sensitivity, delta[1] * sensitivity};
         g_original(self, scaled);
@@ -150,6 +159,11 @@ bool Read(Snapshot& out) {
     out.yaw = rot[1];
     SafeRead(player + offsets::kActorTicksExisted, out.ticks);
     return std::isfinite(out.eye[0]) && std::isfinite(out.eye[1]) && std::isfinite(out.eye[2]);
+}
+
+void SetZoomSensitivityFollow(bool follow, float strength) {
+    g_followStrength.store(strength);
+    g_followZoom.store(follow);
 }
 
 void SetZoomSensitivity(float multiplier) {

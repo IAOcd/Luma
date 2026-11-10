@@ -69,4 +69,8 @@ void SetWheelCapture(bool capture);
 // Pasos de rueda desde la última vez (positivo = hacia adelante).
 int TakeWheelSteps();
 
+// "Pulsar" una tecla para el juego (apretar y soltar), como si la tocaras.
+// El zoom cinematográfico la usa con F1 (ocultar la interfaz del juego).
+void TapKey(int vk);
+
 }  // namespace luma::render::input

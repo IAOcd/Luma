@@ -34,6 +34,7 @@ add_library(Luma SHARED
     perf/frame_stats.cpp
     perf/windows_info.cpp
     render/assets.cpp
+    render/cinematic.cpp
     render/dx12_hooks.cpp
     render/glass.cpp
     render/gpu.cpp

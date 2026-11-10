@@ -29,6 +29,7 @@ bool Init();
 bool GammaAvailable();
 bool PerspectiveAvailable();
 bool CameraAvailable();
+bool RenderAvailable();  // renderLevel (zoom y FOV)
 
 // Brillo forzado (Fullbright). Negativo = sin cambiar (el del juego).
 void SetGammaOverride(float gamma);
@@ -45,6 +46,12 @@ void SetFovMultiplier(float multiplier);
 void SetFovOverride(float degrees);
 // Qué tan rápido llega el zoom a su valor (0 = de golpe; 10 = suave).
 void SetZoomSmoothing(float speed);
+// El multiplicador de FOV de ESTE momento (animado): 1 = sin zoom, 0.25 = 4x.
+float CurrentFovMultiplier();
+
+// Ocultar la mano del jugador (true) o dejar la opción del juego (false).
+void SetHideHand(bool hide);
+bool HideHandAvailable();
 
 // Freelook: mientras está activo, el jugador queda mirando hacia (pitch, yaw).
 void SetFreelook(bool active, float pitch, float yaw);

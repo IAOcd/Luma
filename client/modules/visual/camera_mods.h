@@ -69,14 +69,26 @@ public:
 
 private:
     void Apply() const;
-    int mode_ = 0;           // 0 = mantener la tecla, 1 = alternar
-    float factor_ = 4.0f;    // aumento (4 = 4 veces más cerca)
-    float current_ = 4.0f;   // aumento actual (cambia con la rueda)
-    bool wheel_ = true;      // la rueda acerca y aleja mientras haces zoom
-    bool keepWheel_ = false; // recordar el aumento elegido con la rueda
+    void ApplyStyle(int style);  // carga los valores de un estilo (Normal, Cine, Catalejo)
+    int style_ = 0;             // 0 = normal, 1 = cinematográfico, 2 = catalejo
+    int mode_ = 0;              // 0 = mantener la tecla, 1 = alternar
+    float factor_ = 4.0f;       // aumento (4 = 4 veces más cerca)
+    float current_ = 4.0f;      // aumento actual (cambia con la rueda)
+    bool wheel_ = true;         // la rueda acerca y aleja mientras haces zoom
+    bool keepWheel_ = false;    // recordar el aumento elegido con la rueda
     bool smooth_ = true;
     float smoothSpeed_ = 12.0f;
-    bool lowerSensitivity_ = true;  // mover la cámara más lento con zoom
+    bool followSensitivity_ = true;  // la sensibilidad sigue al zoom
+    float followStrength_ = 1.0f;
+    bool bars_ = false;          // barras de cine
+    float barsHeight_ = 0.11f;   // alto de cada barra (fracción de la pantalla)
+    bool spyglass_ = false;      // círculo de catalejo
+    bool hideHud_ = false;       // ocultar el HUD de Luma
+    bool hideHand_ = false;      // ocultar la mano
+    bool hideGameUi_ = false;    // ocultar la interfaz del juego (pulsa F1)
+    bool sounds_ = true;
+    bool wheelSounds_ = true;
+    bool tappedF1_ = false;      // ¿pulsamos F1 al empezar? (para volver a pulsarlo al terminar)
 };
 
 class FovChanger : public Module {

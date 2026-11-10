@@ -94,6 +94,7 @@ RECT g_gameClipRect{};
 // de la ventana (el único donde se puede llamar a la WndProc del juego).
 constexpr UINT kHoldSyncMessage = WM_APP + 0x4C4D;
 constexpr UINT kToggleMenuMessage = WM_APP + 0x4C4E;
+constexpr UINT kTapKeyMessage = WM_APP + 0x4C4F;
 
 struct Hold {
     std::atomic<bool> enabled{false};   // el módulo está activo
@@ -314,6 +315,11 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
     // Mensaje propio: sincronizar las teclas sostenidas (no es para el juego).
     if (message == kHoldSyncMessage) {
         SyncHolds(window);
+        return 0;
+    }
+    if (message == kTapKeyMessage) {
+        SendKeyToGame(window, static_cast<int>(wParam), true);
+        SendKeyToGame(window, static_cast<int>(wParam), false);
         return 0;
     }
     if (message == kToggleMenuMessage) {
@@ -658,6 +664,12 @@ bool IsHoldActive(HoldSlot slot) {
 void SetWheelCapture(bool capture) {
     g_wheelCapture.store(capture);
     sdk::mousequeue::SetBlockWheel(capture);
+}
+
+void TapKey(int vk) {
+    if (g_window != nullptr) {
+        PostMessageW(g_window, kTapKeyMessage, static_cast<WPARAM>(vk), 0);
+    }
 }
 
 int TakeWheelSteps() {

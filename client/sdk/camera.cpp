@@ -24,6 +24,9 @@ constexpr const char* kGetGamma =
     "48 83 EC 38 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? 41 B8 32 00 00 00";
 constexpr const char* kGetPerspective =
     "48 83 EC 38 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? 41 B8 03 00 00 00";
+// La misma familia, opción 0x1A6 = "ocultar la mano".
+constexpr const char* kGetHideHand =
+    "48 83 EC 38 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? 41 B8 A6 01 00 00";
 constexpr const char* kUpdatePlayer =
     "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ?? ?? ?? ?? 44 0F 29 94 24 ?? ?? ?? ?? 44 0F 29 8C 24 ?? ?? ?? ?? "
     "44 0F 29 84 24 ?? ?? ?? ?? 0F 29 BC 24 ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 4C 89 C6";
@@ -33,18 +36,20 @@ constexpr const char* kRenderLevelCall = "E8 ?? ?? ?? ?? 31 FF 48 8B 86 ?? ?? ??
 // En el componente de cámara, hacia dónde mira está guardado como un
 // "cuaternión" (4 números que representan una rotación) en +0x30.
 constexpr std::uintptr_t kCameraLookAngles = 0x30;
-// El campo de visión vertical de la cámara, en radianes (en +0x4C está la
-// proporción ancho/alto de la pantalla). Medido en 1.26.63: 1,15 rad con el
-// FOV del juego en 60; el juego lo recalcula en cada frame.
-constexpr std::uintptr_t kCameraFov = 0x50;
+
 
 using GetGammaFn = float(__fastcall*)(void* options, void* a2);
 using GetPerspectiveFn = int(__fastcall*)(void* options);
+using GetHideHandFn = bool(__fastcall*)(void* options);
 using UpdatePlayerFn = void(__fastcall*)(void* camera, void* a, void* b);
 using RenderLevelFn = void(__fastcall*)(void* levelRenderer, void* screenContext, void* unk);
 
 GetGammaFn g_getGamma = nullptr;
 GetPerspectiveFn g_getPerspective = nullptr;
+GetHideHandFn g_getHideHand = nullptr;
+std::atomic<bool> g_hideHandOk{false};
+std::atomic<bool> g_hideHand{false};
+std::atomic<float> g_publishedMultiplier{1.0f};
 UpdatePlayerFn g_updatePlayer = nullptr;
 RenderLevelFn g_renderLevel = nullptr;
 
@@ -52,6 +57,7 @@ std::atomic<bool> g_active{false};
 std::atomic<bool> g_gammaOk{false};
 std::atomic<bool> g_perspectiveOk{false};
 std::atomic<bool> g_cameraOk{false};
+std::atomic<bool> g_renderOk{false};
 std::atomic<float> g_gamma{-1.0f};
 std::atomic<int> g_perspective{-1};
 std::atomic<bool> g_freelook{false};
@@ -62,16 +68,29 @@ std::atomic<bool> g_loggedRender{false};
 std::atomic<std::uintptr_t> g_camera{0};       // el componente de cámara (lo vemos en _updatePlayer)
 std::atomic<float> g_fovMultiplier{1.0f};
 std::atomic<float> g_fovOverride{0.0f};        // grados (0 = sin cambio)
-float g_lastWrittenFov = 0.0f;                 // lo que escribimos el frame anterior
-float g_baseFov = 0.0f;                        // el FOV que calculó el juego
 std::atomic<float> g_smoothing{12.0f};
 float g_currentMultiplier = 1.0f;              // el multiplicador animado (hilo de render)
 std::int64_t g_lastApply = 0;
 
-// Cambia el FOV de la cámara (en el hilo de render, antes de dibujar).
-void ApplyFov() {
-    const std::uintptr_t cam = g_camera.load(std::memory_order_relaxed);
-    // Animación: el multiplicador real se acerca al pedido de a poco.
+// --- Zoom y FOV ------------------------------------------------------------------
+// El FOV con el que se DIBUJA está en el "LevelRendererPlayer" (lo que dibuja
+// el mundo desde los ojos del jugador): LevelRenderer +0x480 -> +0xF50 (escala
+// horizontal) y +0xF64 (escala vertical). Son los números de la matriz de
+// proyección: más grandes = más zoom. (Los mismos offsets que usa Latite para
+// 1.26.6x; los confirmamos leyendo la memoria: su proporción es la de la
+// pantalla, 9/16.)
+//
+// NO es el FOV del componente de cámara (+0x50): ese lo probamos y el juego
+// no lo usa para dibujar.
+constexpr std::uintptr_t kLevelRendererPlayer = 0x480;
+constexpr std::uintptr_t kFovScaleX = 0xF50;
+constexpr std::uintptr_t kFovScaleY = 0xF64;
+
+float g_lastWritten[2] = {0.0f, 0.0f};  // lo que escribimos (para no acumular)
+float g_base[2] = {0.0f, 0.0f};         // lo que calculó el juego
+
+// Avanza la animación del zoom (una vez por frame).
+void StepZoomAnimation() {
     const float target = g_fovMultiplier.load(std::memory_order_relaxed);
     const std::int64_t now = perf::Now();
     const float dt = g_lastApply == 0 ? 0.0f : static_cast<float>(perf::TicksToMs(now - g_lastApply) / 1000.0);
@@ -80,32 +99,50 @@ void ApplyFov() {
     if (speed <= 0.0f || dt <= 0.0f || dt > 0.5f) {
         g_currentMultiplier = target;
     } else {
-        const float t = 1.0f - std::exp(-speed * dt);
-        g_currentMultiplier += (target - g_currentMultiplier) * t;
+        g_currentMultiplier += (target - g_currentMultiplier) * (1.0f - std::exp(-speed * dt));
         if (std::fabs(g_currentMultiplier - target) < 0.0005f) {
             g_currentMultiplier = target;
         }
     }
+    g_publishedMultiplier.store(g_currentMultiplier, std::memory_order_relaxed);
+}
+
+// Escribe la escala del FOV en el LevelRendererPlayer.
+void ApplyFov(std::uintptr_t levelRenderer) {
     const float multiplier = g_currentMultiplier;
     const float overrideDeg = g_fovOverride.load(std::memory_order_relaxed);
-    if (cam == 0 || (multiplier == 1.0f && overrideDeg <= 0.0f)) {
-        g_lastWrittenFov = 0.0f;
+    if (multiplier == 1.0f && overrideDeg <= 0.0f) {
+        g_lastWritten[0] = g_lastWritten[1] = 0.0f;
         return;
     }
-    float current = 0.0f;
-    if (!SafeRead(cam + kCameraFov, current) || !(current > 0.05f && current < 3.0f)) {
+    std::uintptr_t lrp = 0;
+    float scale[2]{};
+    if (!SafeRead(levelRenderer + kLevelRendererPlayer, lrp) || !LooksLikePointer(lrp) ||
+        !SafeRead(lrp + kFovScaleX, scale[0]) || !SafeRead(lrp + kFovScaleY, scale[1]) ||
+        !(scale[0] > 0.01f && scale[0] < 50.0f && scale[1] > 0.01f && scale[1] < 50.0f)) {
         return;
     }
-    // Si el valor es el que escribimos nosotros, el juego no lo recalculó:
-    // seguimos usando la base de antes (para no achicarlo una y otra vez).
-    if (current != g_lastWrittenFov) {
-        g_baseFov = current;
+    // Si siguen siendo los que escribimos, el juego no los recalculó todavía:
+    // usar la base de antes (si no, el zoom se multiplicaría frame a frame).
+    for (int i = 0; i < 2; ++i) {
+        if (scale[i] != g_lastWritten[i]) {
+            g_base[i] = scale[i];
+        }
     }
-    float fov = overrideDeg > 0.0f ? overrideDeg * 3.14159265f / 180.0f : g_baseFov;
-    fov *= multiplier;
-    fov = fov < 0.02f ? 0.02f : (fov > 2.8f ? 2.8f : fov);
-    *reinterpret_cast<float*>(cam + kCameraFov) = fov;
-    g_lastWrittenFov = fov;
+    float out[2] = {g_base[0], g_base[1]};
+    if (overrideDeg > 0.0f) {
+        // FOV fijo: escala vertical = 1 / tan(FOV / 2); la horizontal mantiene la proporción.
+        const float ratio = g_base[0] / g_base[1];
+        out[1] = 1.0f / std::tan(overrideDeg * 3.14159265f / 360.0f);
+        out[0] = out[1] * ratio;
+    }
+    // Zoom: el multiplicador achica el FOV, o sea, agranda la escala.
+    out[0] /= multiplier;
+    out[1] /= multiplier;
+    *reinterpret_cast<float*>(lrp + kFovScaleX) = out[0];
+    *reinterpret_cast<float*>(lrp + kFovScaleY) = out[1];
+    g_lastWritten[0] = out[0];
+    g_lastWritten[1] = out[1];
 }
 
 // Rotación (pitch, yaw en grados) -> cuaternión, con el mismo orden de
@@ -128,6 +165,12 @@ float __fastcall GetGammaDetour(void* options, void* a2) {
     const float original = g_getGamma(options, a2);
     const float forced = g_gamma.load(std::memory_order_relaxed);
     return g_active.load(std::memory_order_relaxed) && forced >= 0.0f ? forced : original;
+}
+
+bool __fastcall GetHideHandDetour(void* options) {
+    hooks::ActiveCallGuard guard;
+    const bool original = g_getHideHand(options);
+    return (g_active.load(std::memory_order_relaxed) && g_hideHand.load(std::memory_order_relaxed)) || original;
 }
 
 int __fastcall GetPerspectiveDetour(void* options) {
@@ -173,10 +216,18 @@ void __fastcall RenderLevelDetour(void* levelRenderer, void* screenContext, void
         log::Info("SDK: renderLevel: LevelRenderer 0x{:X}, ScreenContext 0x{:X}.",
                   reinterpret_cast<std::uintptr_t>(levelRenderer), reinterpret_cast<std::uintptr_t>(screenContext));
     }
-    if (g_active.load(std::memory_order_relaxed)) {
-        ApplyFov();  // zoom / FOV: justo antes de dibujar el mundo
+    const bool active = g_active.load(std::memory_order_relaxed);
+    const auto lr = reinterpret_cast<std::uintptr_t>(levelRenderer);
+    if (active) {
+        // Zoom / FOV: antes de dibujar (por si el juego lo usa en este frame)
+        // y después (así lo hace Latite: queda para el frame siguiente).
+        StepZoomAnimation();
+        ApplyFov(lr);
     }
     g_renderLevel(levelRenderer, screenContext, unk);
+    if (active) {
+        ApplyFov(lr);
+    }
 }
 
 // Busca la firma y hookea. "resolveCall": la firma apunta a un "call" y la
@@ -206,9 +257,11 @@ bool Init() {
     g_gammaOk = HookSignature(kGetGamma, reinterpret_cast<void*>(&GetGammaDetour), g_getGamma, "juego: brillo (getGamma)");
     g_perspectiveOk = HookSignature(kGetPerspective, reinterpret_cast<void*>(&GetPerspectiveDetour), g_getPerspective,
                                     "juego: perspectiva (getPerspective)");
+    g_hideHandOk = HookSignature(kGetHideHand, reinterpret_cast<void*>(&GetHideHandDetour), g_getHideHand,
+                                 "juego: ocultar la mano (getHideHand)");
     g_cameraOk = HookSignature(kUpdatePlayer, reinterpret_cast<void*>(&UpdatePlayerDetour), g_updatePlayer,
                                "juego: cámara -> jugador (_updatePlayer)");
-    HookSignature(kRenderLevelCall, reinterpret_cast<void*>(&RenderLevelDetour), g_renderLevel,
+    g_renderOk = HookSignature(kRenderLevelCall, reinterpret_cast<void*>(&RenderLevelDetour), g_renderLevel,
                   "juego: dibujar el mundo (renderLevel)", true);
     g_active.store(true);
     return g_gammaOk || g_perspectiveOk || g_cameraOk;
@@ -220,6 +273,10 @@ bool GammaAvailable() {
 
 bool PerspectiveAvailable() {
     return g_perspectiveOk.load();
+}
+
+bool RenderAvailable() {
+    return g_renderOk.load();
 }
 
 bool CameraAvailable() {
@@ -240,6 +297,18 @@ void SetFovMultiplier(float multiplier) {
 
 void SetFovOverride(float degrees) {
     g_fovOverride.store(degrees);
+}
+
+float CurrentFovMultiplier() {
+    return g_publishedMultiplier.load(std::memory_order_relaxed);
+}
+
+void SetHideHand(bool hide) {
+    g_hideHand.store(hide);
+}
+
+bool HideHandAvailable() {
+    return g_hideHandOk.load();
 }
 
 void SetZoomSmoothing(float speed) {

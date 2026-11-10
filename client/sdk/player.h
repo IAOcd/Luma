@@ -58,6 +58,10 @@ bool Read(Snapshot& out);
 void SetSensitivity(float multiplier);
 // Otro multiplicador, que usa el zoom (se multiplican entre sí).
 void SetZoomSensitivity(float multiplier);
+// Sensibilidad que sigue al zoom de ESE momento (animado): con 4x de zoom,
+// la cámara gira 4 veces más lento, y cambia suave junto con la animación.
+// "strength" 0..1: cuánto la sigue (1 = exactamente).
+void SetZoomSensitivityFollow(bool follow, float strength);
 
 void BeginUnload();
 

@@ -39,7 +39,7 @@ namespace luma::sound {
 namespace {
 
 constexpr int kSampleRate = 44100;
-constexpr int kEffectCount = 6;
+constexpr int kEffectCount = 9;
 constexpr int kVoiceCount = 8;
 constexpr double kPi = 3.14159265358979323846;
 
@@ -138,6 +138,13 @@ void Generate(float volume) {
         Synthesize({{987.77, 0.12, 0.20, 0.0, -0.03}, {659.25, 0.16, 0.18, 0.04, 0.0}}, volume, 0.12);
     // Pasar el mouse: una "burbuja" casi imperceptible.
     s[static_cast<int>(sound::Effect::Hover)] = Synthesize({{1975.5, 0.035, 0.06, 0.0, 0.08}}, volume, 0.0);
+    // Zoom: notas graves y suaves que suben o bajan (como enfocar una lente).
+    s[static_cast<int>(sound::Effect::ZoomIn)] =
+        Synthesize({{392.0, 0.22, 0.13, 0.0, 0.12}, {587.33, 0.26, 0.09, 0.05, 0.08}}, volume, 0.15);
+    s[static_cast<int>(sound::Effect::ZoomOut)] =
+        Synthesize({{587.33, 0.20, 0.11, 0.0, -0.10}, {392.0, 0.24, 0.09, 0.04, -0.06}}, volume, 0.15);
+    // Rueda: un clic de vidrio cortito (como los dientes de una perilla).
+    s[static_cast<int>(sound::Effect::Tick)] = Synthesize({{2349.3, 0.025, 0.07, 0.0, 0.0}}, volume, 0.0);
 
     std::lock_guard lock(g_samplesMutex);
     // Detener las voces antes de cambiar los datos que podrían estar sonando.

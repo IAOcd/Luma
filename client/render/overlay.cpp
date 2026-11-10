@@ -46,6 +46,7 @@
 #include "modules/module_manager.h"
 #include "perf/benchmark.h"
 #include "render/assets.h"
+#include "render/cinematic.h"
 #include "render/gpu.h"
 #include "render/hud.h"
 #include "render/hud_editor.h"
@@ -420,9 +421,10 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     // En los menús del juego (el juego soltó el mouse) el HUD se esconde para
     // no quedar encima de ellos. Con el menú de Luma abierto sí se dibuja.
     const bool inGameMenu = !menuOpen && hud::GetStyle().hideInGameMenus && sdk::mouse::GameMouseState() == 0;
-    if (!inGameMenu) {
+    if (!inGameMenu && !(cinematic::HideHud() && !menuOpen)) {
         modules::Manager::RenderHud(menuOpen && hudeditor::IsActive());
     }
+    cinematic::Draw();  // barras de cine / catalejo del zoom
     // También mientras se desvanece al cerrarse (ya sin recibir input).
     if (menuOpen || menu::IsAnimatingClose()) {
         menu::Draw(menu::RenderInfo{g_r.width, g_r.height, g_r.bufferCount, FormatName(g_r.format)});
@@ -535,7 +537,7 @@ bool OnPresent(IDXGISwapChain* swapchain) {
     // atómicas; ImGui ni se toca. Así, con 0 módulos activos, Luma cuesta lo
     // mismo que en la Fase 2.
     if (!g_menuOpen.load(std::memory_order_relaxed) && !modules::Manager::HasHud() &&
-        !notify::HasActive() && !menu::IsAnimatingClose() && !loading::IsVisible() && !postfx::Active()) {
+        !notify::HasActive() && !menu::IsAnimatingClose() && !loading::IsVisible() && !postfx::Active() && !cinematic::Active()) {
         return false;
     }
     // Benchmark en modo "Luma en reposo": no dibujar nada (ni HUD ni avisos)

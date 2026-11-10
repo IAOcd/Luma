@@ -19,6 +19,9 @@ enum class Effect {
     ToggleOn,   // interruptor encendido
     ToggleOff,  // interruptor apagado
     Hover,      // pasar el mouse sobre algo (muy suave)
+    ZoomIn,     // empezar el zoom (un "fuu" de cristal que sube)
+    ZoomOut,    // terminar el zoom (baja)
+    Tick,       // un paso de la rueda con zoom (un clic de lente, muy corto)
 };
 
 // Genera los sonidos y arranca el hilo de audio.

@@ -34,6 +34,7 @@ private:
     float line_[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     bool fill_ = false;
     float fillColor_[4] = {1.0f, 1.0f, 1.0f, 0.15f};
+    int fillMaterial_ = 0;
 };
 
 class Hitboxes : public Module {
@@ -53,9 +54,9 @@ private:
     bool players_ = true;
     float playerColor_[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     bool mobs_ = true;
-    float mobColor_[4] = {1.0f, 0.85f, 0.3f, 1.0f};
+    float mobColor_[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     bool items_ = false;
-    float itemColor_[4] = {0.5f, 0.8f, 1.0f, 1.0f};
+    float itemColor_[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     float maxDistance_ = 32.0f;
     bool showSelf_ = false;
 };

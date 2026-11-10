@@ -38,6 +38,41 @@ Module* g_panel = nullptr;   // elemento con el panel de opciones abierto (clic 
 ImVec2 g_panelMin{0, 0};     // rectángulo del panel (del frame anterior)
 ImVec2 g_panelMax{0, 0};
 
+// CAMBIAR EL TAMAÑO DESDE UNA ESQUINA (como una ventana de Windows): al
+// agarrar una esquina, la esquina OPUESTA queda fija y el tamaño sigue al
+// mouse. Guardamos cómo estaba todo al empezar para calcular la proporción.
+Module* g_resizing = nullptr;
+int g_resizeCorner = 0;          // 0 arriba-izq, 1 arriba-der, 2 abajo-izq, 3 abajo-der
+ImVec2 g_resizeFixed{0, 0};      // la esquina que no se mueve
+ImVec2 g_resizeStartSize{1, 1};  // tamaño al empezar
+float g_resizeStartScale = 1.0f;
+
+// Las 4 esquinas de un elemento, en el orden de arriba.
+ImVec2 Corner(const Module& m, int corner) {
+    const ImVec2 p = m.LastPos();
+    const ImVec2 s = m.LastSize();
+    return ImVec2(p.x + ((corner & 1) != 0 ? s.x : 0.0f), p.y + ((corner & 2) != 0 ? s.y : 0.0f));
+}
+
+// ¿El mouse está sobre la esquina de algún elemento? (el de arriba primero)
+Module* CornerHitTest(ImVec2 mouse, float radius, int& corner) {
+    const auto& list = Manager::ActiveHud();
+    for (auto it = list.rbegin(); it != list.rend(); ++it) {
+        Module* m = *it;
+        if (!m->IsHudElement()) {
+            continue;
+        }
+        for (int c = 0; c < 4; ++c) {
+            const ImVec2 p = Corner(*m, c);
+            if (std::fabs(mouse.x - p.x) <= radius && std::fabs(mouse.y - p.y) <= radius) {
+                corner = c;
+                return m;
+            }
+        }
+    }
+    return nullptr;
+}
+
 bool Contains(ImVec2 min, ImVec2 size, ImVec2 p) {
     return p.x >= min.x && p.y >= min.y && p.x < min.x + size.x && p.y < min.y + size.y;
 }
@@ -130,7 +165,7 @@ void DrawToolbar(ImVec2 display) {
         ImGui::PushFont(theme::GetFonts().medium);
         ImGui::TextUnformatted("Editor de HUD");
         ImGui::PopFont();
-        ImGui::TextDisabled("Arrastra para mover · rueda: tamaño · clic derecho: opciones · Shift: sin imanes");
+        ImGui::TextDisabled("Arrastra para mover · esquinas o rueda: tamaño · clic derecho: opciones · Shift: sin imanes");
 
         const float buttonsWidth = fs * 15.5f;
         ImGui::SetCursorPos(ImVec2(size.x - buttonsWidth - fs * 0.9f, (size.y - ImGui::GetFrameHeight()) * 0.5f));
@@ -221,6 +256,7 @@ bool IsActive() {
 void Begin() {
     g_active = true;
     g_dragging = nullptr;
+    g_resizing = nullptr;
     g_panel = nullptr;
     sound::Play(sound::Effect::Open);
 }
@@ -231,6 +267,7 @@ void End() {
     }
     g_active = false;
     g_dragging = nullptr;
+    g_resizing = nullptr;
     g_panel = nullptr;
     config::MarkDirty();
     // (El sonido lo pone el menú al volver a aparecer.)
@@ -256,8 +293,54 @@ void Draw() {
     ImGui::End();
 
     // --- Input ---------------------------------------------------------------
-    Module* hovered = g_dragging != nullptr ? g_dragging : (overToolbar ? nullptr : HitTest(mouse));
-    if (g_dragging == nullptr && hovered != nullptr) {
+    // Primero las esquinas (cambiar tamaño); si no, el elemento entero (mover).
+    const float cornerRadius = 7.0f * theme::UiScale();
+    int cornerUnderMouse = 0;
+    Module* cornerHover = (g_dragging == nullptr && g_resizing == nullptr && !overToolbar)
+                              ? CornerHitTest(mouse, cornerRadius, cornerUnderMouse)
+                              : nullptr;
+    if (cornerHover != nullptr && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        g_resizing = cornerHover;
+        g_resizeCorner = cornerUnderMouse;
+        g_resizeFixed = Corner(*cornerHover, 3 - cornerUnderMouse);  // la opuesta
+        g_resizeStartSize = ImVec2(std::max(1.0f, cornerHover->LastSize().x), std::max(1.0f, cornerHover->LastSize().y));
+        g_resizeStartScale = cornerHover->Layout().scale;
+        sound::Play(sound::Effect::Click);
+    }
+    if (g_resizing != nullptr) {
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            g_resizing = nullptr;
+            config::MarkDirty();
+        } else {
+            // Proporción = cuánto creció el rectángulo entre la esquina fija y
+            // el mouse (el promedio de lo ancho y lo alto).
+            const float rx = std::fabs(mouse.x - g_resizeFixed.x) / g_resizeStartSize.x;
+            const float ry = std::fabs(mouse.y - g_resizeFixed.y) / g_resizeStartSize.y;
+            float scale = g_resizeStartScale * (rx + ry) * 0.5f;
+            // Saltos de 5% (con Shift, de 25%: los tamaños más nítidos de la letra pixelada).
+            const float step = io.KeyShift ? 4.0f : 20.0f;
+            scale = std::clamp(std::round(scale * step) / step, 0.5f, 4.0f);
+            g_resizing->Layout().scale = scale;
+            // El tamaño nuevo (proporcional) y dónde queda para que la esquina
+            // opuesta no se mueva.
+            const float k = scale / g_resizeStartScale;
+            const ImVec2 size(g_resizeStartSize.x * k, g_resizeStartSize.y * k);
+            const ImVec2 pos((g_resizeCorner & 1) != 0 ? g_resizeFixed.x : g_resizeFixed.x - size.x,
+                             (g_resizeCorner & 2) != 0 ? g_resizeFixed.y : g_resizeFixed.y - size.y);
+            StoreLayout(*g_resizing, pos, size, display);
+        }
+    }
+    const int cursorCorner = g_resizing != nullptr ? g_resizeCorner : (cornerHover != nullptr ? cornerUnderMouse : -1);
+    if (cursorCorner >= 0) {
+        // Flecha diagonal: "\" para arriba-izq/abajo-der, "/" para las otras.
+        ImGui::SetMouseCursor(cursorCorner == 0 || cursorCorner == 3 ? ImGuiMouseCursor_ResizeNWSE
+                                                                      : ImGuiMouseCursor_ResizeNESW);
+    }
+
+    Module* hovered = g_resizing != nullptr ? g_resizing
+                      : g_dragging != nullptr ? g_dragging
+                      : (overToolbar ? nullptr : (cornerHover != nullptr ? cornerHover : HitTest(mouse)));
+    if (g_dragging == nullptr && g_resizing == nullptr && cornerHover == nullptr && hovered != nullptr) {
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             g_dragging = hovered;
             g_grabOffset = ImVec2(mouse.x - hovered->LastPos().x, mouse.y - hovered->LastPos().y);
@@ -327,6 +410,13 @@ void Draw() {
             const float lx = std::clamp(min.x, 0.0f, std::max(0.0f, display.x - ts.x - pad * 2.0f));
             draw->AddRectFilled(ImVec2(lx, ly), ImVec2(lx + ts.x + pad * 2.0f, ly + ts.y + pad * 2.0f), Col(accent), pad);
             draw->AddText(ImVec2(lx + pad, ly + pad), Col(theme::P().onAccentText), label);
+            // Las 4 esquinas: cuadraditos para agarrar y cambiar el tamaño.
+            const float h = 3.0f * theme::UiScale();
+            for (int c = 0; c < 4; ++c) {
+                const ImVec2 p = Corner(*m, c);
+                draw->AddRectFilled(ImVec2(p.x - h, p.y - h), ImVec2(p.x + h, p.y + h), Col(accent));
+                draw->AddRect(ImVec2(p.x - h, p.y - h), ImVec2(p.x + h, p.y + h), IM_COL32(255, 255, 255, 200));
+            }
         }
     }
     if (g_guideX >= 0.0f) {

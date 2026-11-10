@@ -21,6 +21,7 @@ add_library(Luma SHARED
     modules/registry.cpp
     modules/hud/hud_modules.cpp
     modules/hud/inventory_hud.cpp
+    modules/hud/paperdoll.cpp
     modules/hud/player_hud.cpp
     modules/hud/watermark.cpp
     modules/performance/perf_overlay.cpp
@@ -58,6 +59,7 @@ add_library(Luma SHARED
     sdk/entity.cpp
     sdk/inventory.cpp
     sdk/memory.cpp
+    sdk/paperdoll.cpp
     sdk/mouse_queue.cpp
     sdk/network.cpp
     sdk/player.cpp

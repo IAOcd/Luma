@@ -16,6 +16,7 @@
 #include "modules/hud/hud_modules.h"
 #include "modules/hud/player_hud.h"
 #include "modules/hud/inventory_hud.h"
+#include "modules/hud/paperdoll.h"
 #include "modules/hud/watermark.h"
 #include "modules/performance/perf_overlay.h"
 #include "modules/performance/process_opts.h"
@@ -42,6 +43,7 @@ void Manager::RegisterAll() {
     modules_.push_back(std::make_unique<hud::ArmorHud>());
     modules_.push_back(std::make_unique<hud::HeldItem>());
     modules_.push_back(std::make_unique<hud::ItemCounter>());
+    modules_.push_back(std::make_unique<hud::MovablePaperdoll>());
     modules_.push_back(std::make_unique<hud::Watermark>());
     // Visual
     modules_.push_back(std::make_unique<visual::Crosshair>());

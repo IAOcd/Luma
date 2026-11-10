@@ -4,6 +4,7 @@
 #include "modules/visual/world_draw.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "render/ui.h"
 
@@ -53,6 +54,7 @@ void BlockOutline::Push() const {
     s.line = ToColor(line_);
     s.fill = fill_;
     s.fillColor = ToColor(fillColor_);
+    s.fillMaterial = fillMaterial_;
     sdk::draw3d::SetOutline(s);
 }
 
@@ -70,6 +72,10 @@ bool BlockOutline::DrawSettings() {
     changed |= ui::Toggle("Relleno", &fill_);
     if (fill_) {
         changed |= ui::ColorAlpha("Color del relleno", fillColor_);
+        // No sabemos con certeza qué "material" del juego dibuja mejor una cara
+        // de color liso: si con uno no se ve, prueba otro.
+        changed |= ui::Choice("Método de relleno", &fillMaterial_, {"A", "B", "C", "D"});
+        ui::Hint("Si el relleno no se ve o parpadea, prueba otro método.");
     }
     ui::Hint("Se dibuja dentro del mundo: las paredes lo tapan, igual que el contorno del juego.");
     if (changed) {
@@ -82,12 +88,14 @@ void BlockOutline::SaveSettings(nlohmann::json& out) const {
     SaveColor(out, "line", line_);
     out["fill"] = fill_;
     SaveColor(out, "fillColor", fillColor_);
+    out["fillMaterial"] = fillMaterial_;
 }
 
 void BlockOutline::LoadSettings(const nlohmann::json& in) {
     LoadColor(in, "line", line_);
     fill_ = in.value("fill", false);
     LoadColor(in, "fillColor", fillColor_);
+    fillMaterial_ = std::clamp(in.value("fillMaterial", 0), 0, sdk::draw3d::kFillMaterialCount - 1);
     Push();
 }
 
@@ -173,6 +181,17 @@ void Hitboxes::LoadSettings(const nlohmann::json& in) {
     LoadColor(in, "mobColor", mobColor_);
     items_ = in.value("items", in.value("includeItems", false));
     LoadColor(in, "itemColor", itemColor_);
+    // Antes los colores por defecto eran amarillo y celeste; ahora es blanco.
+    // Si todavía tenías los viejos (nunca los cambiaste), pasan a blanco.
+    auto oldDefault = [](const float* c, float r, float g, float b) {
+        return std::fabs(c[0] - r) < 0.01f && std::fabs(c[1] - g) < 0.01f && std::fabs(c[2] - b) < 0.01f;
+    };
+    if (oldDefault(mobColor_, 1.0f, 0.85f, 0.3f)) {
+        mobColor_[0] = mobColor_[1] = mobColor_[2] = 1.0f;
+    }
+    if (oldDefault(itemColor_, 0.5f, 0.8f, 1.0f)) {
+        itemColor_[0] = itemColor_[1] = itemColor_[2] = 1.0f;
+    }
     maxDistance_ = std::clamp(in.value("maxDistance", 32.0f), 8.0f, 96.0f);
     showSelf_ = in.value("showSelf", false);
     Push();

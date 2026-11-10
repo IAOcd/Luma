@@ -44,6 +44,7 @@
 #include "sdk/mouse_queue.h"
 #include "sdk/camera.h"
 #include "sdk/draw3d.h"
+#include "sdk/paperdoll.h"
 #include "sdk/network.h"
 #include "sdk/player.h"
 
@@ -199,6 +200,7 @@ bool Startup(HMODULE module) {
         sdk::network::Init();  // ping y detección de servidor
         sdk::camera::Init();   // brillo, perspectiva, cámara (Fase 8)
         sdk::draw3d::Init();   // dibujar dentro del mundo (contorno, hitboxes)
+        sdk::paperdoll::Init();  // mover el muñeco del HUD del juego
         std::lock_guard lock(StateMutex());
         modules::Manager::DisableUnavailable();
     }
@@ -287,6 +289,7 @@ void Shutdown() {
         config::SaveNow();
     }
     sdk::camera::BeginUnload();
+    sdk::paperdoll::BeginUnload();  // el muñeco vuelve a su lugar
     sdk::network::BeginUnload();
     sdk::player::BeginUnload();
     sdk::mousequeue::BeginUnload();

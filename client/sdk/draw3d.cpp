@@ -4,7 +4,9 @@
 #include "sdk/draw3d.h"
 
 #include <windows.h>
+#include <intrin.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -41,6 +43,12 @@ constexpr const char* kRenderOutline =
     "55 41 57 41 56 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 85 ?? ?? ?? ?? "
     "0F 29 BD ?? ?? ?? ?? 0F 29 B5 ?? ?? ?? ?? 48 C7 85 ?? ?? ?? ?? ?? ?? ?? ?? 4C 89 CB 4D 89 C7";
 
+// La función que, CADA frame, mira el bloque apuntado y (si es sólido) llama a
+// renderOutlineSelection: (LevelRendererPlayer, pantalla, BlockSource, posición, bool).
+constexpr const char* kOutlineCaller =
+    "41 57 41 56 56 57 55 53 48 83 EC 48 4D 89 CE 4C 89 C6 48 89 D7 48 89 CB 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 40 "
+    "49 8B 00 48 8B 40 10";
+
 // --- Estructuras del juego (offsets en 1.26.63) -------------------------------------
 constexpr std::uintptr_t kScreenContextColor = 0x30;  // -> float[4]: color con que se tiñe lo que se dibuja
 constexpr std::uintptr_t kScreenContextTess = 0xB0;   // -> Tessellator
@@ -51,7 +59,7 @@ constexpr std::uintptr_t kTessEnabledFields = 0x158;  // bool[15]: [1] = "tiene 
 constexpr std::uintptr_t kTessNextColor = 0x1B0;      // std::optional<uint32>: {valor, ¿tiene valor?}
 constexpr std::uintptr_t kTessNoColor = 0x254;        // bool
 constexpr int kPrimitiveLineList = 4;
-constexpr int kPrimitiveQuad = 1;
+constexpr int kPrimitiveTriangles = 2;  // lista de triángulos
 
 // AABBShapeComponent (las cajas de las entidades) en el sistema de entidades.
 constexpr std::uint32_t kAabbHash = 0xBAC1B3CF;
@@ -86,7 +94,13 @@ struct RawSharedPtr {
     void* control = nullptr;
 };
 RawSharedPtr g_boxMaterial;
-RawSharedPtr g_overlayMaterial;
+// Materiales candidatos para el RELLENO del contorno. No sabemos con certeza
+// cuál dibuja bien caras de un color sin textura en esta versión, así que se
+// puede elegir entre varios (OutlineSettings::fillMaterial).
+constexpr const char* kFillMaterials[kFillMaterialCount] = {"selection_overlay", "name_tag_depth_tested",
+                                                            "fullscreen_cube_overlay_blend", "selection_box"};
+RawSharedPtr g_fillMaterials[kFillMaterialCount];
+bool g_fillTried[kFillMaterialCount]{};
 
 std::mutex g_settingsMutex;
 OutlineSettings g_outline;
@@ -140,11 +154,23 @@ bool EnsureMaterials() {
     if (!tried) {
         tried = true;
         g_boxMaterial = CreateMaterial("selection_box");
-        g_overlayMaterial = CreateMaterial("selection_overlay");
-        log::Info("SDK: materiales del mundo: selection_box {}, selection_overlay {}.",
-                  g_boxMaterial.object != nullptr ? "sí" : "no", g_overlayMaterial.object != nullptr ? "sí" : "no");
+        log::Info("SDK: material del mundo selection_box: {}.", g_boxMaterial.object != nullptr ? "sí" : "no");
     }
     return g_boxMaterial.object != nullptr;
+}
+
+// El material de relleno elegido (se pide al juego la primera vez que se usa).
+void* FillMaterial(int index) {
+    if (index < 0 || index >= kFillMaterialCount) {
+        index = 0;
+    }
+    if (!g_fillTried[index]) {
+        g_fillTried[index] = true;
+        g_fillMaterials[index] = CreateMaterial(kFillMaterials[index]);
+        log::Info("SDK: material de relleno {}: {}.", kFillMaterials[index],
+                  g_fillMaterials[index].object != nullptr ? "sí" : "no");
+    }
+    return g_fillMaterials[index].object;
 }
 
 // --- Armar y dibujar ------------------------------------------------------------------
@@ -234,12 +260,14 @@ void FilledBox(const Frame& f, const Color& c, const float* lo, const float* hi)
         {{x0, y0, z0}, {x0, y1, z0}, {x1, y1, z0}, {x1, y0, z0}}, {{x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1}, {x0, y0, z1}},
         {{x0, y0, z1}, {x0, y1, z1}, {x0, y1, z0}, {x0, y0, z0}}, {{x1, y0, z0}, {x1, y1, z0}, {x1, y1, z1}, {x1, y0, z1}},
     };
+    // Cada cara = 2 triángulos, y cada triángulo de los dos lados (para que
+    // se vea desde adentro y desde afuera): 6 caras x 4 triángulos x 3 vértices.
+    // (Antes usábamos "cuadrados", pero no se veían: triángulos es lo más básico.)
+    g_begin(reinterpret_cast<void*>(f.tess), 0, kPrimitiveTriangles, 72, false);
+    SetColor(f, c);
+    constexpr int kOrder[12] = {0, 1, 2, 0, 2, 3, 2, 1, 0, 3, 2, 0};
     for (const auto& face : faces) {
-        g_begin(reinterpret_cast<void*>(f.tess), 0, kPrimitiveQuad, 8, false);
-        SetColor(f, c);
-        // Las dos caras de cada cuadrado (se ve desde adentro y desde afuera).
-        for (int i = 0; i < 4; ++i) g_vertex(reinterpret_cast<void*>(f.tess), face[i][0], face[i][1], face[i][2]);
-        for (int i = 3; i >= 0; --i) g_vertex(reinterpret_cast<void*>(f.tess), face[i][0], face[i][1], face[i][2]);
+        for (int i : kOrder) g_vertex(reinterpret_cast<void*>(f.tess), face[i][0], face[i][1], face[i][2]);
     }
 }
 
@@ -263,40 +291,144 @@ void Render(const Frame& f, const RawSharedPtr& material) {
 }
 
 // --- Hitboxes: recorrer todas las cajas de entidades --------------------------------
+//  1. Recorremos la "piscina" de cajas (AABBShapeComponent) del sistema de
+//     entidades. Cada lugar tiene el número de la entidad dueña.
+//  2. Descartamos lugares que ya no son de nadie: EnTT, al borrar, a veces
+//     deja una "lápida" (los bits de versión en 1) o el lugar ya no coincide
+//     con lo que dice el índice de la entidad. También pedimos que la entidad
+//     tenga TIPO y POSICIÓN: un ítem que agarraste pierde esos componentes
+//     antes que su caja (por eso quedaba la caja "fantasma").
+//  3. Tu propia caja se reconoce por TU número de entidad (Actor +0x18).
+//  4. Interpolación: el juego mueve las entidades 20 veces por segundo (cada
+//     "tick"), pero las DIBUJA en cada frame en un punto intermedio entre la
+//     posición del tick anterior y la del actual. La caja, en cambio, está en
+//     la del tick actual: por eso se veía "adelantada" y a saltos. Corremos la
+//     caja al mismo punto intermedio que usa el juego.
+//
+//  Las cajas se juntan en una lista y se dibujan agrupadas por color (una
+//  llamada al juego por color: el color lo da la "tinta" de la pantalla).
 std::atomic<int> g_hitboxLogs{0};
+int g_nearLogs = 0;
 int g_lastDrawn = 0;
 
-void DrawHitboxes(const Frame& f, const HitboxSettings& s, float* outLo, float* outHi) {
+constexpr std::uint32_t kStateVectorHash = 0x1B5D5238;
+constexpr std::uintptr_t kStatePosOld = 0x0C;
+constexpr std::uint32_t kVersionShift = 18;  // los bits de arriba del número de entidad
+constexpr std::uint32_t kTombstoneVersion = 0xFFFFFFFFu >> kVersionShift;
+
+enum Group { kGroupPlayer = 0, kGroupMob = 1, kGroupItem = 2, kGroupCount = 3 };
+
+struct PendingBox {
+    float lo[3];
+    float hi[3];
+    int group;
+};
+constexpr int kMaxBoxes = 256;
+PendingBox g_pending[kMaxBoxes];  // solo lo usa el hilo de render (sin asignar memoria)
+int g_pendingCount = 0;
+
+// Tamaño real de StateVectorComponent en la piscina: lo comprobamos con tu
+// jugador (su puntero en Actor +0x240 tiene que caer donde dice EnTT).
+std::uintptr_t g_stateSize = 0;
+
+std::uintptr_t DetectStateSize(std::uintptr_t player, std::uintptr_t states, std::uint32_t ownId) {
+    std::uintptr_t own = 0;
+    if (!SafeRead(player + offsets::kActorStateVector, own) || !LooksLikePointer(own)) {
+        return 0;
+    }
+    for (std::uintptr_t size : {std::uintptr_t{0x24}, std::uintptr_t{0x28}, std::uintptr_t{0x30}, std::uintptr_t{0x20}}) {
+        if (entity::ComponentOf(states, ownId, size) == own) {
+            return size;
+        }
+    }
+    return 0;
+}
+
+// En qué punto entre dos ticks estamos (0 = recién empezó el tick, 1 = el siguiente).
+// Cuando cambia el contador de ticks de tu jugador anotamos la hora; después,
+// cuánto pasó de los 50 ms que dura un tick.
+float PartialTick(std::uintptr_t player) {
+    static std::int32_t lastTicks = -1;
+    static LARGE_INTEGER tickStart{};
+    static LARGE_INTEGER frequency{};
+    if (frequency.QuadPart == 0) {
+        QueryPerformanceFrequency(&frequency);
+    }
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    std::int32_t ticks = 0;
+    if (!SafeRead(player + offsets::kActorTicksExisted, ticks)) {
+        return 1.0f;
+    }
+    if (ticks != lastTicks) {
+        lastTicks = ticks;
+        tickStart = now;
+    }
+    const double elapsed = static_cast<double>(now.QuadPart - tickStart.QuadPart) / static_cast<double>(frequency.QuadPart);
+    return static_cast<float>(std::clamp(elapsed / 0.05, 0.0, 1.0));
+}
+
+// Junta en g_pending las cajas a dibujar (no dibuja nada todavía).
+void CollectHitboxes(const Frame& f, const HitboxSettings& s, float* outLo, float* outHi) {
     g_lastDrawn = 0;
+    g_pendingCount = 0;
     const std::uintptr_t player = sdk::player::LocalPlayer();
     std::uintptr_t registry = 0;
-    if (player == 0 || !SafeRead(player + offsets::kActorEnttRegistry, registry) || !LooksLikePointer(registry)) {
+    std::uint32_t ownId = 0;
+    if (player == 0 || !SafeRead(player + offsets::kActorEnttRegistry, registry) || !LooksLikePointer(registry) ||
+        !SafeRead(player + offsets::kActorEntityId, ownId)) {
         return;
     }
-    // Las piscinas de cajas y de tipos de entidad.
     const std::uintptr_t boxes = entity::Storage(registry, kAabbHash);
     const std::uintptr_t types = entity::Storage(registry, kActorTypeHash);
+    const std::uintptr_t states = entity::Storage(registry, kStateVectorHash);
     std::uintptr_t entities[2]{};  // el vector de entidades de la piscina de cajas
     std::uintptr_t pages = 0;
     if (boxes == 0 || !SafeRead(boxes + 0x20, entities) || !SafeRead(boxes + offsets::kStoragePayload, pages) ||
         entities[1] < entities[0]) {
         return;
     }
-    std::uintptr_t ownAabb = 0;  // tu propia caja (para saltearla)
-    SafeRead(player + offsets::kActorAabb, ownAabb);
-    const std::size_t count = std::min<std::size_t>((entities[1] - entities[0]) / 4, 4096);
+    if (g_stateSize == 0 && states != 0) {
+        g_stateSize = DetectStateSize(player, states, ownId);
+        log::Info("SDK: hitboxes: tamaño de la posición de las entidades: 0x{:X}.", g_stateSize);
+    }
+    const float alpha = PartialTick(player);
+    // Dónde estás tú. En un mundo local el juego tiene DOS copias de tu
+    // jugador (la del cliente y la del servidor interno), con números de
+    // entidad distintos: además del número, salteamos cualquier jugador que
+    // esté justo donde estás.
+    float ownFeet[3]{};
+    std::uintptr_t ownAabb = 0;
+    const bool haveOwn = SafeRead(player + offsets::kActorAabb, ownAabb) && LooksLikePointer(ownAabb) &&
+                         SafeRead(ownAabb, ownFeet) && std::isfinite(ownFeet[0]);
+    const std::size_t count = std::min<std::size_t>((entities[1] - entities[0]) / 4, 8192);
     const float maxDist2 = s.maxDistance * s.maxDistance;
-    for (std::size_t i = 0; i < count; ++i) {
+    int skippedDead = 0;
+    for (std::size_t i = 0; i < count && g_pendingCount < kMaxBoxes; ++i) {
         std::uint32_t entity = 0;
-        if (!SafeRead(entities[0] + i * 4, entity) || (entity & offsets::kEntityMask) == offsets::kEntityMask) {
-            continue;  // lugar vacío
+        if (!SafeRead(entities[0] + i * 4, entity) || (entity & offsets::kEntityMask) == offsets::kEntityMask ||
+            (entity >> kVersionShift) == kTombstoneVersion) {
+            continue;  // lugar vacío o "lápida" de una entidad borrada
+        }
+        const bool isSelf = (entity & offsets::kEntityMask) == (ownId & offsets::kEntityMask);
+        if (isSelf && !s.showSelf) {
+            continue;
         }
         std::uintptr_t page = 0;
         if (!SafeRead(pages + (i / offsets::kPayloadPage) * 8, page) || !LooksLikePointer(page)) {
             continue;
         }
         const std::uintptr_t comp = page + (i % offsets::kPayloadPage) * kAabbComponentSize;
-        if (comp == ownAabb && !s.showSelf) {
+        // El índice de la entidad tiene que apuntar a ESTE lugar (si no, es viejo).
+        if (entity::ComponentOf(boxes, entity, kAabbComponentSize) != comp) {
+            ++skippedDead;
+            continue;
+        }
+        // Tipo de entidad: sin tipo, no es una entidad "viva" del mundo.
+        const std::uintptr_t typeComp = entity::ComponentOf(types, entity, 4);
+        std::uint32_t type = 0;
+        if (typeComp == 0 || !SafeRead(typeComp, type)) {
+            ++skippedDead;
             continue;
         }
         float box[8]{};
@@ -308,36 +440,87 @@ void DrawHitboxes(const Frame& f, const HitboxSettings& s, float* outLo, float* 
         if (width <= 0.0f || height <= 0.0f || width > 8.0f || height > 8.0f) {
             continue;
         }
+        const float rawMin[3] = {box[0], box[1], box[2]};
+        // Diagnóstico: la caja más cercana a ti (las primeras veces).
+        if (haveOwn && g_nearLogs < 6 && std::fabs(box[0] - ownFeet[0]) < 3.0f && std::fabs(box[1] - ownFeet[1]) < 3.0f &&
+            std::fabs(box[2] - ownFeet[2]) < 3.0f) {
+            ++g_nearLogs;
+            log::Info("SDK: caja cerca de ti: entidad 0x{:X} (tú 0x{:X}), min {:.2f} {:.2f} {:.2f}, tamaño {:.2f} x {:.2f}; "
+                      "tus pies {:.2f} {:.2f} {:.2f}; cámara {:.2f} {:.2f} {:.2f}",
+                      entity, ownId, box[0], box[1], box[2], width, height, ownFeet[0], ownFeet[1], ownFeet[2],
+                      f.origin[0], f.origin[1], f.origin[2]);
+        }
+        float motion[3]{};  // cuánto se movió en el último tick (por eje)
+        // Interpolación con la posición (actual y del tick anterior).
+        if (g_stateSize != 0) {
+            const std::uintptr_t state = entity::ComponentOf(states, entity, g_stateSize);
+            float pos[6]{};
+            if (state == 0 || !SafeRead(state, pos)) {
+                ++skippedDead;
+                continue;  // sin posición: tampoco está viva
+            }
+            float delta[3]{};
+            for (int k = 0; k < 3; ++k) {
+                motion[k] = std::isfinite(pos[k] - pos[3 + k]) ? std::fabs(pos[k] - pos[3 + k]) : 0.0f;
+            }
+            bool ok = true;
+            for (int k = 0; k < 3; ++k) {
+                delta[k] = (pos[3 + k] - pos[k]) * (1.0f - alpha);  // de "ahora" hacia "antes"
+                ok &= std::isfinite(delta[k]) && std::fabs(delta[k]) < 4.0f;  // un teletransporte no se interpola
+            }
+            if (ok) {
+                for (int k = 0; k < 3; ++k) {
+                    box[k] += delta[k];
+                    box[k + 3] += delta[k];
+                }
+            }
+        }
+        // En primera persona la cámara está DENTRO de tu caja: ninguna caja
+        // que contenga la cámara se dibuja (ni con "Tu propia caja": esa
+        // opción es para tercera persona, donde la cámara está afuera). El
+        // margen incluye lo que se movió en el último tick: al caer rápido la
+        // cámara (suavizada) y la caja (a saltos) se separan un poco.
+        {
+            bool inside = true;
+            for (int k = 0; k < 3; ++k) {
+                const float margin = 0.3f + motion[k];
+                inside &= f.origin[k] > box[k] - margin && f.origin[k] < box[k + 3] + margin;
+            }
+            if (inside) {
+                continue;
+            }
+        }
         const float cx = (box[0] + box[3]) * 0.5f - f.origin[0];
         const float cy = (box[1] + box[4]) * 0.5f - f.origin[1];
         const float cz = (box[2] + box[5]) * 0.5f - f.origin[2];
         if (cx * cx + cy * cy + cz * cz > maxDist2) {
             continue;
         }
-        // ¿Qué es? (jugador, ítem/orbe o "mob": todo lo demás)
-        std::uint32_t type = 0;
-        const std::uintptr_t typeComp = entity::ComponentOf(types, entity, 4);
-        if (typeComp != 0) {
-            SafeRead(typeComp, type);
+        const std::uint32_t kind = type & 0xFFFF;
+        if (!s.showSelf && haveOwn && std::fabs(rawMin[0] - ownFeet[0]) < 0.75f &&
+            std::fabs(rawMin[1] - ownFeet[1]) < 1.0f && std::fabs(rawMin[2] - ownFeet[2]) < 0.75f) {
+            continue;  // tu otra copia (sea del tipo que diga el juego)
         }
-        const bool isPlayer = (type & 0xFFFF) == kTypePlayer || comp == ownAabb;
-        const bool isItem = (type & 0xFFFF) == kTypeItem || (type & 0xFFFF) == kTypeXpOrb ||
-                            (typeComp == 0 && width < 0.4f && height < 0.4f);
-        const Color* color = isPlayer ? (s.players ? &s.playerColor : nullptr)
-                             : isItem ? (s.items ? &s.itemColor : nullptr)
-                                      : (s.mobs ? &s.mobColor : nullptr);
-        if (color != nullptr) {
-            Box(f, *color, box, box + 3);
-            for (int k = 0; k < 3; ++k) {
-                outLo[k] = std::min(outLo[k], box[k]);
-                outHi[k] = std::max(outHi[k], box[k + 3]);
-            }
-            ++g_lastDrawn;
+        const bool isPlayer = kind == kTypePlayer || isSelf;
+        const bool isItem = kind == kTypeItem || kind == kTypeXpOrb;
+        const int group = isPlayer ? kGroupPlayer : (isItem ? kGroupItem : kGroupMob);
+        const bool wanted = group == kGroupPlayer ? s.players : (group == kGroupItem ? s.items : s.mobs);
+        if (!wanted) {
+            continue;
         }
+        PendingBox& p = g_pending[g_pendingCount++];
+        for (int k = 0; k < 3; ++k) {
+            p.lo[k] = box[k];
+            p.hi[k] = box[k + 3];
+            outLo[k] = std::min(outLo[k], box[k]);
+            outHi[k] = std::max(outHi[k], box[k + 3]);
+        }
+        p.group = group;
+        ++g_lastDrawn;
     }
     if (g_hitboxLogs.fetch_add(1) < 3) {
-        log::Info("SDK: hitboxes: {} cajas en la piscina, {} dibujadas (origen {:.1f} {:.1f} {:.1f}).", count, g_lastDrawn,
-                  f.origin[0], f.origin[1], f.origin[2]);
+        log::Info("SDK: hitboxes: {} cajas en la piscina, {} a dibujar, {} descartadas por no estar vivas.", count,
+                  g_lastDrawn, skippedDead);
     }
 }
 
@@ -371,6 +554,10 @@ thread_local const int* t_outlinePos = nullptr;
 thread_local std::uintptr_t t_lrp = 0;        // LevelRendererPlayer del contorno (tiene el origen)
 thread_local std::uintptr_t t_levelLrp = 0;   // el de renderLevel
 thread_local bool t_outlineDrawn = false;
+thread_local bool t_synthetic = false;        // este contorno lo pedimos nosotros (invisible)
+thread_local bool t_outlineHappened = false;  // ¿el juego llegó a dibujar un contorno?
+void* g_lastBlock = nullptr;                  // el último bloque que miraste (hilo de render)
+std::uintptr_t g_lastBlockVtable = 0;         // para comprobar que sigue siendo un bloque
 void* g_gameMaterial = nullptr;               // el material que usa el juego para su contorno
 std::atomic<int> g_ownLogs{0};
 
@@ -396,11 +583,39 @@ bool LooksLikeParams(void* params) {
     return true;
 }
 
+
 // Arma y dibuja lo nuestro con los parámetros de una llamada del juego.
 // (Función aparte para el __try: no puede tener objetos con destructor.)
+//
+// EL COLOR: el juego tiñe todo lo que dibuja con un color de la pantalla
+// (ScreenContext +0x30). Dentro de su contorno ese color es el del contorno
+// (oscuro y casi transparente): por eso el relleno no se veía. Ahora, en cada
+// llamada nuestra, ponemos ESE color en el que queremos (los vértices van en
+// blanco) y al final devolvemos el del juego.
+void Tint(bool haveColor, std::uintptr_t colorPtr, const Color& c) {
+    if (haveColor) {
+        const float v[4] = {c.r, c.g, c.b, c.a};
+        SafeWrite(colorPtr, v, sizeof(v));
+    }
+}
+
+// Pone la caja de "lo que se dibuja" (con un margen) y llama al juego.
+void Submit(void* sc, void* tess, void* material, std::uint8_t* copy, void* a5, void* a6, float* lo, float* hi) {
+    for (int i = 0; i < 3; ++i) {
+        lo[i] -= 1.0f;
+        hi[i] += 1.0f;
+    }
+    std::memcpy(copy + kParamsBoundsMin, lo, sizeof(float) * 3);
+    std::memcpy(copy + kParamsBoundsMax, hi, sizeof(float) * 3);
+    g_renderMesh(sc, tess, material, copy, a5, a6);
+}
+
 void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, void* a6, std::uintptr_t lrp,
                  const OutlineSettings& o, const HitboxSettings& h, const int* blockPos, bool hitboxes,
                  void* fillMaterial) {
+    std::uintptr_t colorPtr = 0;
+    float saved[4]{};
+    bool haveColor = false;
     __try {
         Frame f;
         f.sc = reinterpret_cast<std::uintptr_t>(sc);
@@ -412,59 +627,87 @@ void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, v
         if (!SafeCopy(reinterpret_cast<std::uintptr_t>(params), copy, sizeof(copy))) {
             return;
         }
-        float lo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
-        float hi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
-        // 1. Relleno del contorno (caras): su propia llamada, porque son cuadrados.
-        float blo[3]{};
-        float bhi[3]{};
-        if (blockPos != nullptr) {
+        haveColor = SafeRead(f.sc + kScreenContextColor, colorPtr) && LooksLikePointer(colorPtr) &&
+                    SafeCopy(colorPtr, saved, sizeof(saved));
+        const Color white{};
+        // 1. Relleno del contorno.
+        if (blockPos != nullptr && o.fill && fillMaterial != nullptr) {
+            float blo[3]{};
+            float bhi[3]{};
             for (int i = 0; i < 3; ++i) {
-                blo[i] = static_cast<float>(blockPos[i]) - 0.003f;
-                bhi[i] = static_cast<float>(blockPos[i]) + 1.003f;
+                blo[i] = static_cast<float>(blockPos[i]) - 0.004f;
+                bhi[i] = static_cast<float>(blockPos[i]) + 1.004f;
             }
-            if (o.fill && fillMaterial != nullptr) {
-                // Cuadrados: con el material de RELLENO de la selección (el de
-                // líneas no sirve para caras: parpadea y no rellena).
-                FilledBox(f, o.fillColor, blo, bhi);
-                std::memcpy(copy + kParamsBoundsMin, blo, sizeof(blo));
-                std::memcpy(copy + kParamsBoundsMax, bhi, sizeof(bhi));
-                g_renderMesh(sc, tess, fillMaterial, copy, a5, a6);
-            }
+            FilledBox(f, haveColor ? white : o.fillColor, blo, bhi);
+            Tint(haveColor, colorPtr, o.fillColor);
+            Submit(sc, tess, fillMaterial, copy, a5, a6, blo, bhi);
         }
-        // 2. Líneas: los hitboxes (el contorno lo dibuja el juego, con nuestro color).
+        // 2. Hitboxes: una llamada por color.
         int drawn = 0;
         if (hitboxes) {
             float hlo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
             float hhi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
-            DrawHitboxes(f, h, hlo, hhi);
-            if (g_lastDrawn > 0) {
-                Grow(lo, hi, hlo, hhi);
-                drawn += g_lastDrawn;
+            CollectHitboxes(f, h, hlo, hhi);
+            const Color* colors[kGroupCount] = {&h.playerColor, &h.mobColor, &h.itemColor};
+            for (int g = 0; g < kGroupCount; ++g) {
+                float lo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
+                float hi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
+                int n = 0;
+                for (int i = 0; i < g_pendingCount; ++i) {
+                    if (g_pending[i].group != g) {
+                        continue;
+                    }
+                    Box(f, haveColor ? white : *colors[g], g_pending[i].lo, g_pending[i].hi);
+                    Grow(lo, hi, g_pending[i].lo, g_pending[i].hi);
+                    ++n;
+                }
+                if (n > 0) {
+                    Tint(haveColor, colorPtr, *colors[g]);
+                    Submit(sc, tess, material, copy, a5, a6, lo, hi);
+                    drawn += n;
+                }
             }
         }
-        if (drawn == 0) {
-            return;
+        if (haveColor) {
+            SafeWrite(colorPtr, saved, sizeof(saved));
         }
-        for (int i = 0; i < 3; ++i) {  // un margen
-            lo[i] -= 1.0f;
-            hi[i] += 1.0f;
-        }
-        std::memcpy(copy + kParamsBoundsMin, lo, sizeof(lo));
-        std::memcpy(copy + kParamsBoundsMax, hi, sizeof(hi));
-        g_renderMesh(sc, tess, material, copy, a5, a6);
-        if (g_ownLogs.fetch_add(1) < 2) {
+        if (drawn > 0 && g_ownLogs.fetch_add(1) < 2) {
             log::Info("SDK: dibujado dentro de una llamada del juego: {} cajas.", drawn);
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         // Algo no era como esperábamos: este frame no se dibuja (mejor que crashear).
+        if (haveColor) {
+            SafeWrite(colorPtr, saved, sizeof(saved));
+        }
     }
 }
 
 std::atomic<int> g_meshLogs{0};
+// Diagnóstico: por qué camino se dibujaron los hitboxes (se loguea cada tanto).
+std::atomic<int> g_outlinePathDraws{0};
+std::atomic<int> g_levelPathDraws{0};
 
 // El color con que el juego tiñe lo que dibuja (ScreenContext +0x30 -> float[4]).
 // Dentro de su contorno, el juego lo fija justo antes de esta llamada: lo
 // cambiamos acá por el nuestro y lo devolvemos después.
+constexpr std::uintptr_t kTessVectors[] = {0x10, 0x70};  // posiciones, colores
+
+bool ClearTessellator(void* tess) {
+    const auto t = reinterpret_cast<std::uintptr_t>(tess);
+    for (std::uintptr_t off : kTessVectors) {
+        std::uintptr_t vec[3]{};  // inicio, fin, capacidad
+        if (!SafeRead(t + off, vec) || vec[1] < vec[0] || vec[2] < vec[1] || (vec[0] != 0 && !LooksLikePointer(vec[0]))) {
+            return false;  // no tiene la forma esperada: no tocar
+        }
+    }
+    for (std::uintptr_t off : kTessVectors) {
+        std::uintptr_t begin = 0;
+        SafeRead(t + off, begin);
+        SafeWrite(t + off + 8, &begin, sizeof(begin));
+    }
+    return true;
+}
+
 bool TintScreen(void* screenContext, const Color& c, float* saved, std::uintptr_t& colorPtr) {
     if (!SafeRead(reinterpret_cast<std::uintptr_t>(screenContext) + kScreenContextColor, colorPtr) ||
         !LooksLikePointer(colorPtr) || !SafeCopy(colorPtr, saved, sizeof(float) * 4)) {
@@ -476,6 +719,28 @@ bool TintScreen(void* screenContext, const Color& c, float* saved, std::uintptr_
 
 void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material, void* params, void* a5, void* a6) {
     hooks::ActiveCallGuard guard;
+    if (t_inOutline && t_synthetic) {
+        // Un contorno que pedimos NOSOTROS (ver OutlineCallerDetour): la malla
+        // del juego no se dibuja (no queremos ver ese contorno), pero usamos
+        // sus parámetros para dibujar los hitboxes.
+        // IMPORTANTE: el juego ya cargó las líneas de SU contorno en el
+        // Tessellator (las del último bloque que miraste). Si quedan ahí,
+        // salen junto con lo nuestro. Las BORRAMOS sin dibujarlas: el
+        // Tessellator guarda los vértices en dos listas (std::vector:
+        // inicio, fin, capacidad) en +0x10 (posiciones) y +0x70 (colores);
+        // poner "fin = inicio" las deja vacías sin liberar memoria.
+        if (!ClearTessellator(tess)) {
+            return;  // no se pudo: mejor no dibujar nada este frame
+        }
+        if (!t_outlineDrawn && g_ready.load(std::memory_order_relaxed) && LooksLikeParams(params)) {
+            t_outlineDrawn = true;
+            t_levelDrawn = true;
+            g_levelPathDraws.fetch_add(1, std::memory_order_relaxed);
+            DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, OutlineSettings{}, CopyHitboxes(), nullptr,
+                        true, nullptr);
+        }
+        return;
+    }
     // Primero, lo que el juego quería dibujar (si es su contorno y el módulo
     // está activo, con nuestro color).
     float saved[4]{};
@@ -508,24 +773,104 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
         const bool hitboxes = h.enabled && !t_levelDrawn;
         if (((o.enabled && o.fill) || hitboxes) && LooksLikeParams(params)) {
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, o, h, o.enabled ? t_outlinePos : nullptr,
-                        hitboxes, EnsureMaterials() ? g_overlayMaterial.object : nullptr);
+                        hitboxes, o.fill ? FillMaterial(o.fillMaterial) : nullptr);
             if (hitboxes) {
                 t_levelDrawn = true;
+                g_outlinePathDraws.fetch_add(1, std::memory_order_relaxed);
             }
         }
         return;
     }
-    if (t_inLevel && !t_levelDrawn && g_gameMaterial != nullptr && t_levelAttempts < 64) {
-        // Alguna otra malla del mundo (sin mirar un bloque): si sus parámetros
-        // tienen la misma forma, dibujamos ahí los hitboxes.
-        ++t_levelAttempts;
-        const HitboxSettings h = CopyHitboxes();
-        if (h.enabled && t_levelLrp != 0 && LooksLikeParams(params)) {
-            t_levelDrawn = true;
-            DrawOwnSafe(screenContext, tess, g_gameMaterial, params, a5, a6, t_levelLrp, OutlineSettings{}, h, nullptr, true,
-                        nullptr);
+    // Sin mirar un bloque: ver OutlineCallerDetour (un contorno invisible).
+}
+
+// --- Hitboxes SIEMPRE, mires lo que mires --------------------------------------------
+//  Nuestros hitboxes necesitan una llamada de dibujo del propio juego "del
+//  mundo" (sus parámetros). En esta versión, la única así es la del contorno
+//  del bloque que miras. Si miras al cielo, no hay contorno -> no había
+//  hitboxes.
+//
+//  Solución: el juego llama CADA frame a una función que toma el bloque que
+//  miras, comprueba si es sólido y, si lo es, dibuja su contorno. La
+//  enganchamos: si en este frame NO dibujó ningún contorno, la volvemos a
+//  llamar con un bloque sólido cercano (el último que miraste, o el que tienes
+//  bajo los pies). Ese contorno es "invisible": RenderMeshDetour no deja que
+//  el juego lo dibuje, solo usa sus parámetros para dibujar los hitboxes.
+void __fastcall RenderOutlineDetour(void* lrp, void* screenContext, void* block, void* region, const int* pos);
+using OutlineCallerFn = void(__fastcall*)(void* lrp, void* screenContext, void* region, const int* pos, bool flag);
+OutlineCallerFn g_outlineCaller = nullptr;
+
+std::atomic<int> g_callerCalls{0};  // diagnóstico: frames sin contorno en que lo intentamos
+
+// El bloque en una posición: BlockSource::getBlock (función virtual +0x10, la
+// misma que usa el juego en esta función). nullptr si algo falla.
+using GetBlockFn = void*(__fastcall*)(void* region, const int* pos);
+void* GetBlockSafe(void* region, const int* pos) {
+    __try {
+        std::uintptr_t vtable = 0;
+        std::uintptr_t fn = 0;
+        if (!SafeRead(reinterpret_cast<std::uintptr_t>(region), vtable) || !SafeRead(vtable + 0x10, fn) ||
+            !LooksLikePointer(fn & ~std::uintptr_t{0xF})) {
+            return nullptr;
+        }
+        return reinterpret_cast<GetBlockFn>(fn)(region, pos);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+// Llamada protegida a renderOutlineSelection (aparte, por el __try).
+void CallRenderOutlineSafe(void* lrp, void* screenContext, void* block, void* region, const int* pos) {
+    __try {
+        RenderOutlineDetour(lrp, screenContext, block, region, pos);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+void __fastcall OutlineCallerDetour(void* lrp, void* screenContext, void* region, const int* pos, bool flag) {
+    hooks::ActiveCallGuard guard;
+    t_outlineHappened = false;
+    g_outlineCaller(lrp, screenContext, region, pos, flag);
+    if (t_outlineHappened || t_levelDrawn || !g_ready.load(std::memory_order_relaxed) || !CopyHitboxes().enabled) {
+        return;  // ya se dibujaron (junto a tu contorno) o no hacen falta
+    }
+    // Necesitamos un bloque SÓLIDO (para que el juego arme un contorno), pero
+    // lo dibujamos 4000 bloques debajo de ti: fuera de lo que la cámara puede
+    // ver, así ese contorno nunca aparece en pantalla. Candidatos: el último
+    // bloque que miraste (los bloques del juego viven mientras el juego) o
+    // los que tienes bajo los pies.
+    int candidates[10][3];
+    int count = 0;
+    const std::uintptr_t player = sdk::player::LocalPlayer();
+    std::uintptr_t aabb = 0;
+    float feet[3]{};
+    if (player != 0 && SafeRead(player + offsets::kActorAabb, aabb) && LooksLikePointer(aabb) && SafeRead(aabb, feet) &&
+        std::isfinite(feet[0]) && std::isfinite(feet[1]) && std::isfinite(feet[2])) {
+        for (int dy = 1; dy <= 9 && count < 10; ++dy) {
+            candidates[count][0] = static_cast<int>(std::floor(feet[0]));
+            candidates[count][1] = static_cast<int>(std::floor(feet[1])) - dy;
+            candidates[count][2] = static_cast<int>(std::floor(feet[2]));
+            ++count;
         }
     }
+    g_callerCalls.fetch_add(1, std::memory_order_relaxed);
+    const int base[3] = {static_cast<int>(std::floor(feet[0])), static_cast<int>(std::floor(feet[1])),
+                         static_cast<int>(std::floor(feet[2]))};
+    const int farPos[3] = {base[0], base[1] - 4000, base[2]};
+    t_synthetic = true;
+    std::uintptr_t vtable = 0;
+    if (g_lastBlock != nullptr && SafeRead(reinterpret_cast<std::uintptr_t>(g_lastBlock), vtable) &&
+        vtable == g_lastBlockVtable) {
+        CallRenderOutlineSafe(lrp, screenContext, g_lastBlock, region, farPos);
+    }
+    for (int i = 0; i < count && !t_outlineHappened; ++i) {
+        void* block = GetBlockSafe(region, candidates[i]);
+        if (block != nullptr) {
+            CallRenderOutlineSafe(lrp, screenContext, block, region, farPos);
+        }
+    }
+    t_synthetic = false;
+    (void)flag;
 }
 
 std::atomic<int> g_outlineCalls{0};
@@ -533,12 +878,21 @@ std::atomic<int> g_outlineCalls{0};
 void __fastcall RenderOutlineDetour(void* lrp, void* screenContext, void* block, void* region, const int* pos) {
     hooks::ActiveCallGuard guard;
     if (g_outlineCalls.fetch_add(1) < 1) {
-        log::Info("SDK: el juego dibuja el contorno (bloque {}, {}, {}).", pos ? pos[0] : 0, pos ? pos[1] : 0,
-                  pos ? pos[2] : 0);
+        log::Info("SDK: el juego dibuja el contorno (bloque {}, {}, {}), llamado desde juego+0x{:X}.", pos ? pos[0] : 0,
+                  pos ? pos[1] : 0, pos ? pos[2] : 0, reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - GameBase());
     }
     // Marcar que estamos dentro: el hook de mallas hace el resto.
     t_inOutline = true;
     t_outlineDrawn = false;
+    t_outlineHappened = true;
+    if (!t_synthetic && block != nullptr) {
+        // El último bloque que miraste (para el contorno invisible).
+        std::uintptr_t vtable = 0;
+        if (SafeRead(reinterpret_cast<std::uintptr_t>(block), vtable)) {
+            g_lastBlock = block;
+            g_lastBlockVtable = vtable;
+        }
+    }
     t_outlinePos = pos;
     t_lrp = reinterpret_cast<std::uintptr_t>(lrp);
     g_renderOutline(lrp, screenContext, block, region, pos);
@@ -547,7 +901,11 @@ void __fastcall RenderOutlineDetour(void* lrp, void* screenContext, void* block,
 
 }  // namespace
 
+void EndLevel();
+void CountFrame();
+
 void BeginLevel(std::uintptr_t levelRenderer) {
+    CountFrame();  // el frame anterior ya terminó: anotar si se dibujaron
     t_inLevel = true;
     t_levelDrawn = false;
     t_levelAttempts = 0;
@@ -557,6 +915,28 @@ void BeginLevel(std::uintptr_t levelRenderer) {
 
 void EndLevel() {
     t_inLevel = false;
+}
+
+void CountFrame() {
+    // Cada ~600 frames (las primeras 12 veces): cuántos frames dibujaron los
+    // hitboxes y por qué camino. Sirve para saber qué pasa en un servidor.
+    static int frames = 0;
+    static int missed = 0;
+    static int reports = 0;
+    if (!t_levelDrawn) {
+        ++missed;
+    }
+    if (++frames >= 600 && reports < 12) {
+        if (CopyHitboxes().enabled) {
+            ++reports;
+            log::Info("SDK: hitboxes en los últimos {} frames: {} junto a tu contorno, {} con un contorno invisible, {} "
+                      "sin dibujar ({} intentos de contorno invisible).",
+                      frames, g_outlinePathDraws.exchange(0), g_levelPathDraws.exchange(0), missed,
+                      g_callerCalls.exchange(0));
+        }
+        frames = 0;
+        missed = 0;
+    }
 }
 
 namespace {
@@ -595,6 +975,18 @@ bool Init() {
             hooks::Enable(target, "juego: contorno del bloque (renderOutlineSelection)")) {
             g_outlineHooked.store(true);
         }
+    }
+    const ScanResult caller = FindPattern(kOutlineCaller);
+    if (caller.matches == 1 && g_outlineHooked.load()) {
+        void* target = reinterpret_cast<void*>(caller.address);
+        if (!hooks::Create(target, reinterpret_cast<void*>(&OutlineCallerDetour), reinterpret_cast<void**>(&g_outlineCaller),
+                           "juego: elegir el contorno del bloque") ||
+            !hooks::Enable(target, "juego: elegir el contorno del bloque")) {
+            g_outlineCaller = nullptr;
+        }
+    } else {
+        log::Warn("SDK: no se encontró la función del contorno ({}): los hitboxes solo se verán mirando un bloque.",
+                  caller.matches);
     }
     g_ready.store(true);
     return true;

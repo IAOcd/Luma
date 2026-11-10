@@ -31,8 +31,9 @@ MovablePaperdoll::MovablePaperdoll()
 }
 
 const char* MovablePaperdoll::IconSvg() const {
-    // Una personita: cabeza, cuerpo, brazos y piernas.
-    return "M12 2.5a2.5 2.5 0 1 1 0 5a2.5 2.5 0 1 1 0-5z M9 9h6v7H9z M9 10l-3 5 M15 10l3 5 M10.5 16v6 M13.5 16v6";
+    // Una personita: cabeza (curvas, sin arcos), cuerpo, brazos y piernas.
+    return "M12 2.5C13.4 2.5 14.5 3.6 14.5 5S13.4 7.5 12 7.5S9.5 6.4 9.5 5S10.6 2.5 12 2.5z "
+           "M9 9h6v7H9z M9 10l-3 5 M15 10l3 5 M10.5 16v5.5 M13.5 16v5.5";
 }
 
 bool MovablePaperdoll::SdkReady() const {

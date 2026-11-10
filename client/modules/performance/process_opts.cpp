@@ -28,8 +28,10 @@ namespace luma::modules::performance {
 namespace {
 
 constexpr const char* kSpeedIcon = "M13 3L5 13h6l-1 8 8-10h-6z";       // un rayo
+// Un cronómetro (con el botón arriba): distinto del Reloj del HUD.
 constexpr const char* kClockIcon =
-    "M20 12C20 16.42 16.42 20 12 20C7.58 20 4 16.42 4 12C4 7.58 7.58 4 12 4C16.42 4 20 7.58 20 12Z M12 7v5l3 2";
+    "M19 14C19 17.9 15.9 21 12 21C8.1 21 5 17.9 5 14C5 10.1 8.1 7 12 7C15.9 7 19 10.1 19 14Z M12 14v-3.5 M10 3h4 "
+    "M12 3v4 M17.5 7.5l1.5-1.5";
 constexpr const char* kLeafIcon = "M5 19C5 11 10 5 19 5C19 14 13 19 5 19Z M5 19L12 12";
 constexpr const char* kThreadIcon = "M4 7h16 M4 12h10 M4 17h16 M17 10l3 2-3 2";
 

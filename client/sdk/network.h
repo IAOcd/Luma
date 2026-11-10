@@ -30,6 +30,8 @@ int PingMs();
 // ¿Estás en un servidor? (ping válido en los últimos 5 segundos)
 bool OnServer();
 
+// En el hilo principal de Luma, cada vuelta: lee el ping de la conexión (1 vez por segundo).
+void Poll();
 void BeginUnload();
 
 }  // namespace luma::sdk::network

@@ -398,7 +398,8 @@ ItemCounter::ItemCounter()
 }
 
 const char* ItemCounter::IconSvg() const {
-    return "M4 8l8-4 8 4-8 4z M4 8v8l8 4 8-4V8 M12 12v8";
+    // Dos ítems apilados y una cruz de cantidad.
+    return "M4 10h9v9H4z M8 6h9v9 M16.5 17.5l4 4 M20.5 17.5l-4 4";
 }
 
 ImVec2 ItemCounter::OnRenderHud(const HudFrame& frame) {

@@ -263,7 +263,8 @@ SpeedDisplay::SpeedDisplay()
 }
 
 const char* SpeedDisplay::IconSvg() const {
-    return "M4 17C4 12.58 7.58 9 12 9C16.42 9 20 12.58 20 17 M12 17L17 11 M4 17h2 M18 17h2";
+    // Líneas de velocidad y una flecha hacia adelante.
+    return "M3 8h9 M2 12h12 M4 16h8 M15 6.5l5 5.5-5 5.5";
 }
 
 ImVec2 SpeedDisplay::OnRenderHud(const HudFrame& frame) {

@@ -270,6 +270,7 @@ void WaitForUnload() {
         config::SaveIfDirty();  // guardado automático (solo si hubo cambios)
         render::input::PollHolds();             // toggle sprint/sneak: menús del juego y foco
         perf::benchmark::Poll();
+        sdk::network::Poll();                   // ping de la conexión con el servidor
         stats::Poll();
         render::skinheads::Poll();              // caras de skins pedidas por el menú (Closet)                          // tiempo jugado y nombre del jugador (para el launcher)
         render::icons_items::Poll();            // íconos de ítems pedidos por el HUD                // terminar pruebas (cálculos y CSV fuera del render)

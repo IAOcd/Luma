@@ -23,6 +23,9 @@ void SetOwn(const std::uint8_t* rgba, std::uint32_t width, std::uint32_t height)
 void LoadOwnFromFile(const std::wstring& path);
 // Tu cara (0 si todavía no se leyó tu skin). Solo en el hilo de render.
 ImTextureID Own();
+// Tu skin COMPLETA (agrandada x8 sin suavizar), para dibujar la cabeza en 3D.
+// "legacy" = skin vieja de 64x32. 0 si todavía no hay. Hilo de render.
+ImTextureID OwnSkin(bool& legacy);
 
 // La cara de un PNG de skin (la biblioteca de skins). Solo en el hilo de
 // render. Devuelve 0 mientras se carga (el archivo lo lee Poll, en el hilo de

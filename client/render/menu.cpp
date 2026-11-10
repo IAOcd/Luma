@@ -1396,6 +1396,76 @@ void OpenPage(Page page) {
     OnNavigate();
 }
 
+// La cabeza de tu skin en 3D (un cubo de 8x8x8 con la segunda capa encima),
+// girada hacia (yaw, pitch). Se dibuja como 6+6 cuadrados con la textura de la
+// skin, del más lejano al más cercano (lo mismo que el launcher, en chiquito).
+void DrawHead3D(ImDrawList* draw, ImVec2 center, float size, ImTextureID tex, bool legacy, float yaw, float pitch) {
+    struct V3 {
+        float x, y, z;
+    };
+    auto rotate = [&](V3 p) {
+        const float cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+        V3 r{p.x * cy + p.z * sy, p.y, -p.x * sy + p.z * cy};
+        return V3{r.x, r.y * cp - r.z * sp, r.y * sp + r.z * cp};
+    };
+    const float texH = legacy ? 32.0f : 64.0f;
+    const float unit = size / 10.0f;  // la cabeza mide 8 (y el sombrero 9): entra con margen
+    struct Face {
+        ImVec2 p[4];
+        ImVec2 uv[4];
+        float depth;
+        float shade;
+    };
+    Face faces[12];
+    int count = 0;
+    for (int layer = 0; layer < 2; ++layer) {
+        const float s = layer == 0 ? 4.0f : 4.5f;  // medio lado (la segunda capa, un poco más grande)
+        const float u = layer == 0 ? 0.0f : 32.0f;
+        struct Q {
+            V3 c[4];
+            float u, v, shade;
+        };
+        // (las 4 esquinas vistas desde afuera: arriba-izq, arriba-der, abajo-der, abajo-izq) y su lugar en la imagen
+        const Q quads[6] = {
+            {{{-s, s, s}, {s, s, s}, {s, -s, s}, {-s, -s, s}}, u + 8, 8, 0.97f},     // frente
+            {{{s, s, -s}, {-s, s, -s}, {-s, -s, -s}, {s, -s, -s}}, u + 24, 8, 0.8f},  // atrás
+            {{{-s, s, -s}, {-s, s, s}, {-s, -s, s}, {-s, -s, -s}}, u + 0, 8, 0.82f},  // lado derecho del personaje
+            {{{s, s, s}, {s, s, -s}, {s, -s, -s}, {s, -s, s}}, u + 16, 8, 0.82f},     // lado izquierdo
+            {{{-s, s, -s}, {s, s, -s}, {s, s, s}, {-s, s, s}}, u + 8, 0, 1.0f},       // arriba
+            {{{-s, -s, s}, {s, -s, s}, {s, -s, -s}, {-s, -s, -s}}, u + 16, 0, 0.6f},  // abajo
+        };
+        for (const Q& q : quads) {
+            Face& f = faces[count];
+            float depth = 0.0f;
+            for (int k = 0; k < 4; ++k) {
+                const V3 r = rotate(q.c[k]);
+                const float persp = 40.0f / (40.0f - r.z);
+                f.p[k] = ImVec2(center.x + r.x * unit * persp, center.y - r.y * unit * persp);
+                depth += r.z * 0.25f;
+            }
+            const float cross = (f.p[1].x - f.p[0].x) * (f.p[2].y - f.p[0].y) - (f.p[1].y - f.p[0].y) * (f.p[2].x - f.p[0].x);
+            if (cross <= 0.0f) continue;  // mira para atrás
+            const float e = 0.02f;
+            const float u0 = (q.u + e) / 64.0f, u1 = (q.u + 8 - e) / 64.0f;
+            const float v0 = (q.v + e) / texH, v1 = (q.v + 8 - e) / texH;
+            f.uv[0] = ImVec2(u0, v0);
+            f.uv[1] = ImVec2(u1, v0);
+            f.uv[2] = ImVec2(u1, v1);
+            f.uv[3] = ImVec2(u0, v1);
+            f.depth = depth + layer * 0.01f;
+            f.shade = q.shade;
+            ++count;
+        }
+    }
+    std::sort(faces, faces + count, [](const Face& a, const Face& b) { return a.depth < b.depth; });
+    const float alpha = ImGui::GetStyle().Alpha;
+    for (int i = 0; i < count; ++i) {
+        const int c = static_cast<int>(255.0f * faces[i].shade);
+        draw->AddImageQuad(tex, faces[i].p[0], faces[i].p[1], faces[i].p[2], faces[i].p[3], faces[i].uv[0], faces[i].uv[1],
+                           faces[i].uv[2], faces[i].uv[3], IM_COL32(c, c, c, static_cast<int>(255.0f * alpha)));
+    }
+}
+
 void DrawRadial(float appear, float scale) {
     const theme::Palette& p = theme::P();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -1477,12 +1547,20 @@ void DrawRadial(float appear, float scale) {
                           items[i].label);
         }
 
-        // El centro: la cara de tu skin (o el logo, si todavía no hay skin).
-        const ImTextureID face = skinheads::Own();
-        const float half = inner * 0.62f;
-        if (face != 0) {
-            draw->AddImageRounded(face, ImVec2(c.x - half, c.y - half), ImVec2(c.x + half, c.y + half), ImVec2(0, 0),
-                                  ImVec2(1, 1), Col(ImVec4(1, 1, 1, 1)), fs * 0.5f);
+        // El centro: tu cabeza en 3D, que mira hacia el mouse (o el logo, si
+        // todavía no hay skin).
+        bool legacy = false;
+        const ImTextureID skin = skinheads::OwnSkin(legacy);
+        (void)skinheads::Own();  // (sube también la cara plana, que usan otras partes)
+        if (skin != 0) {
+            static float yaw = 0.0f;
+            static float pitch = 0.0f;
+            const float targetYaw = std::clamp(dx / outer, -1.2f, 1.2f) * 0.75f;
+            const float targetPitch = std::clamp(dy / outer, -1.2f, 1.2f) * 0.55f;
+            const float k = std::min(1.0f, ImGui::GetIO().DeltaTime * 10.0f);  // seguir al mouse suave
+            yaw += (targetYaw - yaw) * k;
+            pitch += (targetPitch - pitch) * k;
+            DrawHead3D(draw, c, inner * 1.35f, skin, legacy, yaw, pitch);
         } else {
             assets::DrawLogo(draw, c, inner * 1.1f, Col(p.text));
         }

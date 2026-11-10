@@ -109,7 +109,9 @@ Hitboxes::Hitboxes()
              Category::Visual) {}
 
 const char* Hitboxes::IconSvg() const {
-    return "M7 3h10v18H7z M7 9h10 M10 6h4";
+    // Una caja alrededor de una personita.
+    return "M5 2.5h14v19H5z M12 6C12.8 6 13.5 6.7 13.5 7.5S12.8 9 12 9S10.5 8.3 10.5 7.5S11.2 6 12 6z "
+           "M12 9v6 M9.5 11h5 M12 15l-2 3.5 M12 15l2 3.5";
 }
 
 bool Hitboxes::SdkReady() const {

@@ -25,6 +25,12 @@ constexpr int kSize = 8 * kScale;    // 128x128
 std::mutex g_mutex;
 std::vector<std::uint8_t> g_pendingOwn;  // la cara nueva esperando subir a la GPU
 ImTextureID g_own = 0;
+// La skin completa, agrandada (cada píxel -> 8x8) para que se vea nítida.
+constexpr int kSkinScale = 8;
+std::vector<std::uint8_t> g_pendingSkin;
+std::uint32_t g_pendingSkinH = 0;
+ImTextureID g_ownSkin = 0;
+bool g_ownLegacy = false;
 struct File {
     bool requested = false;          // la interfaz la pidió
     bool decoded = false;            // el hilo de Luma ya la leyó (bien o mal)
@@ -84,8 +90,24 @@ bool DecodeFile(const std::wstring& path, std::vector<std::uint8_t>& rgba, UINT&
 void SetOwn(const std::uint8_t* rgba, std::uint32_t width, std::uint32_t height) {
     std::vector<std::uint8_t> face;
     if (!Compose(rgba, width, height, face)) return;
+    // La skin completa en 64 de ancho (las HD se reducen), agrandada x8.
+    const std::uint32_t k = width / 64;
+    const std::uint32_t h64 = height / k;  // 64 o 32
+    std::vector<std::uint8_t> big(static_cast<std::size_t>(64 * kSkinScale) * (h64 * kSkinScale) * 4);
+    for (std::uint32_t y = 0; y < h64 * kSkinScale; ++y) {
+        for (std::uint32_t x = 0; x < 64 * kSkinScale; ++x) {
+            const std::uint8_t* src = rgba + (((y / kSkinScale) * k) * width + (x / kSkinScale) * k) * 4;
+            std::uint8_t* dst = &big[(static_cast<std::size_t>(y) * 64 * kSkinScale + x) * 4];
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = src[3];
+        }
+    }
     std::lock_guard lock(g_mutex);
     g_pendingOwn = std::move(face);
+    g_pendingSkin = std::move(big);
+    g_pendingSkinH = h64;
 }
 
 void LoadOwnFromFile(const std::wstring& path) {
@@ -109,6 +131,25 @@ ImTextureID Own() {
         if (id != 0) g_own = id;
     }
     return g_own;
+}
+
+ImTextureID OwnSkin(bool& legacy) {
+    std::vector<std::uint8_t> skin;
+    std::uint32_t h64 = 0;
+    {
+        std::lock_guard lock(g_mutex);
+        skin.swap(g_pendingSkin);
+        h64 = g_pendingSkinH;
+    }
+    if (!skin.empty()) {
+        const ImTextureID id = gpu::CreateTexture(skin.data(), 64 * kSkinScale, h64 * kSkinScale);
+        if (id != 0) {
+            g_ownSkin = id;
+            g_ownLegacy = h64 == 32;
+        }
+    }
+    legacy = g_ownLegacy;
+    return g_ownSkin;
 }
 
 ImTextureID FromFile(const std::wstring& path) {

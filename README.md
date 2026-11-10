@@ -5,13 +5,12 @@ Es una DLL que se carga dentro del juego oficial y le agrega un overlay, un HUD 
 
 Luma **no** incluye nada que dé ventaja en multijugador: nada de killaura, fly, reach, xray, ESP, autoclicker, etc.
 
-> **Estado:** Fases 4 y 5 terminadas (falta tu prueba en el juego).
-> - **HUD:** keystrokes, FPS, CPS, reloj, marca de agua, mira personalizada, toggle sprint y toggle sneak, con un estilo propio tipo "client de PvP": cajas oscuras, texto nítido con sombra y la letra pixelada de tu juego.
-> - **Editor de HUD:** arrastrar, escalar con la rueda y alinear con "imanes" a los bordes y a otros elementos.
-> - **Benchmark:** FPS promedio, 1% low y frametime, exportados a CSV, con un modo "Luma en reposo" para comparar contra "sin Luma".
-> - **Optimizaciones del proceso:** cuatro, cada una por separado. Más una página de consejos de Windows que solo lee y explica.
-> - **Menú:** estilo "liquid glass" (vidrio que desenfoca el juego), se abre con **L** y se cierra con **L** o **Esc**. Con el menú abierto el juego no recibe ni cámara, ni clics, ni teclas.
-> - **Descarga:** **Fin (End)** descarga Luma sin cerrar el juego.
+> **Estado:** fases 0 a 8 casi completas, y el launcher con ventana (partes 1 y 2).
+> - **HUD:** keystrokes, FPS, CPS, reloj, coordenadas, brújula, velocidad, ping, armadura, ítem en mano, contador de ítems, muñeco movible y marca de agua. Todo se edita en el editor de HUD: se arrastra, se cambia de tamaño desde las esquinas y se alinea con "imanes".
+> - **Visual:** mira personalizada, post-procesado, fullbright, freelook, zoom (con modos cinematográficos), FOV, contorno de bloque y hitboxes, dibujados dentro del mundo.
+> - **Rendimiento:** overlay de frametime, benchmark exportable a CSV y optimizaciones del proceso, cada una por separado y medible.
+> - **Launcher:** ventana con temas oscuro y claro, botón PLAY que abre el juego e inyecta Luma, estadísticas, noticias, ajustes en inglés, español y portugués, e inicio de sesión opcional con Microsoft/Xbox.
+> - **Menú:** se abre con **L**. **Fin (End)** descarga Luma sin cerrar el juego.
 
 ---
 
@@ -384,5 +383,25 @@ Ver `CLAUDE.md` para la lista completa. Avance:
 - [x] 3. Sistema de módulos y config (costo con 0 módulos: ~0.0009 ms por frame)
 - [x] 4. Benchmark + optimizaciones del proceso
 - [x] 5. Editor de HUD + módulos sin memoria del juego (FPS, CPS, keystrokes, reloj, mira, toggle sprint/sneak)
-- [ ] 6. SDK
-- [ ] ...
+- [x] 6. SDK (escaneo de firmas, jugador local, inventario, entidades, cámara)
+- [x] 7. Módulos con datos del juego (faltan efectos de pociones y mejoras del chat)
+- [x] 8. Cámara y render (zoom, FOV, fullbright, freelook, contorno de bloque, hitboxes)
+- [ ] 9. Optimizaciones de render
+- [ ] 10. Free cam
+- [ ] 11. Minimapa
+- [ ] 12. Pulido
+
+## Licencia
+
+Luma es software libre bajo la licencia **GNU General Public License v3.0** (ver [`LICENSE`](LICENSE)). Puedes usarlo, estudiarlo, modificarlo y compartirlo. Si publicas una versión modificada, tiene que ser también GPL-3.0 y con su código disponible.
+
+Bibliotecas de terceros, que se descargan al compilar y tienen sus propias licencias:
+- [MinHook](https://github.com/TsudaKageyu/minhook) (BSD-2-Clause)
+- [Dear ImGui](https://github.com/ocornut/imgui) (MIT)
+- [nlohmann/json](https://github.com/nlohmann/json) (MIT)
+
+Las ideas de cómo funcionan algunas partes internas del juego se estudiaron en clients de código abierto como Latite y Flarial. El código de Luma está escrito desde cero.
+
+## Aviso
+
+Luma es un proyecto independiente. **No está afiliado, aprobado ni asociado a Mojang Studios ni a Microsoft.** "Minecraft" es una marca de Mojang Studios / Microsoft. Luma no incluye ni distribuye archivos del juego: necesitas tu propia copia legítima de Minecraft Bedrock para Windows.

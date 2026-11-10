@@ -30,6 +30,9 @@ add_executable(LumaLauncher WIN32
     src/gui/app.cpp
     src/gui/theme.cpp
     src/account.cpp      # iniciar sesión con Microsoft/Xbox (opcional)
+    src/net.cpp          # pedidos HTTPS (WinHTTP)
+    src/signature.cpp    # comprobar la firma de las actualizaciones
+    src/updater.cpp      # actualizaciones automáticas desde GitHub
     ${PROJECT_SOURCE_DIR}/client/render/icons.cpp   # el mismo dibujador de íconos del menú
     assets/launcher.rc
 )
@@ -48,6 +51,14 @@ file(GENERATE
 )
 target_sources(LumaLauncher PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/luma_dll.rc)
 add_dependencies(LumaLauncher Luma)
+
+# Compilación OFICIAL (la hace GitHub Actions con -DLUMA_OFFICIAL_BUILD=ON).
+# Solo esas se reemplazan solas con las actualizaciones: tus compilaciones
+# locales nunca se pisan.
+option(LUMA_OFFICIAL_BUILD "Compilación oficial (se actualiza sola)" OFF)
+if(LUMA_OFFICIAL_BUILD)
+    target_compile_definitions(LumaLauncher PRIVATE LUMA_OFFICIAL_BUILD)
+endif()
 
 target_link_libraries(LumaLauncher PRIVATE
     launcher_core

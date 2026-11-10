@@ -12,6 +12,7 @@
 #include <ws2tcpip.h>
 
 #include "account.h"
+#include "net.h"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -20,7 +21,6 @@
 #include <shlwapi.h>  // SHCreateMemStream
 #include <wincodec.h>
 #include <wincrypt.h>
-#include <winhttp.h>
 
 #include <algorithm>
 #include <atomic>
@@ -61,13 +61,7 @@ std::atomic<bool> g_busy{false};
 std::atomic<bool> g_cancel{false};
 
 // --- Pequeñas ayudas ------------------------------------------------------------------
-std::wstring Widen(const std::string& s) {
-    if (s.empty()) return {};
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
-    std::wstring w(n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
-    return w;
-}
+using net::Widen;
 
 std::string UrlEncode(const std::string& s) {
     std::string out;
@@ -147,64 +141,12 @@ void SetState(State state, const char* errorKey = "", std::string detail = {}) {
     g_info.detail = std::move(detail);
 }
 
-// --- HTTPS con WinHTTP --------------------------------------------------------------------
-struct Response {
-    int status = 0;
-    std::string body;
-};
+// --- HTTPS (net.cpp) ------------------------------------------------------------------
+using Response = net::Response;
 
 bool Http(const wchar_t* method, const std::wstring& url, const std::string& body, const std::wstring& headers,
           Response& out) {
-    URL_COMPONENTS parts{sizeof(parts)};
-    wchar_t host[256]{};
-    wchar_t path[2048]{};
-    parts.lpszHostName = host;
-    parts.dwHostNameLength = static_cast<DWORD>(std::size(host));
-    parts.lpszUrlPath = path;
-    parts.dwUrlPathLength = static_cast<DWORD>(std::size(path));
-    wchar_t extra[2048]{};
-    parts.lpszExtraInfo = extra;
-    parts.dwExtraInfoLength = static_cast<DWORD>(std::size(extra));
-    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts)) {
-        return false;
-    }
-    const std::wstring fullPath = std::wstring(path) + extra;
-    HINTERNET session = WinHttpOpen(L"LumaLauncher/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
-                                    WINHTTP_NO_PROXY_BYPASS, 0);
-    if (session == nullptr) return false;
-    WinHttpSetTimeouts(session, 10000, 10000, 15000, 15000);
-    HINTERNET connection = WinHttpConnect(session, host, parts.nPort, 0);
-    HINTERNET request = connection != nullptr
-                            ? WinHttpOpenRequest(connection, method, fullPath.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                                 WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
-                            : nullptr;
-    bool ok = request != nullptr &&
-              WinHttpSendRequest(request, headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
-                                 headers.empty() ? 0 : static_cast<DWORD>(-1L),
-                                 body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(body.data()),
-                                 static_cast<DWORD>(body.size()), static_cast<DWORD>(body.size()), 0) &&
-              WinHttpReceiveResponse(request, nullptr);
-    if (ok) {
-        DWORD status = 0;
-        DWORD size = sizeof(status);
-        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
-                            &status, &size, WINHTTP_NO_HEADER_INDEX);
-        out.status = static_cast<int>(status);
-        out.body.clear();
-        for (;;) {
-            DWORD available = 0;
-            if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
-            std::string chunk(available, '\0');
-            DWORD read = 0;
-            if (!WinHttpReadData(request, chunk.data(), available, &read) || read == 0) break;
-            out.body.append(chunk.data(), read);
-            if (out.body.size() > 8 * 1024 * 1024) break;  // nada razonable pesa tanto
-        }
-    }
-    if (request != nullptr) WinHttpCloseHandle(request);
-    if (connection != nullptr) WinHttpCloseHandle(connection);
-    WinHttpCloseHandle(session);
-    return ok;
+    return net::Request(method, url, body, headers, out);
 }
 
 bool PostJson(const wchar_t* url, const json& body, const std::wstring& extraHeaders, Response& out) {

@@ -391,6 +391,29 @@ Avance:
 - [ ] 11. Minimapa
 - [ ] 12. Pulido
 
+## Actualizaciones automáticas y cómo publicar una versión
+
+`LumaLauncher.exe` se actualiza solo, como Flarial. Al abrir, baja de la última Release de GitHub dos archivos chicos: `latest.json` y su firma `latest.json.sig`.
+- Si hay una versión nueva **y la firma es válida**, baja el `.exe` nuevo, comprueba su huella SHA-256, se reemplaza y se vuelve a abrir.
+- Sin internet, sigue normal.
+- Solo se actualizan las compilaciones **oficiales**, las que arma GitHub Actions. Las tuyas, desde `build/`, nunca se pisan.
+- Código: `launcher/src/updater.cpp`, `signature.cpp` y `net.cpp`.
+
+**La firma.** Hay un par de claves ECDSA P-256:
+- La **pública** va dentro del launcher (`launcher/src/signature.cpp`) y solo sirve para comprobar.
+- La **privada** está en el secreto `LUMA_SIGNING_KEY` del repositorio y en una copia de seguridad del autor. **Nunca va en el código.** Si se pierde, los launchers ya instalados no aceptarían actualizaciones firmadas con otra clave.
+
+**Para publicar una versión:**
+1. Cambia `kVersion` en `client/core/version.h`, y la versión de `project(...)` en `CMakeLists.txt`.
+2. Escribe las novedades en `release/notes/<versión>.json`, en inglés, español y portugués.
+3. Si cambió la versión de Minecraft soportada, actualiza `release/minecraft.json`.
+4. Haz commit y sube los cambios. Después crea la etiqueta y súbela:
+   ```
+   git tag v0.2.1
+   git push origin v0.2.1
+   ```
+5. GitHub Actions (`.github/workflows/release.yml`) compila, arma y firma `latest.json`, y crea la Release. Lo ves en la pestaña **Actions** del repo.
+
 ## Licencia
 
 Luma es software libre bajo la licencia **GNU General Public License v3.0** (ver [`LICENSE`](LICENSE)). Puedes usarlo, estudiarlo, modificarlo y compartirlo. Si publicas una versión modificada, tiene que ser también GPL-3.0 y con su código disponible.

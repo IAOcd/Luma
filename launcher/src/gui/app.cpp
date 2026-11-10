@@ -49,6 +49,7 @@
 #include "gui/theme.h"
 #include "i18n.h"
 #include "render/icons.h"
+#include "updater.h"
 
 namespace luma::launcher::gui {
 
@@ -121,6 +122,9 @@ double g_minimizeAt = 0.0;  // cuándo minimizar después de JUGAR (0 = no)
 // Ajustes del launcher (launcher.json)
 bool g_minimizeAfterPlay = true;
 bool g_startWithWindows = false;  // la verdad está en el registro: se lee al abrir
+bool g_autoUpdate = true;         // actualizarse solo al abrir
+updater::Info g_upd;              // el estado del actualizador en este frame
+bool g_closing = false;
 
 // Lo que se consulta en un hilo aparte cada 1,5 s (listar procesos y leer
 // archivos no es gratis: no lo hacemos en cada frame).
@@ -164,6 +168,7 @@ void LoadConfig() {
     SetTheme(json.value("theme", std::string("dark")) == "light" ? ThemeKind::Light : ThemeKind::Dark);
     i18n::SetLanguage(i18n::LanguageFromCode(json.value("language", std::string("en")).c_str()));
     g_minimizeAfterPlay = json.value("minimizeAfterPlay", true);
+    g_autoUpdate = json.value("autoUpdate", true);
 }
 
 void SaveConfig() {
@@ -177,6 +182,7 @@ void SaveConfig() {
     json["theme"] = CurrentTheme() == ThemeKind::Light ? "light" : "dark";
     json["language"] = i18n::LanguageCode(i18n::CurrentLanguage());
     json["minimizeAfterPlay"] = g_minimizeAfterPlay;
+    json["autoUpdate"] = g_autoUpdate;
     std::ofstream(dir / L"launcher.json") << json.dump(2);
 }
 
@@ -623,8 +629,15 @@ void DrawPlayStatus(ImDrawList* d, ImVec2 pos, float maxWidth, const PlaySnapsho
         return;
     }
     const bool busy = snap.state != PlayState::Done && snap.state != PlayState::AlreadyLoaded &&
-                      snap.state != PlayState::Failed;
+                      snap.state != PlayState::Failed && snap.state != PlayState::Unsupported;
     const ImVec2 iconCenter(pos.x + S(8.0f), pos.y + g_fonts.regular->FontSize * 0.5f);
+    if (snap.state == PlayState::Unsupported) {
+        icons::Draw(d, kIconAlert, iconCenter, S(17.0f), C(p.warning), S(1.6f));
+        char text[256];
+        std::snprintf(text, sizeof(text), T("play.unsupported"), snap.detail.c_str());
+        TextFit(d, g_fonts.regular, ImVec2(pos.x + S(24.0f), pos.y), C(p.warning), text, maxWidth - S(24.0f));
+        return;
+    }
     if (busy) {
         Spinner(d, iconCenter, S(6.5f), C(p.warning));
     } else if (snap.state == PlayState::Failed) {
@@ -668,13 +681,45 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, cons
 
     // Píldora arriba a la derecha: el estado de Luma
     const bool loaded = data.game.lumaLoaded;
-    const char* pill = loaded ? T("home.luma_loaded") : T("home.ready");
+    char pillText[96];
+    const ImVec4* pillDot = &p.textDim;
+    bool pillSpin = false;
+    if (loaded) {
+        std::snprintf(pillText, sizeof(pillText), "%s", T("home.luma_loaded"));
+        pillDot = &p.success;
+    } else if (!g_upd.updatedFrom.empty() && ImGui::GetTime() < 10.0) {
+        std::snprintf(pillText, sizeof(pillText), T("update.updated_to"), kVersion);
+        pillDot = &p.success;
+    } else {
+        switch (g_upd.state) {
+            case updater::State::Checking:
+                std::snprintf(pillText, sizeof(pillText), "%s", T("update.checking"));
+                pillSpin = true;
+                break;
+            case updater::State::UpToDate:
+                std::snprintf(pillText, sizeof(pillText), "%s", T("update.up_to_date"));
+                pillDot = &p.success;
+                break;
+            case updater::State::Available:
+                std::snprintf(pillText, sizeof(pillText), T("update.available"), g_upd.latestVersion.c_str());
+                pillDot = &p.warning;
+                break;
+            default:
+                std::snprintf(pillText, sizeof(pillText), "%s", T("home.ready"));
+                break;
+        }
+    }
+    const char* pill = pillText;
     const ImVec2 ps = TextSize(g_fonts.tiny, pill);
     const ImVec2 pmax(max.x - S(20.0f), min.y + S(20.0f) + S(30.0f));
     const ImVec2 pmin(pmax.x - ps.x - S(40.0f), min.y + S(20.0f));
     d->AddRectFilled(pmin, pmax, C(p.background, 0.55f), S(15.0f));
     d->AddRect(pmin, pmax, C(p.border), S(15.0f));
-    Dot(d, ImVec2(pmin.x + S(16.0f), (pmin.y + pmax.y) * 0.5f), loaded ? p.success : p.textDim);
+    if (pillSpin) {
+        Spinner(d, ImVec2(pmin.x + S(16.0f), (pmin.y + pmax.y) * 0.5f), S(5.0f), C(p.textDim));
+    } else {
+        Dot(d, ImVec2(pmin.x + S(16.0f), (pmin.y + pmax.y) * 0.5f), *pillDot);
+    }
     Text(d, g_fonts.tiny, ImVec2(pmin.x + S(28.0f), (pmin.y + pmax.y) * 0.5f - ps.y * 0.5f), C(p.text), pill);
 
     // Textos
@@ -693,7 +738,7 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, cons
     const ImVec2 bmax(bmin.x + S(210.0f), bmin.y + S(58.0f));
     float hover = 0.0f;
     if (Hit("##play", bmin, bmax, &hover, !busy)) {
-        g_flow.Start();
+        g_flow.Start(g_upd.supportedMinecraft);
     }
     const float press = ImGui::IsItemActive() && !busy ? 1.0f : 0.0f;
     const float lift = S(2.0f) * hover * (1.0f - press);
@@ -718,6 +763,12 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, cons
 
     // Estado debajo del botón
     DrawPlayStatus(d, ImVec2(left, bmax.y + S(12.0f)), (max.x - min.x) - S(72.0f), snap);
+    if (snap.state == PlayState::Unsupported && !busy) {
+        // Versión de Minecraft que esta Luma todavía no conoce: jugar igual (bajo tu responsabilidad).
+        if (Button("##play_anyway", ImVec2(bmax.x + S(16.0f), bmin.y + S(10.0f)), T("play.anyway"), false)) {
+            g_flow.Start(g_upd.supportedMinecraft, true);
+        }
+    }
 }
 
 void DrawQuickAccess(ImDrawList* d, ImVec2 min, ImVec2 max) {
@@ -832,6 +883,23 @@ void DrawNews(ImDrawList* d, ImVec2 min, ImVec2 max) {
     const float w = (max.x - min.x) - S(44.0f);
     const float itemH = S(52.0f);
     float y = min.y + S(54.0f);
+    // Si ya bajamos las notas de la última versión (de GitHub), van esas.
+    if (!g_upd.notes.empty()) {
+        for (const updater::Note& note : g_upd.notes) {
+            if (y + itemH > max.y - S(8.0f)) {
+                break;
+            }
+            d->AddCircleFilled(ImVec2(x + S(16.0f), y + S(18.0f)), S(16.0f), C(p.background));
+            icons::Draw(d, kIconNews, ImVec2(x + S(16.0f), y + S(18.0f)), S(17.0f), C(p.textDim), S(1.5f));
+            const ImVec2 ds = TextSize(g_fonts.tiny, g_upd.date.c_str());
+            Text(d, g_fonts.tiny, ImVec2(x + w - ds.x, y + S(2.0f)), C(p.textDim), g_upd.date.c_str());
+            TextFit(d, g_fonts.semibold, ImVec2(x + S(44.0f), y), C(p.text), note.title.c_str(), w - S(56.0f) - ds.x);
+            TextFit(d, g_fonts.tiny, ImVec2(x + S(44.0f), y + g_fonts.semibold->FontSize + S(3.0f)), C(p.textDim),
+                    note.body.c_str(), w - S(44.0f));
+            y += itemH;
+        }
+        return;
+    }
     for (const NewsItem& item : kNews) {
         if (y + itemH > max.y - S(8.0f)) {
             break;  // no entra: la ventana es chica
@@ -1073,15 +1141,64 @@ void DrawSettingsAbout(ImDrawList* d, ImVec2 min, ImVec2 max) {
     Card(d, min, max);
     SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("settings.about"));
     const float x = min.x + S(22.0f);
-    const float w = (max.x - min.x) - S(44.0f);
+    const float right = max.x - S(22.0f);
+    const float w = right - x;
     float y = min.y + S(58.0f);
     icons::Draw(d, icons::kLumaLogo, ImVec2(x + S(18.0f), y + S(16.0f)), S(34.0f), C(p.text));
-    char version[48];
+    char version[96];
     std::snprintf(version, sizeof(version), T("settings.version"), kVersion);
+    if (!updater::OfficialBuild()) {
+        std::snprintf(version + std::strlen(version), sizeof(version) - std::strlen(version), "  ·  %s", T("update.dev_build"));
+    }
     Text(d, g_fonts.semibold, ImVec2(x + S(50.0f), y), C(p.text), "Luma");
     Text(d, g_fonts.tiny, ImVec2(x + S(50.0f), y + g_fonts.semibold->FontSize + S(2.0f)), C(p.textDim), version);
     y += S(46.0f);
-    TextWrap(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), T("settings.about_text"), w);
+    y += TextWrap(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), T("settings.about_text"), w) + S(16.0f);
+
+    // Actualizaciones: estado, "buscar ahora" / "actualizar ahora" y la opción automática.
+    d->AddLine(ImVec2(x, y - S(8.0f)), ImVec2(right, y - S(8.0f)), C(p.border));
+    char status[160];
+    const ImVec4* color = &p.textDim;
+    switch (g_upd.state) {
+        case updater::State::Checking: std::snprintf(status, sizeof(status), "%s", T("update.checking")); break;
+        case updater::State::UpToDate:
+            std::snprintf(status, sizeof(status), "%s", T("update.up_to_date"));
+            color = &p.success;
+            break;
+        case updater::State::Available:
+            std::snprintf(status, sizeof(status), T("update.available"), g_upd.latestVersion.c_str());
+            color = &p.warning;
+            break;
+        case updater::State::Failed:
+            std::snprintf(status, sizeof(status), "%s", T(g_upd.errorKey.empty() ? "update.failed" : g_upd.errorKey.c_str()));
+            color = &p.danger;
+            break;
+        case updater::State::Offline: std::snprintf(status, sizeof(status), "%s", T("update.offline")); break;
+        default: std::snprintf(status, sizeof(status), "%s", T("settings.updates")); break;
+    }
+    if (g_upd.state == updater::State::Checking) {
+        Spinner(d, ImVec2(x + S(7.0f), y + S(9.0f)), S(5.5f), C(p.textDim));
+    } else {
+        Dot(d, ImVec2(x + S(7.0f), y + S(9.0f)), *color);
+    }
+    TextFit(d, g_fonts.regular, ImVec2(x + S(20.0f), y), C(p.text), status, w - S(20.0f));
+    y += S(30.0f);
+    const bool canInstall = g_upd.state == updater::State::Available && updater::OfficialBuild();
+    if (canInstall) {
+        if (Button("##upd_install", ImVec2(x, y), T("update.install_now"), true)) {
+            updater::InstallNow();
+        }
+    } else if (Button("##upd_check", ImVec2(x, y), T("update.check_now"), false, nullptr,
+                      g_upd.state != updater::State::Checking)) {
+        updater::CheckNow();
+    }
+    if (Toggle("##auto_update", ImVec2(right - S(46.0f), y + S(6.0f)), &g_autoUpdate)) {
+        updater::SetAutoInstall(g_autoUpdate);
+        SaveConfig();
+    }
+    const char* autoLabel = T("update.auto");
+    const ImVec2 als = TextSize(g_fonts.tiny, autoLabel);
+    Text(d, g_fonts.tiny, ImVec2(right - S(56.0f) - als.x, y + S(10.0f)), C(p.textDim), autoLabel);
 }
 
 void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data) {
@@ -1093,9 +1210,42 @@ void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& ac
     DrawSettingsGeneral(d, min, ImVec2(min.x + leftW, min.y + generalH));
     DrawSettingsFolders(d, ImVec2(min.x, min.y + generalH + gap), ImVec2(min.x + leftW, min.y + generalH + gap + foldersH));
     const float rightX = min.x + leftW + gap;
-    const float accountH = S(250.0f);
+    const float accountH = S(220.0f);
     DrawSettingsAccount(d, ImVec2(rightX, min.y), ImVec2(max.x, min.y + accountH), acc, data);
     DrawSettingsAbout(d, ImVec2(rightX, min.y + accountH + gap), ImVec2(max.x, min.y + generalH + gap + foldersH));
+}
+
+// Pantalla de "Actualizando Luma..." (tapa todo mientras baja e instala).
+void DrawUpdateOverlay(ImDrawList* d, ImVec2 display) {
+    const Palette& p = P();
+    d->AddRectFilled(ImVec2(0, 0), display, Col(p.background, 0.92f));
+    // Atrapar el mouse: mientras se actualiza no se puede tocar nada.
+    ImGui::SetCursorScreenPos(ImVec2(0, S(kTitleBarHeight)));
+    ImGui::InvisibleButton("##update_block", ImVec2(display.x, std::max(1.0f, display.y - S(kTitleBarHeight))));
+    const ImVec2 size(S(420.0f), S(190.0f));
+    const ImVec2 min((display.x - size.x) * 0.5f, (display.y - size.y) * 0.5f);
+    const ImVec2 max(min.x + size.x, min.y + size.y);
+    d->AddRectFilled(min, max, Col(p.card), S(18.0f));
+    d->AddRect(min, max, Col(p.border), S(18.0f));
+    icons::Draw(d, icons::kLumaLogo, ImVec2((min.x + max.x) * 0.5f, min.y + S(46.0f)), S(44.0f), Col(p.text));
+    char title[96];
+    std::snprintf(title, sizeof(title), T("update.downloading"), g_upd.latestVersion.c_str());
+    const char* text = g_upd.state == updater::State::Downloading ? title : T("update.installing");
+    const ImVec2 ts = TextSize(g_fonts.semibold, text);
+    Text(d, g_fonts.semibold, ImVec2((min.x + max.x - ts.x) * 0.5f, min.y + S(88.0f)), Col(p.text), text);
+    // Barra de progreso
+    const ImVec2 bmin(min.x + S(40.0f), min.y + S(130.0f));
+    const ImVec2 bmax(max.x - S(40.0f), bmin.y + S(8.0f));
+    d->AddRectFilled(bmin, bmax, Col(p.background), S(4.0f));
+    const float progress = g_upd.state == updater::State::Downloading ? g_upd.progress : 1.0f;
+    if (progress > 0.0f) {
+        d->AddRectFilled(bmin, ImVec2(bmin.x + (bmax.x - bmin.x) * std::clamp(progress, 0.0f, 1.0f), bmax.y), Col(p.accent),
+                         S(4.0f));
+    }
+    char percent[16];
+    std::snprintf(percent, sizeof(percent), "%d%%", static_cast<int>(progress * 100.0f + 0.5f));
+    const ImVec2 pts = TextSize(g_fonts.tiny, percent);
+    Text(d, g_fonts.tiny, ImVec2((min.x + max.x - pts.x) * 0.5f, bmax.y + S(10.0f)), Col(p.textDim), percent);
 }
 
 // Secciones que llegan en las próximas partes.
@@ -1149,6 +1299,7 @@ void AppInit(HWND hwnd, float scale) {
     AppRebuildFonts();
     g_statusThread = std::thread(StatusThread);
     account::Init();
+    updater::Start(g_autoUpdate, GetCommandLineW());
 }
 
 void AppSetDevice(ID3D11Device* device) {
@@ -1208,6 +1359,12 @@ void AppFrame() {
     }
     const account::Info acc = account::Get();
     UpdateAvatar(acc);
+    g_upd = updater::Get();
+    // La versión nueva ya se abrió: cerrar esta.
+    if (g_upd.state == updater::State::Restarting && !g_closing) {
+        g_closing = true;
+        PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
+    }
     const std::string name = PlayerName(acc, data);
 
     // Al terminar JUGAR con éxito: minimizar (un instante después, para que
@@ -1252,6 +1409,10 @@ void AppFrame() {
         case Page::Settings: DrawSettings(d, cmin, cmax, acc, data); break;
     }
     g_fade = 1.0f;
+    if (g_upd.state == updater::State::Downloading || g_upd.state == updater::State::Installing ||
+        g_upd.state == updater::State::Restarting) {
+        DrawUpdateOverlay(d, display);
+    }
     DrawTitleBar(d, display);
 
     ImGui::End();
@@ -1261,6 +1422,7 @@ void AppFrame() {
 void AppShutdown() {
     g_quit.store(true);
     account::Shutdown();
+    updater::Shutdown();
     if (g_statusThread.joinable()) {
         g_statusThread.join();
     }

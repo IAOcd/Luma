@@ -172,15 +172,15 @@ PlayFlow::~PlayFlow() {
     }
 }
 
-void PlayFlow::Start() {
+void PlayFlow::Start(std::vector<std::string> supportedMinecraft, bool force) {
     if (busy_.exchange(true)) {
         return;  // ya está en marcha
     }
     if (thread_.joinable()) {
         thread_.join();  // el anterior ya terminó
     }
-    thread_ = std::thread([this] {
-        Run();
+    thread_ = std::thread([this, supported = std::move(supportedMinecraft), force] {
+        Run(supported, force);
         busy_.store(false);
     });
 }
@@ -201,7 +201,7 @@ void PlayFlow::Set(PlayState state, const char* key, std::string detail) {
     snapshot_.detail = std::move(detail);
 }
 
-void PlayFlow::Run() {
+void PlayFlow::Run(const std::vector<std::string>& supported, bool force) {
     std::error_code ec;
     // --- 1. Luma.dll ------------------------------------------------------------------
     // Si hay una Luma.dll junto al launcher (la carpeta de compilación), se usa
@@ -267,6 +267,20 @@ void PlayFlow::Run() {
     if (IsModuleLoaded(pid, kDllName).value_or(false)) {
         Set(PlayState::AlreadyLoaded, "play.already");
         return;
+    }
+    // ¿Esta versión de Minecraft está soportada? (las direcciones internas del
+    // juego cambian en cada actualización: con una versión nueva, algunos
+    // módulos pueden quedar desactivados hasta que salga una Luma nueva)
+    if (!force && !supported.empty()) {
+        const std::string version = QueryGameStatus().gameVersion;
+        bool ok = version.empty();  // si no se sabe la versión, no molestar
+        for (const std::string& s : supported) {
+            ok |= s == version;
+        }
+        if (!ok) {
+            Set(PlayState::Unsupported, "play.unsupported", version);
+            return;
+        }
     }
 
     // --- 4. Inyectar y confirmar -----------------------------------------------------

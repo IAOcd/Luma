@@ -20,6 +20,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace luma::launcher {
 
@@ -31,6 +32,7 @@ enum class PlayState {
     Verifying,      // esperando el log de Luma
     Done,           // Luma cargado
     AlreadyLoaded,  // ya estaba cargado (no es un error)
+    Unsupported,    // esta versión de Minecraft no está en la lista de Luma: pedir confirmación
     Failed,
 };
 
@@ -43,13 +45,15 @@ struct PlaySnapshot {
 class PlayFlow {
 public:
     ~PlayFlow();
-    // Empieza (si no está ya en marcha).
-    void Start();
+    // Empieza (si no está ya en marcha). "supportedMinecraft": las versiones
+    // que soporta esta Luma (vacío = no se sabe, no avisar). "force": jugar
+    // igual aunque la versión no esté en la lista.
+    void Start(std::vector<std::string> supportedMinecraft = {}, bool force = false);
     PlaySnapshot Snapshot() const;
     bool Busy() const;
 
 private:
-    void Run();
+    void Run(const std::vector<std::string>& supported, bool force);
     void Set(PlayState state, const char* key, std::string detail = {});
 
     mutable std::mutex mutex_;

@@ -1,0 +1,23 @@
+{
+  "date": "10.11.2026",
+  "notes": {
+    "en": [
+      {"title": "Automatic updates", "body": "The launcher now updates itself when a new version is out."},
+      {"title": "A brand new launcher", "body": "Dark and light themes, one-click PLAY, stats and three languages."},
+      {"title": "Sign in with Xbox", "body": "Optional: shows your gamertag and picture."},
+      {"title": "Hitboxes and block outline", "body": "Drawn inside the world: walls hide them, like the game's own."}
+    ],
+    "es": [
+      {"title": "Actualizaciones automáticas", "body": "El launcher ahora se actualiza solo cuando sale una versión nueva."},
+      {"title": "Un launcher nuevo", "body": "Temas oscuro y claro, JUGAR con un clic, estadísticas y tres idiomas."},
+      {"title": "Inicia sesión con Xbox", "body": "Opcional: muestra tu gamertag y tu foto."},
+      {"title": "Hitboxes y contorno de bloque", "body": "Dibujados dentro del mundo: las paredes los tapan, como los del juego."}
+    ],
+    "pt": [
+      {"title": "Atualizações automáticas", "body": "O launcher agora se atualiza sozinho quando sai uma versão nova."},
+      {"title": "Um launcher novo", "body": "Temas escuro e claro, JOGAR com um clique, estatísticas e três idiomas."},
+      {"title": "Entre com o Xbox", "body": "Opcional: mostra seu gamertag e sua foto."},
+      {"title": "Hitboxes e contorno de bloco", "body": "Desenhados dentro do mundo: as paredes os escondem, como os do jogo."}
+    ]
+  }
+}

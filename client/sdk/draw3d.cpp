@@ -258,10 +258,18 @@ void Render(const Frame& f, const RawSharedPtr& material) {
     }
     char pad[0x58]{};
     g_renderMesh(reinterpret_cast<void*>(f.sc), reinterpret_cast<void*>(f.tess), material.object, pad);
+    static std::atomic<int> logs{0};
+    if (logs.fetch_add(1) < 2) {
+        log::Info("SDK: renderMeshImmediately terminó sin error.");
+    }
 }
 
 // --- Hitboxes: recorrer todas las cajas de entidades --------------------------------
+std::atomic<int> g_hitboxLogs{0};
+int g_lastDrawn = 0;
+
 void DrawHitboxes(const Frame& f, const HitboxSettings& s) {
+    g_lastDrawn = 0;
     const std::uintptr_t player = sdk::player::LocalPlayer();
     std::uintptr_t registry = 0;
     if (player == 0 || !SafeRead(player + offsets::kActorEnttRegistry, registry) || !LooksLikePointer(registry)) {
@@ -318,12 +326,17 @@ void DrawHitboxes(const Frame& f, const HitboxSettings& s) {
         const bool isItem = (type & 0xFFFF) == kTypeItem || (type & 0xFFFF) == kTypeXpOrb ||
                             (typeComp == 0 && width < 0.4f && height < 0.4f);
         if (isPlayer) {
-            if (s.players) Box(f, s.playerColor, box, box + 3);
+            if (s.players) { Box(f, s.playerColor, box, box + 3); ++g_lastDrawn; }
         } else if (isItem) {
-            if (s.items) Box(f, s.itemColor, box, box + 3);
+            if (s.items) { Box(f, s.itemColor, box, box + 3); ++g_lastDrawn; }
         } else if (s.mobs) {
             Box(f, s.mobColor, box, box + 3);
+            ++g_lastDrawn;
         }
+    }
+    if (g_hitboxLogs.fetch_add(1) < 3) {
+        log::Info("SDK: hitboxes: {} cajas en la piscina, {} dibujadas (origen {:.1f} {:.1f} {:.1f}).", count, g_lastDrawn,
+                  f.origin[0], f.origin[1], f.origin[2]);
     }
 }
 
@@ -381,9 +394,21 @@ void DrawHitboxesSafe(std::uintptr_t lrp, std::uintptr_t screenContext, const Hi
 
 std::atomic<bool> g_loggedInsideOutline{false};
 
+std::atomic<int> g_outlineCalls{0};
+
 void __fastcall RenderOutlineDetour(void* lrp, void* screenContext, void* block, void* region, const int* pos) {
     hooks::ActiveCallGuard guard;
     const OutlineSettings s = CopyOutline();
+    // DIAGNÓSTICO: las primeras llamadas, al log.
+    if (g_outlineCalls.fetch_add(1) < 3) {
+        std::uintptr_t colorPtr = 0;
+        float c[4]{};
+        SafeRead(reinterpret_cast<std::uintptr_t>(screenContext) + kScreenContextColor, colorPtr);
+        SafeRead(colorPtr, c);
+        log::Info("SDK: el juego dibuja el contorno: bloque ({}, {}, {}), color de pantalla {:.2f} {:.2f} {:.2f} {:.2f}, "
+                  "módulo {}.", pos ? pos[0] : 0, pos ? pos[1] : 0, pos ? pos[2] : 0, c[0], c[1], c[2], c[3],
+                  s.enabled ? "activo" : "apagado");
+    }
     if (!g_ready.load(std::memory_order_relaxed) || !s.enabled || pos == nullptr) {
         g_renderOutline(lrp, screenContext, block, region, pos);
     } else {

@@ -205,9 +205,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 void Render(HWND hwnd) {
     (void)hwnd;
-    if (!g_ready || g_target == nullptr) {
+    // Nunca dibujar un frame adentro de otro (Windows puede mandarnos
+    // WM_SIZE mientras dibujamos: ImGui no lo soporta y el programa se caía).
+    static bool rendering = false;
+    if (!g_ready || g_target == nullptr || rendering) {
         return;
     }
+    rendering = true;
+    struct Done {
+        ~Done() { rendering = false; }
+    } done;
     if (AppFontsDirty()) {
         ImGui_ImplDX11_InvalidateDeviceObjects();
         AppRebuildFonts();

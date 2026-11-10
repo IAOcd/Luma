@@ -1,0 +1,17 @@
+{
+  "date": "10.11.2026",
+  "notes": {
+    "en": [
+      {"title": "Maximize fixed", "body": "The launcher no longer closes when you maximize its window."},
+      {"title": "Automatic updates", "body": "This version arrived on its own: the launcher updates itself when a new version is out."}
+    ],
+    "es": [
+      {"title": "Maximizar arreglado", "body": "El launcher ya no se cierra al maximizar su ventana."},
+      {"title": "Actualizaciones automáticas", "body": "Esta versión llegó sola: el launcher se actualiza cuando sale una versión nueva."}
+    ],
+    "pt": [
+      {"title": "Maximizar corrigido", "body": "O launcher não fecha mais ao maximizar a janela."},
+      {"title": "Atualizações automáticas", "body": "Esta versão chegou sozinha: o launcher se atualiza quando sai uma versão nova."}
+    ]
+  }
+}

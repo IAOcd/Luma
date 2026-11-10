@@ -518,8 +518,11 @@ void DrawTitleBar(ImDrawList* d, ImVec2 display) {
         if (clicked) {
             switch (b.action) {
                 case 0: PostMessageW(g_hwnd, WM_CLOSE, 0, 0); break;
-                case 1: ShowWindow(g_hwnd, maximized ? SW_RESTORE : SW_MAXIMIZE); break;
-                case 2: ShowWindow(g_hwnd, SW_MINIMIZE); break;
+                // PostMessage (no ShowWindow): el cambio de tamaño pasa DESPUÉS de
+                // este frame. Si pasara ahora, Windows nos pediría dibujar otro
+                // frame en medio de este, y eso crasheaba al maximizar.
+                case 1: PostMessageW(g_hwnd, WM_SYSCOMMAND, maximized ? SC_RESTORE : SC_MAXIMIZE, 0); break;
+                case 2: PostMessageW(g_hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0); break;
                 case 3:
                     SetTheme(CurrentTheme() == ThemeKind::Dark ? ThemeKind::Light : ThemeKind::Dark);
                     SaveConfig();
@@ -1378,7 +1381,7 @@ void AppFrame() {
     }
     if (g_minimizeAt > 0.0 && ImGui::GetTime() >= g_minimizeAt) {
         g_minimizeAt = 0.0;
-        ShowWindow(g_hwnd, SW_MINIMIZE);
+        PostMessageW(g_hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
     }
 
     ImGui::SetNextWindowPos(ImVec2(0, 0));

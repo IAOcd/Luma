@@ -8,9 +8,12 @@
 //                    tiempo cuenta solo mientras Luma está cargado. Se guarda
 //                    cada minuto (si el juego se cierra de golpe, se pierde
 //                    como mucho un minuto) y al descargar Luma.
-//    profile.json -> {"name": "TuGamertag"}
+//    profile.json -> {"name": "TuGamertag", "gameDir": "C:/XboxGames/.../Content"}
 //                    El nombre de tu jugador (en Bedrock es tu gamertag de
-//                    Xbox), leído del juego al entrar a un mundo.
+//                    Xbox), leído del juego al entrar a un mundo, y la carpeta
+//                    del juego (el launcher saca de ahí la letra pixelada).
+//    skin.png + skin.json -> tu skin, leída del juego cada 10 s (solo se
+//                    escribe si cambió). Ver sdk/skin.h.
 //
 //  Todo corre en el hilo principal de Luma (el que espera la tecla de
 //  descarga), nunca en el de render: escribir en disco ahí costaría frames.

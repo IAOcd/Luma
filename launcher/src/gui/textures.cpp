@@ -53,8 +53,17 @@ void SetDevice(ID3D11Device* device) {
     g_device = device;
 }
 
-const Texture* Get(const std::wstring& path) {
-    Entry& e = g_cache[path];
+bool DecodeFile(const std::wstring& path, std::vector<std::uint8_t>& rgba, unsigned& width, unsigned& height) {
+    UINT w = 0;
+    UINT h = 0;
+    if (!Decode(path, rgba, w, h)) return false;
+    width = w;
+    height = h;
+    return true;
+}
+
+const Texture* Get(const std::wstring& path, const std::wstring& cacheKey) {
+    Entry& e = g_cache[cacheKey.empty() ? path : cacheKey];
     if (!e.tried) {
         e.tried = true;
         std::vector<std::uint8_t> rgba;

@@ -61,6 +61,7 @@ add_library(Luma SHARED
     sdk/inventory.cpp
     sdk/memory.cpp
     sdk/paperdoll.cpp
+    sdk/skin.cpp
     sdk/mouse_queue.cpp
     sdk/network.cpp
     sdk/player.cpp

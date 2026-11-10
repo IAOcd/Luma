@@ -48,6 +48,7 @@
 #include "core/version.h"
 #include "flow.h"
 #include "gui/sky.h"
+#include "gui/skin3d.h"
 #include "gui/textures.h"
 #include "gui/theme.h"
 #include "i18n.h"
@@ -112,7 +113,9 @@ struct Fonts {
     ImFont* semibold = nullptr;  // títulos de tarjetas, botones
     ImFont* title = nullptr;     // "LUMA", "JUGAR"
     ImFont* hero = nullptr;      // el nombre grande del cartel
+    ImFont* pixel = nullptr;     // la letra pixelada de Minecraft (de TU juego instalado), para el nombre sobre la skin
 } g_fonts;
+std::string g_pixelFontDir;      // de qué carpeta del juego se cargó (si cambia, se recarga)
 
 // Zonas de la barra de título que NO sirven para arrastrar (los botones).
 struct Rect {
@@ -141,6 +144,12 @@ struct LocalData {
     long long sessions = 0;       // stats.json
     long long playSeconds = 0;
     long long lastPlayed = 0;     // segundos desde 1970 (0 = nunca)
+    // Tu skin (la guarda Luma.dll en skin.png). "skinKey" cambia cuando cambia el archivo.
+    std::wstring skinPath;
+    std::wstring skinKey;
+    bool skinSlim = false;
+    bool skinLegacy = false;
+    std::string gameDir;          // la carpeta del juego (para su letra pixelada)
 };
 std::mutex g_dataMutex;
 LocalData g_data;
@@ -687,6 +696,36 @@ void ShadowText(ImDrawList* d, ImFont* font, ImVec2 pos, ImU32 color, const char
     }
 }
 
+// --- Tu skin en 3D --------------------------------------------------------------------
+float g_heroYaw = -0.45f;     // giro de la skin del cartel (se cambia arrastrando)
+float g_cardYaw = -0.45f;     // y la de la tarjeta
+float g_cardZoom = 1.0f;      // 1 = cuerpo entero
+float g_cardZoomTarget = 1.0f;
+bool g_cardSpin = false;      // girando sola
+bool g_skinFullscreen = false;
+float g_fullYaw = -0.45f;
+
+// El modelo con la skin actual (o nullptr si todavía no hay skin).
+bool SkinModel(const LocalData& data, skin3d::Model& model) {
+    if (data.skinPath.empty()) return false;
+    const textures::Texture* tex = textures::Get(data.skinPath, data.skinKey);
+    if (tex == nullptr) return false;
+    model.texture = tex->id;
+    model.slim = data.skinSlim;
+    model.legacy = data.skinLegacy;
+    return true;
+}
+
+// Zona donde arrastrar con el mouse gira el personaje.
+void DragToRotate(const char* id, ImVec2 min, ImVec2 max, float& yaw) {
+    ImGui::SetCursorScreenPos(min);
+    ImGui::InvisibleButton(id, ImVec2(std::max(1.0f, max.x - min.x), std::max(1.0f, max.y - min.y)));
+    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (ImGui::IsItemActive()) {
+        yaw += ImGui::GetIO().MouseDelta.x * 0.012f;
+    }
+}
+
 // El menú de la flechita junto a JUGAR (se dibuja al final, encima de todo).
 bool g_playMenuOpen = false;
 ImVec2 g_playMenuAnchor{0, 0};  // esquina superior izquierda de la flechita
@@ -773,6 +812,33 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, cons
     const ImU32 white = C(ImVec4(1, 1, 1, 1));
     const ImU32 soft = C(ImVec4(1, 1, 1, 1), 0.82f);
     const float left = min.x + S(36.0f);
+
+    // Tu skin, grande, a la derecha (como en LabyMod), con tu nombre arriba.
+    skin3d::Model model;
+    if (SkinModel(data, model)) {
+        const float heroH = max.y - min.y;
+        const float modelH = heroH * 1.02f;  // las piernas quedan un poco cortadas abajo
+        const float cx = max.x - std::max(heroH * 0.62f, S(200.0f));
+        const ImVec2 mmin(cx - modelH * 0.4f, min.y + heroH * 0.2f);
+        const ImVec2 mmax(cx + modelH * 0.4f, mmin.y + modelH);
+        DragToRotate("##hero_skin", ImVec2(mmin.x, min.y), ImVec2(mmax.x, max.y), g_heroYaw);
+        const bool dragging = ImGui::IsItemActive();
+        const float t = static_cast<float>(ImGui::GetTime());
+        skin3d::View view;
+        view.yaw = g_heroYaw + (dragging ? 0.0f : std::sin(t * 0.35f) * 0.18f);
+        view.pitch = 0.06f;
+        view.time = t;
+        view.alpha = g_fade;
+        d->PushClipRect(ImVec2(min.x + 1, min.y + 1), ImVec2(max.x - 1, max.y - 1), true);
+        const ImVec2 head = skin3d::Draw(d, mmin, mmax, model, view);
+        d->PopClipRect();
+        // Etiqueta con el nombre (letra pixelada, fondo oscuro como en el juego).
+        const ImVec2 ns = TextSize(g_fonts.pixel, name.c_str());
+        const ImVec2 tmin(std::round(head.x - ns.x * 0.5f - S(10.0f)), std::round(head.y - ns.y - S(18.0f)));
+        const ImVec2 tmax(std::round(head.x + ns.x * 0.5f + S(10.0f)), std::round(head.y - S(6.0f)));
+        d->AddRectFilled(tmin, tmax, C(ImVec4(0, 0, 0, 1), 0.42f));
+        Text(d, g_fonts.pixel, ImVec2(tmin.x + S(10.0f), tmin.y + (tmax.y - tmin.y - ns.y) * 0.5f), white, name.c_str());
+    }
 
     // Píldora arriba a la izquierda: el estado (Luma cargado / actualizaciones).
     {
@@ -928,27 +994,106 @@ void DrawQuickAccess(ImDrawList* d, ImVec2 min, ImVec2 max) {
     }
 }
 
-// "Tu skin": en el paso 2 se dibuja en 3D. Por ahora, una silueta.
-void DrawSkinCard(ImDrawList* d, ImVec2 min, ImVec2 max) {
+// "Tu skin": el personaje en 3D, con girar, zoom y pantalla completa.
+void DrawSkinCard(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
     const Palette& p = P();
     Card(d, min, max);
     SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("skin.title"));
-    const float w = max.x - min.x;
-    const float h = max.y - min.y - S(56.0f);
-    const float u = std::min(w / 14.0f, h / 22.0f);  // un "píxel" de la silueta
-    const ImVec2 o(min.x + (w - 8.0f * u) * 0.5f, min.y + S(50.0f) + (h - 20.0f * u) * 0.5f);
-    const ImU32 c = C(p.textDim, 0.25f);
-    auto block = [&](float x0, float y0, float x1, float y1) {
-        d->AddRectFilled(ImVec2(o.x + x0 * u, o.y + y0 * u), ImVec2(o.x + x1 * u, o.y + y1 * u), c, u * 0.3f);
+    skin3d::Model model;
+    if (!SkinModel(data, model)) {
+        // Todavía no hay skin: una silueta y cómo conseguirla.
+        const float w = max.x - min.x;
+        const float h = max.y - min.y - S(56.0f);
+        const float u = std::min(w / 14.0f, h / 22.0f);
+        const ImVec2 o(min.x + (w - 8.0f * u) * 0.5f, min.y + S(50.0f) + (h - 20.0f * u) * 0.5f);
+        const ImU32 c = C(p.textDim, 0.25f);
+        auto block = [&](float x0, float y0, float x1, float y1) {
+            d->AddRectFilled(ImVec2(o.x + x0 * u, o.y + y0 * u), ImVec2(o.x + x1 * u, o.y + y1 * u), c, u * 0.3f);
+        };
+        block(2, 0, 6, 4);
+        block(2, 4, 6, 10);
+        block(0, 4, 2, 10);
+        block(6, 4, 8, 10);
+        block(2, 10, 4, 16);
+        block(4, 10, 6, 16);
+        TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(16.0f), o.y + 17.0f * u), C(p.textDim), T("skin.placeholder"), w - S(32.0f));
+        return;
+    }
+    // Botones a la derecha: girar sola, acercar a la cabeza, pantalla completa.
+    const float bs = S(34.0f);
+    const float bx = max.x - S(14.0f) - bs;
+    float by = min.y + S(50.0f);
+    struct Btn {
+        const char* id;
+        const char* icon;
+        bool on;
+        int action;
     };
-    block(2, 0, 6, 4);     // cabeza
-    block(2, 4, 6, 10);    // cuerpo
-    block(0, 4, 2, 10);    // brazos
-    block(6, 4, 8, 10);
-    block(2, 10, 4, 16);   // piernas
-    block(4, 10, 6, 16);
-    const char* hint = T("skin.placeholder");
-    TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(16.0f), o.y + 17.0f * u), C(p.textDim), hint, w - S(32.0f));
+    const Btn buttons[] = {
+        {"##skin_spin", "M18.5 12c0 3.6-2.9 6.5-6.5 6.5S5.5 15.6 5.5 12 8.4 5.5 12 5.5c2 0 3.7.9 4.9 2.3 M17.5 4v4h-4", g_cardSpin, 0},
+        {"##skin_zoom", "M10.5 4.5c3.3 0 6 2.7 6 6s-2.7 6-6 6-6-2.7-6-6 2.7-6 6-6z M15 15l5 5 M8 10.5h5 M10.5 8v5", g_cardZoomTarget > 1.0f, 1},
+        {"##skin_full", "M4 9V4h5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5", false, 2},
+    };
+    for (const Btn& b : buttons) {
+        float hover = 0.0f;
+        if (Hit(b.id, ImVec2(bx, by), ImVec2(bx + bs, by + bs), &hover)) {
+            if (b.action == 0) g_cardSpin = !g_cardSpin;
+            if (b.action == 1) g_cardZoomTarget = g_cardZoomTarget > 1.0f ? 1.0f : 2.4f;
+            if (b.action == 2) {
+                g_skinFullscreen = true;
+                g_fullYaw = g_cardYaw;
+            }
+        }
+        d->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bs, by + bs), C(b.on ? p.accent : Mix(p.background, p.cardHover, hover)), S(9.0f));
+        d->AddRect(ImVec2(bx, by), ImVec2(bx + bs, by + bs), C(p.border), S(9.0f));
+        icons::Draw(d, b.icon, ImVec2(bx + bs * 0.5f, by + bs * 0.5f), S(18.0f), C(b.on ? p.onAccent : p.text), S(1.6f));
+        by += bs + S(8.0f);
+    }
+    // El personaje
+    const float dt = Dt();
+    g_cardZoom += (g_cardZoomTarget - g_cardZoom) * std::min(1.0f, dt * 8.0f);
+    if (g_cardSpin) g_cardYaw += dt * 0.9f;
+    const ImVec2 mmin(min.x + S(12.0f), min.y + S(48.0f));
+    const ImVec2 mmax(bx - S(8.0f), max.y - S(10.0f));
+    DragToRotate("##card_skin", mmin, mmax, g_cardYaw);
+    skin3d::View view;
+    view.yaw = g_cardYaw;
+    view.zoom = g_cardZoom;
+    view.time = static_cast<float>(ImGui::GetTime());
+    view.alpha = g_fade;
+    d->PushClipRect(mmin, mmax, true);
+    skin3d::Draw(d, mmin, mmax, model, view);
+    d->PopClipRect();
+}
+
+// Pantalla completa de la skin (encima de todo; se cierra con la X o Esc).
+void DrawSkinFullscreen(ImDrawList* d, ImVec2 display, const LocalData& data) {
+    if (!g_skinFullscreen) return;
+    skin3d::Model model;
+    if (!SkinModel(data, model) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        g_skinFullscreen = false;
+        return;
+    }
+    const Palette& p = P();
+    const ImVec2 min(S(kSidebarWidth) + S(kPad), S(kTitleBarHeight));
+    const ImVec2 max(display.x - S(kPad), display.y - S(kPad));
+    d->AddRectFilled(ImVec2(0, S(kTitleBarHeight)), display, Col(p.background, 0.75f));
+    sky::Draw(d, min, max, S(6.0f), S(kRound + 4.0f), Col(p.background), g_skyMode);
+    d->AddRect(min, max, Col(p.border), S(kRound + 4.0f));
+    DragToRotate("##full_skin", min, max, g_fullYaw);
+    skin3d::View view;
+    view.yaw = g_fullYaw;
+    view.time = static_cast<float>(ImGui::GetTime());
+    const float h = (max.y - min.y) * 0.86f;
+    const ImVec2 c((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+    skin3d::Draw(d, ImVec2(c.x - h * 0.4f, c.y - h * 0.5f), ImVec2(c.x + h * 0.4f, c.y + h * 0.5f), model, view);
+    float hover = 0.0f;
+    const ImVec2 xmin(max.x - S(52.0f), min.y + S(16.0f));
+    if (Hit("##full_close", xmin, ImVec2(xmin.x + S(36.0f), xmin.y + S(36.0f)), &hover)) {
+        g_skinFullscreen = false;
+    }
+    d->AddRectFilled(xmin, ImVec2(xmin.x + S(36.0f), xmin.y + S(36.0f)), Col(ImVec4(0, 0, 0, 1), 0.35f + 0.2f * hover), S(9.0f));
+    icons::Draw(d, icons::kClose, ImVec2(xmin.x + S(18.0f), xmin.y + S(18.0f)), S(16.0f), IM_COL32_WHITE, S(1.8f));
 }
 
 void InfoRow(ImDrawList* d, ImVec2 pos, float width, const char* label, const char* value, const ImVec4* dot,
@@ -1150,7 +1295,7 @@ void DrawHome(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, cons
     const float qaW = (width - gap * 2.0f) * 0.42f;
     const float skinW = (width - gap * 2.0f) * 0.24f;
     DrawQuickAccess(d, ImVec2(min.x, y), ImVec2(min.x + qaW, y + row1H));
-    DrawSkinCard(d, ImVec2(min.x + qaW + gap, y), ImVec2(min.x + qaW + gap + skinW, y + row1H));
+    DrawSkinCard(d, ImVec2(min.x + qaW + gap, y), ImVec2(min.x + qaW + gap + skinW, y + row1H), data);
     DrawStats(d, ImVec2(min.x + qaW + gap + skinW + gap, y), ImVec2(max.x, y + row1H), data);
     y += row1H + gap;
     // Fila 2: noticias | info del cliente
@@ -1453,12 +1598,42 @@ void DrawComingSoon(ImDrawList* d, ImVec2 min, ImVec2 max, const char* icon, con
 }
 
 void StatusThread() {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);  // WIC, para revisar la skin
     const fs::path dir = DataDir();
+    std::wstring lastSkinKey;
+    bool lastSlim = false;
+    bool lastLegacy = false;
     while (!g_quit.load()) {
         LocalData data;
         data.game = QueryGameStatus();
         const nlohmann::json profile = ReadJson(dir / L"profile.json");
         data.profileName = profile.value("name", std::string());
+        data.gameDir = profile.value("gameDir", std::string());
+        // La skin: solo se vuelve a mirar la imagen si el archivo cambió.
+        {
+            std::error_code ec;
+            const fs::path skin = dir / L"skin.png";
+            const auto written = fs::last_write_time(skin, ec);
+            if (!ec) {
+                const std::wstring key = skin.native() + L"|" + std::to_wstring(written.time_since_epoch().count());
+                if (key != lastSkinKey) {
+                    std::vector<std::uint8_t> rgba;
+                    unsigned w = 0;
+                    unsigned h = 0;
+                    if (textures::DecodeFile(skin.native(), rgba, w, h)) {
+                        lastSlim = skin3d::DetectSlim(rgba.data(), static_cast<int>(w), static_cast<int>(h));
+                        lastLegacy = h * 2 == w;
+                        lastSkinKey = key;
+                    }
+                }
+                if (key == lastSkinKey) {
+                    data.skinPath = skin.native();
+                    data.skinKey = key;
+                    data.skinSlim = lastSlim;
+                    data.skinLegacy = lastLegacy;
+                }
+            }
+        }
         const nlohmann::json stats = ReadJson(dir / L"stats.json");
         data.sessions = stats.value("sessions", 0LL);
         data.playSeconds = stats.value("playSeconds", 0LL);
@@ -1481,6 +1656,7 @@ void StatusThread() {
             Sleep(100);
         }
     }
+    CoUninitialize();
 }
 
 }  // namespace
@@ -1502,6 +1678,7 @@ void AppInit(HWND hwnd, float scale) {
 void AppSetDevice(ID3D11Device* device) {
     g_device = device;
     textures::SetDevice(device);
+    skin3d::Init(device);
 }
 
 void AppSetScale(float scale) {
@@ -1538,11 +1715,30 @@ void AppRebuildFonts() {
     g_fonts.semibold = load(L"seguisb.ttf", 16.0f);
     g_fonts.title = load(L"segoeuib.ttf", 22.0f);
     g_fonts.hero = load(L"segoeuib.ttf", 42.0f);
+    // La letra pixelada: no la distribuimos; se lee de la carpeta de TU juego
+    // (Luma.dll anota cuál es en profile.json).
+    g_fonts.pixel = nullptr;
+    {
+        const nlohmann::json profile = ReadJson(DataDir() / L"profile.json");
+        g_pixelFontDir = profile.value("gameDir", std::string());
+        if (!g_pixelFontDir.empty()) {
+            const fs::path font = fs::path(std::u8string(reinterpret_cast<const char8_t*>(g_pixelFontDir.data()), g_pixelFontDir.size())) / L"data" / L"fonts" / L"Mojangles.ttf";
+            std::error_code ec;
+            if (fs::exists(font, ec)) {
+                ImFontConfig config;
+                config.OversampleH = 1;
+                config.OversampleV = 1;
+                config.PixelSnapH = true;
+                g_fonts.pixel = io.Fonts->AddFontFromFileTTF(font.string().c_str(), std::round(20.0f * g_scale), &config);
+            }
+        }
+    }
     ImFont* fallback = g_fonts.regular;
     if (g_fonts.tiny == nullptr) g_fonts.tiny = fallback;
     if (g_fonts.semibold == nullptr) g_fonts.semibold = fallback;
     if (g_fonts.title == nullptr) g_fonts.title = g_fonts.semibold;
     if (g_fonts.hero == nullptr) g_fonts.hero = g_fonts.title;
+    if (g_fonts.pixel == nullptr) g_fonts.pixel = g_fonts.semibold;
     io.Fonts->Build();
 }
 
@@ -1554,6 +1750,10 @@ void AppFrame() {
     {
         std::lock_guard lock(g_dataMutex);
         data = g_data;
+    }
+    if (data.gameDir != g_pixelFontDir) {
+        g_fontsDirty = true;  // se supo dónde está el juego: cargar su letra pixelada
+        g_pixelFontDir = data.gameDir;
     }
     const account::Info acc = account::Get();
     UpdateAvatar(acc);
@@ -1609,8 +1809,10 @@ void AppFrame() {
     g_fade = 1.0f;
     if (g_page == Page::Home) {
         DrawPlayMenu(d);
+        DrawSkinFullscreen(d, display, data);
     } else {
         g_playMenuOpen = false;
+        g_skinFullscreen = false;
     }
     if (g_upd.state == updater::State::Downloading || g_upd.state == updater::State::Installing ||
         g_upd.state == updater::State::Restarting) {
@@ -1634,6 +1836,7 @@ void AppShutdown() {
         g_avatar = nullptr;
     }
     textures::ReleaseAll();
+    skin3d::Shutdown();
 }
 
 bool AppIsCaption(int x, int y) {

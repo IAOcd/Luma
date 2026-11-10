@@ -12,6 +12,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
+#include <vector>
 #include <system_error>
 
 #include <nlohmann/json.hpp>
@@ -129,7 +131,13 @@ bool WritePng(const fs::path& path, const sdk::skin::Image& image) {
     IWICStream* stream = nullptr;
     IWICBitmapEncoder* encoder = nullptr;
     IWICBitmapFrameEncode* frame = nullptr;
-    WICPixelFormatGUID format = GUID_WICPixelFormat32bppRGBA;
+    // El codificador PNG de Windows quiere los píxeles como BGRA (azul primero):
+    // los damos vuelta (la skin del juego viene como RGBA).
+    std::vector<std::uint8_t> bgra(image.rgba);
+    for (std::size_t i = 0; i + 3 < bgra.size(); i += 4) {
+        std::swap(bgra[i], bgra[i + 2]);
+    }
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
     bool ok = SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
               SUCCEEDED(factory->CreateStream(&stream)) &&
               SUCCEEDED(stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE)) &&
@@ -137,9 +145,8 @@ bool WritePng(const fs::path& path, const sdk::skin::Image& image) {
               SUCCEEDED(encoder->Initialize(stream, WICBitmapEncoderNoCache)) &&
               SUCCEEDED(encoder->CreateNewFrame(&frame, nullptr)) && SUCCEEDED(frame->Initialize(nullptr)) &&
               SUCCEEDED(frame->SetSize(image.width, image.height)) && SUCCEEDED(frame->SetPixelFormat(&format)) &&
-              IsEqualGUID(format, GUID_WICPixelFormat32bppRGBA) &&
-              SUCCEEDED(frame->WritePixels(image.height, image.width * 4, static_cast<UINT>(image.rgba.size()),
-                                           const_cast<BYTE*>(image.rgba.data()))) &&
+              IsEqualGUID(format, GUID_WICPixelFormat32bppBGRA) &&
+              SUCCEEDED(frame->WritePixels(image.height, image.width * 4, static_cast<UINT>(bgra.size()), bgra.data())) &&
               SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
     if (frame) frame->Release();
     if (encoder) encoder->Release();
@@ -165,6 +172,11 @@ void CheckSkin() {
     fs::path temp = paths::DataDir() / L"skin.png.tmp";
     if (!WritePng(temp, image) || !MoveFileExW(temp.c_str(), (paths::DataDir() / L"skin.png").c_str(), MOVEFILE_REPLACE_EXISTING)) {
         fs::remove(temp, ec);
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            log::Warn("Skin: se leyó ({}x{}) pero no se pudo guardar el PNG.", image.width, image.height);
+        }
         return;
     }
     nlohmann::json json;

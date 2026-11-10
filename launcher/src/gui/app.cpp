@@ -49,6 +49,7 @@
 #include "flow.h"
 #include "gui/sky.h"
 #include "gui/skin3d.h"
+#include "gui/skins.h"
 #include "gui/textures.h"
 #include "gui/theme.h"
 #include "i18n.h"
@@ -85,6 +86,7 @@ constexpr const char* kIconNews = "M5 4h11l3 3v13H5z M8 9h8 M8 12.5h8 M8 16h5";
 constexpr const char* kIconSliders = "M4 6.5h9 M17 6.5h3 M15 4.5v4 M4 12h3 M11 12h9 M9 10v4 M4 17.5h11 M19 17.5h1 M17 15.5v4";
 constexpr const char* kIconCalendar = "M4.5 6h15v14h-15z M4.5 10h15 M8.5 3.5v4 M15.5 3.5v4";
 constexpr const char* kIconWindows = "M4 5.5l7-1v7H4z M13 4.2l7-1v8.3h-7z M4 13h7v7l-7-1z M13 13h7v8.3l-7-1z";
+constexpr const char* kIconStar = "F M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.8z";
 constexpr const char* kIconChevron = "M9.5 6l6 6-6 6";
 constexpr const char* kIconFolder = "M3.5 6.5h6l2 2h9v10h-17z";
 constexpr const char* kIconUser = "M8 8C8 5.8 9.8 4 12 4S16 5.8 16 8S14.2 12 12 12S8 10.2 8 8z M4.5 20c.8-3.8 3.9-6 7.5-6s6.7 2.2 7.5 6";
@@ -986,7 +988,12 @@ void DrawQuickAccess(ImDrawList* d, ImVec2 min, ImVec2 max) {
                     S(1.8f));
         TextFit(d, g_fonts.semibold, ImVec2(cx - std::min(ts.x, tileW - S(12.0f)) * 0.5f, y0 + S(36.0f)), C(p.text), title,
                 tileW - S(12.0f));
+        char countText[48];
         const char* sub = T(tiles[i].sub);
+        if (tiles[i].page == Page::Skins && !skins::List().empty()) {
+            std::snprintf(countText, sizeof(countText), T("skins.count"), static_cast<int>(skins::List().size()));
+            sub = countText;
+        }
         const ImVec2 ss = TextSize(g_fonts.tiny, sub);
         if (roomy && ss.x < tileW - S(12.0f)) {
             Text(d, g_fonts.tiny, ImVec2(cx - ss.x * 0.5f, y0 + S(36.0f) + ts.y + S(4.0f)), C(p.textDim), sub);
@@ -1080,6 +1087,14 @@ void DrawSkinFullscreen(ImDrawList* d, ImVec2 display, const LocalData& data) {
     d->AddRectFilled(ImVec2(0, S(kTitleBarHeight)), display, Col(p.background, 0.75f));
     sky::Draw(d, min, max, S(6.0f), S(kRound + 4.0f), Col(p.background), g_skyMode);
     d->AddRect(min, max, Col(p.border), S(kRound + 4.0f));
+    // La X va PRIMERO: en ImGui, si dos botones se superponen, el mouse es del
+    // que se registró antes. Antes la zona de girar (toda la pantalla) le
+    // "robaba" el clic a la X.
+    float hover = 0.0f;
+    const ImVec2 xmin(max.x - S(52.0f), min.y + S(16.0f));
+    if (Hit("##full_close", xmin, ImVec2(xmin.x + S(36.0f), xmin.y + S(36.0f)), &hover)) {
+        g_skinFullscreen = false;
+    }
     DragToRotate("##full_skin", min, max, g_fullYaw);
     skin3d::View view;
     view.yaw = g_fullYaw;
@@ -1087,11 +1102,6 @@ void DrawSkinFullscreen(ImDrawList* d, ImVec2 display, const LocalData& data) {
     const float h = (max.y - min.y) * 0.86f;
     const ImVec2 c((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
     skin3d::Draw(d, ImVec2(c.x - h * 0.4f, c.y - h * 0.5f), ImVec2(c.x + h * 0.4f, c.y + h * 0.5f), model, view);
-    float hover = 0.0f;
-    const ImVec2 xmin(max.x - S(52.0f), min.y + S(16.0f));
-    if (Hit("##full_close", xmin, ImVec2(xmin.x + S(36.0f), xmin.y + S(36.0f)), &hover)) {
-        g_skinFullscreen = false;
-    }
     d->AddRectFilled(xmin, ImVec2(xmin.x + S(36.0f), xmin.y + S(36.0f)), Col(ImVec4(0, 0, 0, 1), 0.35f + 0.2f * hover), S(9.0f));
     icons::Draw(d, icons::kClose, ImVec2(xmin.x + S(18.0f), xmin.y + S(18.0f)), S(16.0f), IM_COL32_WHITE, S(1.8f));
 }
@@ -1579,6 +1589,214 @@ void DrawUpdateOverlay(ImDrawList* d, ImVec2 display) {
     Text(d, g_fonts.tiny, ImVec2((min.x + max.x - pts.x) * 0.5f, bmax.y + S(10.0f)), Col(p.textDim), percent);
 }
 
+// --- Sección Skins ------------------------------------------------------------------
+std::string g_selectedSkin;          // id de la skin elegida en la sección
+std::string g_currentGameSkin;       // id de la skin que usas ahora en el juego
+std::wstring g_lastSyncedKey;        // para agregar a la biblioteca solo cuando cambia skin.png
+int g_skinFilter = 0;                // 0 = todas, 1 = favoritas
+float g_skinScroll = 0.0f;
+float g_skinsYaw = -0.45f;
+double g_deleteArmedAt = -10.0;      // borrar pide un segundo clic (dentro de 3 s)
+std::string g_importError;
+
+// Lo que pasa cada frame aunque no estés en la sección: si Luma.dll guardó
+// una skin nueva, sumarla a la biblioteca.
+void SyncSkins(const LocalData& data) {
+    if (data.skinKey.empty() || data.skinKey == g_lastSyncedKey) return;
+    g_lastSyncedKey = data.skinKey;
+    g_currentGameSkin = skins::SyncFromGame(data.skinPath);
+    if (g_selectedSkin.empty()) g_selectedSkin = g_currentGameSkin;
+}
+
+const skins::Skin* SelectedSkin() {
+    const auto& list = skins::List();
+    for (const skins::Skin& s : list) {
+        if (s.id == g_selectedSkin) return &s;
+    }
+    return list.empty() ? nullptr : &list.front();
+}
+
+bool LibraryModel(const skins::Skin& s, skin3d::Model& model) {
+    const textures::Texture* tex = textures::Get(s.file);
+    if (tex == nullptr) return false;
+    model.texture = tex->id;
+    model.slim = s.slim;
+    model.legacy = s.legacy;
+    return true;
+}
+
+void DrawSkinsGrid(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("skins.title"));
+    // Arriba a la derecha: importar y el filtro.
+    float importW = 0.0f;
+    const char* importLabel = T("skins.import");
+    importW = TextSize(g_fonts.semibold, importLabel).x + S(32.0f);
+    if (Button("##skins_import", ImVec2(max.x - S(20.0f) - importW, min.y + S(12.0f)), importLabel, true)) {
+        const std::string id = skins::ImportWithDialog(g_hwnd, g_importError);
+        if (!id.empty()) g_selectedSkin = id;
+    }
+    const char* filters[2] = {T("skins.all"), T("skins.favorites")};
+    const float fw = SegmentedWidth(filters, 2);
+    Segmented("##skins_filter", ImVec2(max.x - S(30.0f) - importW - fw, min.y + S(12.0f)), filters, 2, &g_skinFilter);
+    float top = min.y + S(62.0f);
+    if (!g_importError.empty()) {
+        icons::Draw(d, kIconAlert, ImVec2(min.x + S(28.0f), top + S(8.0f)), S(15.0f), C(p.danger), S(1.6f));
+        TextFit(d, g_fonts.tiny, ImVec2(min.x + S(42.0f), top), C(p.danger), T(g_importError.c_str()), max.x - min.x - S(64.0f));
+        top += S(24.0f);
+    }
+
+    // La cuadrícula (con su propio recorte: lo que queda fuera no se ve ni se puede tocar).
+    const ImVec2 gmin(min.x + S(16.0f), top);
+    const ImVec2 gmax(max.x - S(16.0f), max.y - S(16.0f));
+    const float gap = S(12.0f);
+    const int columns = std::max(1, static_cast<int>((gmax.x - gmin.x + gap) / (S(150.0f) + gap)));
+    const float tileW = ((gmax.x - gmin.x) - gap * static_cast<float>(columns - 1)) / static_cast<float>(columns);
+    const float tileH = tileW * 1.3f;
+    std::vector<const skins::Skin*> shown;
+    for (const skins::Skin& s : skins::List()) {
+        if (g_skinFilter == 0 || s.favorite) shown.push_back(&s);
+    }
+    if (shown.empty()) {
+        const char* text = g_skinFilter == 1 ? T("skins.no_favorites") : T("skins.empty");
+        const ImVec2 ts = TextSize(g_fonts.regular, text);
+        Text(d, g_fonts.regular, ImVec2((gmin.x + gmax.x - ts.x) * 0.5f, (gmin.y + gmax.y) * 0.5f - ts.y), C(p.textDim), text);
+        return;
+    }
+    const int rows = (static_cast<int>(shown.size()) + columns - 1) / columns;
+    const float contentH = rows * tileH + (rows - 1) * gap;
+    const float maxScroll = std::max(0.0f, contentH - (gmax.y - gmin.y));
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    if (mouse.x >= gmin.x && mouse.x < gmax.x && mouse.y >= gmin.y && mouse.y < gmax.y) {
+        g_skinScroll -= ImGui::GetIO().MouseWheel * S(70.0f);
+    }
+    g_skinScroll = std::clamp(g_skinScroll, 0.0f, maxScroll);
+    ImGui::PushClipRect(gmin, gmax, true);
+    const float t = static_cast<float>(ImGui::GetTime());
+    for (std::size_t i = 0; i < shown.size(); ++i) {
+        const skins::Skin& s = *shown[i];
+        const int col = static_cast<int>(i) % columns;
+        const int row = static_cast<int>(i) / columns;
+        const ImVec2 tmin(gmin.x + col * (tileW + gap), gmin.y + row * (tileH + gap) - g_skinScroll);
+        const ImVec2 tmax(tmin.x + tileW, tmin.y + tileH);
+        if (tmax.y < gmin.y || tmin.y > gmax.y) continue;  // fuera de la vista: ni se dibuja
+        char id[48];
+        std::snprintf(id, sizeof(id), "##skin_%s", s.id.substr(0, 12).c_str());
+        float hover = 0.0f;
+        if (Hit(id, tmin, tmax, &hover)) {
+            g_selectedSkin = s.id;
+            g_deleteArmedAt = -10.0;
+        }
+        const bool selected = s.id == (SelectedSkin() ? SelectedSkin()->id : std::string());
+        d->AddRectFilled(tmin, tmax, C(Mix(p.background, p.cardHover, hover)), S(12.0f));
+        d->AddRect(tmin, tmax, C(selected ? p.accent : Mix(p.border, p.accent, hover * 0.3f)), S(12.0f), 0,
+                   selected ? S(2.0f) : 1.0f);
+        skin3d::Model model;
+        if (LibraryModel(s, model)) {
+            skin3d::View view;
+            view.yaw = -0.45f + (hover > 0.0f ? std::sin(t * 1.5f) * 0.6f * hover : 0.0f);
+            view.time = t;
+            view.alpha = g_fade;
+            skin3d::Draw(d, ImVec2(tmin.x + S(10.0f), tmin.y + S(14.0f)), ImVec2(tmax.x - S(10.0f), tmax.y - S(38.0f)), model,
+                         view);
+        }
+        TextFit(d, g_fonts.tiny, ImVec2(tmin.x + S(10.0f), tmax.y - S(26.0f)), C(p.text), s.name.c_str(), tileW - S(20.0f));
+        if (s.favorite) {
+            icons::Draw(d, kIconStar, ImVec2(tmax.x - S(16.0f), tmin.y + S(16.0f)), S(15.0f), C(p.warning));
+        }
+        if (s.id == g_currentGameSkin) {
+            const char* badge = T("skins.current");
+            const ImVec2 bs = TextSize(g_fonts.tiny, badge);
+            const ImVec2 bmin(tmin.x + S(8.0f), tmin.y + S(8.0f));
+            d->AddRectFilled(bmin, ImVec2(bmin.x + bs.x + S(14.0f), bmin.y + bs.y + S(6.0f)), C(p.success, 0.9f), S(6.0f));
+            Text(d, g_fonts.tiny, ImVec2(bmin.x + S(7.0f), bmin.y + S(3.0f)), C(ImVec4(0.08f, 0.1f, 0.09f, 1)), badge);
+        }
+    }
+    ImGui::PopClipRect();
+    // Barra de desplazamiento (si hay más de lo que entra).
+    if (maxScroll > 0.0f) {
+        const float viewH = gmax.y - gmin.y;
+        const float barH = std::max(S(30.0f), viewH * viewH / contentH);
+        const float barY = gmin.y + (viewH - barH) * (g_skinScroll / maxScroll);
+        d->AddRectFilled(ImVec2(gmax.x + S(5.0f), barY), ImVec2(gmax.x + S(9.0f), barY + barH), C(p.textDim, 0.4f), S(2.0f));
+    }
+}
+
+void DrawSkinDetail(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Card(d, min, max);
+    const skins::Skin* s = SelectedSkin();
+    if (s == nullptr) {
+        SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("skin.title"));
+        TextWrap(d, g_fonts.regular, ImVec2(min.x + S(22.0f), min.y + S(60.0f)), C(p.textDim), T("skins.empty"),
+                 max.x - min.x - S(44.0f));
+        return;
+    }
+    // El personaje grande sobre el cielo, se gira arrastrando.
+    const float viewH = (max.y - min.y) * 0.62f;
+    const ImVec2 vmin(min.x + S(12.0f), min.y + S(12.0f));
+    const ImVec2 vmax(max.x - S(12.0f), min.y + viewH);
+    sky::Draw(d, vmin, vmax, S(4.0f), S(12.0f), C(p.card), g_skyMode);
+    DragToRotate("##skins_view", vmin, vmax, g_skinsYaw);
+    skin3d::Model model;
+    if (LibraryModel(*s, model)) {
+        skin3d::View view;
+        view.yaw = g_skinsYaw;
+        view.time = static_cast<float>(ImGui::GetTime());
+        view.alpha = g_fade;
+        const float h = (vmax.y - vmin.y) * 0.86f;
+        const ImVec2 c((vmin.x + vmax.x) * 0.5f, (vmin.y + vmax.y) * 0.5f);
+        ImGui::PushClipRect(vmin, vmax, true);
+        skin3d::Draw(d, ImVec2(c.x - h * 0.4f, c.y - h * 0.5f), ImVec2(c.x + h * 0.4f, c.y + h * 0.5f), model, view);
+        ImGui::PopClipRect();
+    }
+    // Datos
+    const float x = min.x + S(22.0f);
+    const float w = max.x - min.x - S(44.0f);
+    float y = vmax.y + S(16.0f);
+    TextFit(d, g_fonts.title, ImVec2(x, y), C(p.text), s->name.c_str(), w);
+    y += g_fonts.title->FontSize + S(4.0f);
+    char info[160];
+    std::snprintf(info, sizeof(info), "%s  ·  %s", s->fromGame ? T("skins.from_game") : T("skins.imported"),
+                  s->legacy ? T("skins.legacy") : (s->slim ? T("skins.slim") : T("skins.classic")));
+    TextFit(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), info, w);
+    y += g_fonts.tiny->FontSize + S(14.0f);
+    // Botones
+    float bx = x;
+    float bw = 0.0f;
+    if (Button("##skin_fav", ImVec2(bx, y), s->favorite ? T("skins.unfavorite") : T("skins.favorite"), false, &bw)) {
+        skins::SetFavorite(s->id, !s->favorite);
+    }
+    bx += bw + S(8.0f);
+    if (Button("##skin_folder", ImVec2(bx, y), T("skins.open_folder"), false, &bw)) {
+        OpenFolder(skins::Folder());
+    }
+    bx += bw + S(8.0f);
+    const bool armed = ImGui::GetTime() - g_deleteArmedAt < 3.0;
+    if (Button("##skin_delete", ImVec2(bx, y), armed ? T("skins.confirm_delete") : T("skins.delete"), false, &bw)) {
+        if (armed) {
+            const std::string id = s->id;
+            g_deleteArmedAt = -10.0;
+            g_selectedSkin.clear();
+            skins::Remove(id);
+            return;
+        }
+        g_deleteArmedAt = ImGui::GetTime();
+    }
+    y += S(50.0f);
+    // Usar en Minecraft: llega con los cosméticos.
+    Button("##skin_use", ImVec2(x, y), T("skins.use_in_game"), true, &bw, false);
+    TextWrap(d, g_fonts.tiny, ImVec2(x + bw + S(12.0f), y + S(4.0f)), C(p.textDim), T("skins.use_soon"), w - bw - S(12.0f));
+}
+
+void DrawSkinsPage(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const float gap = S(kGap);
+    const float leftW = (max.x - min.x) * 0.58f;
+    DrawSkinsGrid(d, min, ImVec2(min.x + leftW, max.y));
+    DrawSkinDetail(d, ImVec2(min.x + leftW + gap, min.y), max);
+}
+
 // Secciones que llegan en las próximas partes.
 void DrawComingSoon(ImDrawList* d, ImVec2 min, ImVec2 max, const char* icon, const char* titleKey, const char* textKey) {
     const Palette& p = P();
@@ -1670,6 +1888,7 @@ void AppInit(HWND hwnd, float scale) {
         WriteStartup(true);  // por si moviste el launcher a otra carpeta: actualizar la ruta
     }
     AppRebuildFonts();
+    skins::Load();
     g_statusThread = std::thread(StatusThread);
     account::Init();
     updater::Start(g_autoUpdate, GetCommandLineW());
@@ -1755,6 +1974,7 @@ void AppFrame() {
         g_fontsDirty = true;  // se supo dónde está el juego: cargar su letra pixelada
         g_pixelFontDir = data.gameDir;
     }
+    SyncSkins(data);  // si Luma.dll guardó una skin nueva, sumarla a la biblioteca
     const account::Info acc = account::Get();
     UpdateAvatar(acc);
     g_upd = updater::Get();
@@ -1803,7 +2023,7 @@ void AppFrame() {
     switch (g_page) {
         case Page::Home: DrawHome(d, cmin, cmax, data, name); break;
         case Page::Addons: DrawComingSoon(d, cmin, cmax, kIconAddons, "nav.addons", "soon.addons"); break;
-        case Page::Skins: DrawComingSoon(d, cmin, cmax, kIconSkins, "nav.skins", "soon.skins"); break;
+        case Page::Skins: DrawSkinsPage(d, cmin, cmax); break;
         case Page::Settings: DrawSettings(d, cmin, cmax, acc, data); break;
     }
     g_fade = 1.0f;

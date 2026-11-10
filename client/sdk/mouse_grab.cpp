@@ -443,4 +443,8 @@ void BeginUnload() {
     g_active.store(false);
 }
 
+void* Client() {
+    return g_client.load(std::memory_order_relaxed);
+}
+
 }  // namespace luma::sdk::mouse

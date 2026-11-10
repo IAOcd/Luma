@@ -2,6 +2,7 @@
 //  inventory_hud.cpp - Armadura, ítem en la mano, contador y aviso de durabilidad
 // =============================================================================
 #include "modules/hud/inventory_hud.h"
+#include "core/tr.h"
 
 #include <imgui.h>
 
@@ -649,7 +650,7 @@ void DurabilityWarning::OnTick() {
             // Avisar una vez por ítem (no cada 50 ms).
             char name[64];
             inv::PrettyName(item.id, name, sizeof(name));
-            notify::Push(notify::Kind::Warning, std::format("{}: durabilidad baja ({} usos, {}%)", name, left, percent));
+            notify::Push(notify::Kind::Warning, TrFormat("{}: durabilidad baja ({} usos, {}%)", name, left, percent));
             if (sound_) {
                 sound::Play(sound::Effect::ToggleOff);
             }

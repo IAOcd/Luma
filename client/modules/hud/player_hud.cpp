@@ -2,6 +2,7 @@
 //  player_hud.cpp - Coordenadas, brújula y velocidad
 // =============================================================================
 #include "modules/hud/player_hud.h"
+#include "core/tr.h"
 
 #include <imgui.h>
 
@@ -12,6 +13,7 @@
 #include "perf/timer.h"
 #include "render/hud.h"
 #include "render/ui.h"
+#include "sdk/hud_ui.h"
 #include "sdk/network.h"
 #include "sdk/player.h"
 
@@ -91,7 +93,16 @@ const char* Coordinates::IconSvg() const {
            "M14.5 9.5C14.5 10.88 13.38 12 12 12C10.62 12 9.5 10.88 9.5 9.5C9.5 8.12 10.62 7 12 7C13.38 7 14.5 8.12 14.5 9.5Z";
 }
 
+void Coordinates::OnEnable() {
+    sdk::hudui::SetHideCoords(hideVanilla_);
+}
+
+void Coordinates::OnDisable() {
+    sdk::hudui::SetHideCoords(false);  // las del juego vuelven a verse
+}
+
 ImVec2 Coordinates::OnRenderHud(const HudFrame& frame) {
+    sdk::hudui::SetHideCoords(hideVanilla_);  // (barato: solo guarda un sí/no)
     sdk::player::Snapshot p;
     if (!PlayerThisFrame(p)) {
         if (!frame.editing) {
@@ -138,6 +149,10 @@ bool Coordinates::DrawSettings() {
     changed |= ui::Toggle("Decimales", &decimals_);
     changed |= ui::Toggle("Hacia dónde miras", &showFacing_);
     changed |= ui::Toggle("Coordenadas del Nether", &showNether_, "(÷ 8)");
+    if (ui::Toggle("Ocultar las del juego", &hideVanilla_, "(las de \"Mostrar coordenadas\")")) {
+        sdk::hudui::SetHideCoords(hideVanilla_ && IsEnabled());
+        changed = true;
+    }
     return changed;
 }
 
@@ -146,6 +161,7 @@ void Coordinates::SaveSettings(nlohmann::json& out) const {
     out["decimals"] = decimals_;
     out["showFacing"] = showFacing_;
     out["showNether"] = showNether_;
+    out["hideVanilla"] = hideVanilla_;
 }
 
 void Coordinates::LoadSettings(const nlohmann::json& in) {
@@ -153,6 +169,7 @@ void Coordinates::LoadSettings(const nlohmann::json& in) {
     decimals_ = in.value("decimals", false);
     showFacing_ = in.value("showFacing", true);
     showNether_ = in.value("showNether", false);
+    hideVanilla_ = in.value("hideVanilla", true);
 }
 
 // =============================================================================
@@ -339,7 +356,7 @@ ImVec2 PingDisplay::OnRenderHud(const HudFrame& frame) {
     if (ping >= 0) {
         std::snprintf(text, sizeof(text), "%d ms", ping);
     } else if (showInLocal_ || frame.editing) {
-        std::snprintf(text, sizeof(text), "%s", frame.editing && !showInLocal_ ? "42 ms" : "Mundo local");
+        std::snprintf(text, sizeof(text), "%s", frame.editing && !showInLocal_ ? "42 ms" : Tr("Mundo local"));
     } else {
         return ImVec2(0, 0);
     }

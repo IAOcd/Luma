@@ -2,6 +2,7 @@
 //  toggle_keys.cpp - Implementación de toggle sprint / toggle sneak
 // =============================================================================
 #include "modules/utility/toggle_keys.h"
+#include "core/tr.h"
 
 #include <windows.h>
 
@@ -86,7 +87,7 @@ ImVec2 ToggleKey::OnRenderHud(const HudFrame& frame) {
     if (!active && !frame.editing) {
         return ImVec2(0, 0);
     }
-    const char* text = label_[0] != 0 ? label_ : IsSprint(slot_) ? "[Corriendo (alternado)]" : "[Agachado (alternado)]";
+    const char* text = label_[0] != 0 ? label_ : IsSprint(slot_) ? Tr("[Corriendo (alternado)]") : Tr("[Agachado (alternado)]");
     const rh::Metrics m = rh::Measure(frame.scale);
     const ImVec2 size = rh::TextSize(m, text);
     // Sin caja: solo texto con sombra (como el aviso de otros clients).

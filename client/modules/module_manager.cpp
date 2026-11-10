@@ -2,6 +2,7 @@
 //  module_manager.cpp - Implementación del gestor de módulos
 // =============================================================================
 #include "modules/module_manager.h"
+#include "core/tr.h"
 
 #include <algorithm>
 #include <cmath>
@@ -29,9 +30,9 @@ const char* CategoryName(Category category) {
     switch (category) {
         case Category::Hud:         return "HUD";
         case Category::Visual:      return "Visual";
-        case Category::Utility:     return "Utilidad";
-        case Category::World:       return "Mundo";
-        case Category::Performance: return "Rendimiento";
+        case Category::Utility:     return Tr("Utilidad");
+        case Category::World:       return Tr("Mundo");
+        case Category::Performance: return Tr("Rendimiento");
         case Category::Count:       break;
     }
     return "?";
@@ -92,14 +93,14 @@ void Manager::SetEnabled(Module& module, bool enabled, bool notify) {
         return;
     }
     if (enabled && module.IsLocalOnly() && sdk::network::OnServer()) {
-        notify::Push(notify::Kind::Warning, std::format("{}: solo funciona en mundos locales", module.Name()));
+        notify::Push(notify::Kind::Warning, TrFormat("{}: solo funciona en mundos locales", module.DisplayName()));
         return;
     }
     if (enabled && !IsAvailable(module)) {
         // Con la config de arranque (notify = false) se permite: las firmas
         // todavía no se buscaron. DisableUnavailable lo corrige después.
         if (notify || sdk::player::Initialized()) {
-            notify::Push(notify::Kind::Warning, std::format("{}: no disponible en esta versión del juego", module.Name()));
+            notify::Push(notify::Kind::Warning, TrFormat("{}: no disponible en esta versión del juego", module.DisplayName()));
             return;
         }
     }
@@ -114,7 +115,7 @@ void Manager::SetEnabled(Module& module, bool enabled, bool notify) {
     if (notify) {
         sound::Play(enabled ? sound::Effect::ToggleOn : sound::Effect::ToggleOff);
         notify::Push(enabled ? notify::Kind::Success : notify::Kind::Info,
-                     std::format("{} {}", module.Name(), enabled ? "activado" : "desactivado"));
+                     TrFormat(enabled ? "{} activado" : "{} desactivado", module.DisplayName()));
     }
 }
 
@@ -170,7 +171,7 @@ void Manager::Tick() {
         for (const auto& module : modules_) {
             if (module->IsEnabled() && module->IsLocalOnly()) {
                 SetEnabled(*module, false, false);
-                notify::Push(notify::Kind::Warning, std::format("{} desactivado: estás en un servidor", module->Name()));
+                notify::Push(notify::Kind::Warning, TrFormat("{} desactivado: estás en un servidor", module->DisplayName()));
             }
         }
     }

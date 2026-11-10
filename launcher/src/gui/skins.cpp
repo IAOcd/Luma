@@ -17,6 +17,7 @@
 #include "gui/skin3d.h"
 #include "gui/textures.h"
 #include "signature.h"
+#include "skin_pack.h"
 
 namespace luma::launcher::gui::skins {
 
@@ -62,6 +63,7 @@ void Save() {
     const fs::path temp = Dir() / L"library.json.tmp";
     std::ofstream(temp, std::ios::trunc) << json{{"skins", list}}.dump(2);
     MoveFileExW(temp.c_str(), (Dir() / L"library.json").c_str(), MOVEFILE_REPLACE_EXISTING);
+    skinpack::Write();  // el paquete "Luma" del juego, al día con la biblioteca
 }
 
 // ¿Es una skin de Minecraft? Tamaños válidos: 64x64, 64x32 y sus versiones HD.
@@ -196,6 +198,7 @@ void SetActive(const std::string& id) {
     std::error_code ec;
     fs::create_directories(Dir(), ec);
     std::ofstream(Dir() / L"active.json", std::ios::trunc) << json{{"id", id}}.dump(2);
+    skinpack::Write();  // la equipada va primero en el paquete del juego
 }
 
 void SetFavorite(const std::string& id, bool favorite) {

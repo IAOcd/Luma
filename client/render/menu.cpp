@@ -54,6 +54,7 @@
 #include "core/paths.h"
 #include "core/version.h"
 #include "i18n.h"
+#include "skin_pack.h"
 #include "modules/module_manager.h"
 #include "perf/benchmark.h"
 #include "perf/frame_stats.h"
@@ -233,15 +234,6 @@ const char* ModuleIcon(const Module& module) {
     return icon != nullptr ? icon : CategoryIcon(module.GetCategory());
 }
 
-const char* UpcomingPhase(Category category) {
-    switch (category) {
-        case Category::Hud:     return "FPS, CPS, keystrokes, reloj... llegan en la Fase 5.";
-        case Category::Visual:  return "Zoom, FOV, fullbright... llegan en la Fase 8.";
-        case Category::Utility: return "Toggle sprint, chat... llegan en las Fases 5 y 7.";
-        case Category::World:   return "Free cam y minimapa llegan en las Fases 10 y 11.";
-        default:                return "Llegan en las próximas fases.";
-    }
-}
 
 void CenteredText(ImDrawList* draw, ImFont* font, ImVec2 min, ImVec2 max, ImU32 color, const char* text) {
     const ImVec2 size = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, text);
@@ -250,14 +242,49 @@ void CenteredText(ImDrawList* draw, ImFont* font, ImVec2 min, ImVec2 max, ImU32 
                   color, text);
 }
 
+// Scroll suave: la rueda no salta de golpe, sino que el contenido se desliza
+// hasta su lugar (frenando al final). Se llama justo después de BeginChild en
+// las ventanas con ImGuiWindowFlags_NoScrollWithMouse (así ImGui no hace su
+// scroll de golpe). Si mueves la barra con el mouse, se respeta.
+void SmoothScroll() {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    ImGuiStorage* storage = ImGui::GetStateStorage();
+    const ImGuiID targetId = ImGui::GetID("##smooth_target");
+    const ImGuiID lastId = ImGui::GetID("##smooth_last");
+    const float current = window->Scroll.y;
+    const float maxY = window->ScrollMax.y;
+    float target = storage->GetFloat(targetId, current);
+    const float last = storage->GetFloat(lastId, current);
+    if (std::fabs(current - last) > 0.5f) {
+        target = current;  // alguien más lo movió (la barra, SetScroll...)
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.MouseWheel != 0.0f && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && maxY > 0.0f) {
+        target -= io.MouseWheel * Fs() * 6.0f;
+    }
+    target = std::clamp(target, 0.0f, std::max(0.0f, maxY));
+    float next = target;
+    if (theme::Get().animations) {
+        const float k = 1.0f - std::exp(-io.DeltaTime * 13.0f);
+        next = current + (target - current) * k;
+        if (std::fabs(target - next) < 0.5f) next = target;
+    }
+    if (next != current) ImGui::SetScrollY(next);
+    storage->SetFloat(targetId, target);
+    storage->SetFloat(lastId, next);
+}
+
 // =============================================================================
 //  Widgets
 // =============================================================================
 
-// Interruptor estilo iOS: pista redondeada y perilla circular que se desliza.
+// Interruptor de Luma: una ranura fina y una "lámpara" que se desliza. Apagado
+// es gris; encendido, la ranura se ilumina con el acento y brilla un poco.
+// (El área para hacer clic es la altura completa; el dibujo, un poco más fino.)
 bool Toggle(const char* id, bool* value, float height) {
-    const float width = height * 1.75f;
-    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float h = std::floor(height * 0.78f);
+    const float width = std::floor(h * 1.85f);
+    const ImVec2 start = ImGui::GetCursorScreenPos();
     const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
     if (clicked) {
         *value = !*value;
@@ -266,60 +293,76 @@ bool Toggle(const char* id, bool* value, float height) {
     const bool hovered = ImGui::IsItemHovered();
     HoverFeedback(hovered);
     const float t = Animate(ImGui::GetItemID(), *value ? 1.0f : 0.0f, 16.0f);
-    const float press = Animate(ImGui::GetItemID() + 7, ImGui::IsItemActive() ? 1.0f : 0.0f, 20.0f);
+    const float hover = Animate(ImGui::GetItemID() + 7, hovered ? 1.0f : 0.0f, 18.0f);
 
     const theme::Palette& p = theme::P();
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImVec2 max(pos.x + width, pos.y + height);
-    const ImVec4 off = hovered ? theme::WithAlpha(p.trackOff, 1.5f) : p.trackOff;
-    draw->AddRectFilled(pos, max, Col(Mix(off, theme::Accent(1.0f), t)), height * 0.5f);
-    // Perilla: un círculo con una sombra suave; al apretarla se estira un poco.
-    const float pad = height * 0.1f;
-    const float r = height * 0.5f - pad;
-    const float stretch = press * r * 0.35f;
-    const float cx = pos.x + pad + r + t * (width - (pad + r) * 2.0f - stretch) + stretch * 0.5f * (1.0f - t);
-    const float cy = pos.y + height * 0.5f;
-    draw->AddRectFilled(ImVec2(cx - r, cy - r + 1.5f), ImVec2(cx + r + stretch, cy + r + 1.5f),
-                        Col(ImVec4(0, 0, 0, 0.22f)), r);
-    draw->AddRectFilled(ImVec2(cx - r, cy - r), ImVec2(cx + r + stretch, cy + r), Col(p.knob), r);
+    const ImVec2 pos(start.x, std::floor(start.y + (height - h) * 0.5f));
+    const ImVec2 max(pos.x + width, pos.y + h);
+    // El brillo alrededor (solo encendido).
+    if (t > 0.01f) {
+        const float g = h * 0.22f;
+        draw->AddRectFilled(ImVec2(pos.x - g, pos.y - g), ImVec2(max.x + g, max.y + g), Col(theme::Accent(0.16f * t)),
+                            (h + g * 2.0f) * 0.5f);
+    }
+    const ImVec4 off = theme::WithAlpha(p.trackOff, 1.0f + 0.6f * hover);
+    draw->AddRectFilled(pos, max, Col(Mix(off, theme::Accent(1.0f), t)), h * 0.5f);
+    // La perilla: marfil apagada, oscura (como un hueco con luz alrededor) encendida.
+    const float pad = std::max(2.0f, h * 0.16f);
+    const float r = h * 0.5f - pad;
+    const float cx = pos.x + pad + r + t * (width - (pad + r) * 2.0f);
+    const float cy = pos.y + h * 0.5f;
+    draw->AddCircleFilled(ImVec2(cx, cy), r, Col(Mix(p.knob, p.onAccentText, t)), 24);
     return clicked;
 }
 
-// Botón de vidrio con ícono opcional. "primary" = relleno con el acento.
+// Botón de Luma con ícono opcional. "primary" = relleno con el acento (uno por
+// pantalla, para la acción principal).
 bool GlassButton(const char* label, const char* icon, ImVec2 size, bool primary = false) {
+    label = Tr(label);
     const theme::Palette& p = theme::P();
     const ImGuiStyle& style = ImGui::GetStyle();
-    const float iconSize = Fs() * 1.05f;
+    const float iconSize = Fs() * 1.0f;
     const ImVec2 textSize = ImGui::CalcTextSize(label, nullptr, true);
+    const bool hasText = textSize.x > 0.0f;
     if (size.x <= 0.0f) {
-        size.x = textSize.x + style.FramePadding.x * 2.0f + (icon ? iconSize + style.ItemInnerSpacing.x : 0.0f);
+        size.x = textSize.x + style.FramePadding.x * 2.0f +
+                 (icon ? iconSize + (hasText ? style.ItemInnerSpacing.x : 0.0f) : 0.0f);
     }
     if (size.y <= 0.0f) {
-        size.y = ImGui::GetFrameHeight() * 1.1f;
+        size.y = ImGui::GetFrameHeight() * 1.05f;
     }
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const bool clicked = ImGui::InvisibleButton(label, size);
     const bool hovered = ImGui::IsItemHovered();
+    const bool held = ImGui::IsItemActive();
     const bool disabled = (ImGui::GetItemFlags() & ImGuiItemFlags_Disabled) != 0;
     HoverFeedback(hovered && !disabled);
     const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 18.0f);
     const ImVec2 max(pos.x + size.x, pos.y + size.y);
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    const float r = std::min(size.y * 0.5f, Rounding() * 0.7f);
+    const float r = std::min(size.y * 0.5f, Rounding() * 0.55f);
     const float alpha = disabled ? 0.45f : 1.0f;
     ImVec4 textColor = p.text;
     if (primary) {
-        draw->AddRectFilled(pos, max, Col(theme::Accent(0.88f + 0.12f * hover), alpha), r);
+        if (hover > 0.01f) {  // un halo cálido al pasar el mouse
+            draw->AddRectFilled(ImVec2(pos.x - 3, pos.y - 3), ImVec2(max.x + 3, max.y + 3),
+                                Col(theme::Accent(0.18f * hover), alpha), r + 3);
+        }
+        draw->AddRectFilled(pos, max, Col(theme::Accent(held ? 0.82f : 0.92f + 0.08f * hover), alpha), r);
         textColor = p.onAccentText;
     } else {
-        glass::Surface(draw, pos, max, r, alpha * ImGui::GetStyle().Alpha, hover);
+        draw->AddRectFilled(pos, max, Col(theme::WithAlpha(p.field, 1.0f + 0.9f * hover + (held ? 0.6f : 0.0f)), alpha), r);
+        draw->AddRect(pos, max, Col(theme::WithAlpha(p.border, 0.55f + 0.45f * hover), alpha), r, 0, 1.0f);
     }
-    float x = pos.x + (size.x - textSize.x - (icon ? iconSize + style.ItemInnerSpacing.x : 0.0f)) * 0.5f;
+    float x = pos.x + (size.x - textSize.x - (icon ? iconSize + (hasText ? style.ItemInnerSpacing.x : 0.0f) : 0.0f)) * 0.5f;
     if (icon != nullptr) {
         icons::Draw(draw, icon, ImVec2(x + iconSize * 0.5f, pos.y + size.y * 0.5f), iconSize, Col(textColor, alpha));
         x += iconSize + style.ItemInnerSpacing.x;
     }
-    draw->AddText(ImVec2(x, pos.y + (size.y - textSize.y) * 0.5f), Col(textColor, alpha), label);
+    if (hasText) {
+        draw->AddText(ImVec2(x, pos.y + (size.y - textSize.y) * 0.5f), Col(textColor, alpha), label);
+    }
     if (clicked && !disabled) {
         sound::Play(sound::Effect::Click);
     }
@@ -328,7 +371,7 @@ bool GlassButton(const char* label, const char* icon, ImVec2 size, bool primary 
 
 // Control "segmentado": varias opciones en una píldora; la elegida resalta.
 bool Segmented(const char* id, const char* const* labels, int count, int* index) {
-    const float height = ImGui::GetFrameHeight() * 1.1f;
+    const float height = ImGui::GetFrameHeight() * 1.05f;
     const float width = Fs() * 7.0f * static_cast<float>(count);
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::PushID(id);
@@ -350,54 +393,60 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index)
     const theme::Palette& p = theme::P();
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 max(pos.x + width, pos.y + height);
-    glass::Surface(draw, pos, max, height * 0.5f, ImGui::GetStyle().Alpha, hovered ? 0.4f : 0.0f);
+    const float r = std::min(height * 0.5f, Rounding() * 0.55f);
+    draw->AddRectFilled(pos, max, Col(theme::WithAlpha(p.field, hovered ? 1.5f : 1.0f)), r);
+    draw->AddRect(pos, max, Col(p.border, 0.55f), r, 0, 1.0f);
     const float segment = width / static_cast<float>(count);
-    const float pad = height * 0.1f;
+    const float pad = std::max(2.0f, height * 0.1f);
     const ImVec2 pillMin(pos.x + segment * t + pad, pos.y + pad);
     const ImVec2 pillMax(pillMin.x + segment - pad * 2.0f, max.y - pad);
-    draw->AddRectFilled(pillMin, pillMax, Col(theme::Accent(1.0f)), (height - pad * 2.0f) * 0.5f);
+    draw->AddRectFilled(pillMin, pillMax, Col(theme::Accent(1.0f)), std::max(0.0f, r - pad));
     for (int i = 0; i < count; ++i) {
         const ImVec2 sMin(pos.x + segment * static_cast<float>(i), pos.y);
         const ImVec2 sMax(sMin.x + segment, max.y);
         const float selected = std::clamp(1.0f - std::fabs(t - static_cast<float>(i)), 0.0f, 1.0f);
-        CenteredText(draw, ImGui::GetFont(), sMin, sMax, Col(Mix(p.text, p.onAccentText, selected)), labels[i]);
+        CenteredText(draw, ImGui::GetFont(), sMin, sMax, Col(Mix(p.text, p.onAccentText, selected)), Tr(labels[i]));
     }
     return changed;
 }
 
-// Encabezado de sección: ícono, texto y una línea que se desvanece.
+// Encabezado de sección: texto chico y tenue, un contador y una línea fina.
+// (El ícono se ignora: las secciones son discretas a propósito.)
 void SectionHeader(const char* icon, const char* text, int count = -1) {
-    ImGui::Dummy(ImVec2(0.0f, Fs() * 0.4f));
+    (void)icon;
+    text = Tr(text);
+    ImGui::Dummy(ImVec2(0.0f, Fs() * 0.5f));
     const theme::Palette& p = theme::P();
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const float iconSize = Fs() * 1.1f;
-    float x = pos.x;
-    if (icon != nullptr) {
-        icons::Draw(draw, icon, ImVec2(x + iconSize * 0.5f, pos.y + Fs() * 0.62f), iconSize, Col(p.textDim));
-        x += iconSize + Fs() * 0.5f;
-    }
     ImFont* medium = theme::GetFonts().medium;
-    draw->AddText(medium, medium->FontSize, ImVec2(x, pos.y), Col(p.text), text);
-    x += medium->CalcTextSizeA(medium->FontSize, FLT_MAX, 0.0f, text).x;
+    const float size = medium->FontSize * 0.82f;
+    draw->AddText(medium, size, pos, Col(p.textDim), text);
+    float x = pos.x + medium->CalcTextSizeA(size, FLT_MAX, 0.0f, text).x;
     if (count >= 0) {
         char buffer[16];
         std::snprintf(buffer, sizeof(buffer), "%d", count);
-        draw->AddText(ImVec2(x + Fs() * 0.5f, pos.y + (medium->FontSize - Fs()) * 0.5f), Col(p.textDim), buffer);
-        x += ImGui::CalcTextSize(buffer).x + Fs() * 0.5f;
+        const ImVec2 cs = ImGui::CalcTextSize(buffer);
+        const float padX = Fs() * 0.4f;
+        const ImVec2 cMin(x + Fs() * 0.5f, pos.y + (size - cs.y) * 0.5f - 1.0f);
+        const ImVec2 cMax(cMin.x + cs.x + padX * 2.0f, cMin.y + cs.y + 2.0f);
+        draw->AddRectFilled(cMin, cMax, Col(p.field), (cMax.y - cMin.y) * 0.5f);
+        draw->AddText(ImVec2(cMin.x + padX, cMin.y + 1.0f), Col(p.textDim), buffer);
+        x = cMax.x;
     }
-    const float lineY = pos.y + medium->FontSize * 0.55f;
+    const float lineY = std::floor(pos.y + size * 0.55f);
     const float right = pos.x + ImGui::GetContentRegionAvail().x;
-    const int start = draw->VtxBuffer.Size;
-    draw->AddRectFilled(ImVec2(x + Fs() * 0.8f, lineY), ImVec2(right, lineY + 1.0f), Col(p.border));
-    // La línea se desvanece hacia la derecha (horizontal: usamos x en vez de y).
-    for (int i = start; i < draw->VtxBuffer.Size; ++i) {
-        ImDrawVert& v = draw->VtxBuffer[i];
-        const float tt = std::clamp((v.pos.x - x) / std::max(1.0f, right - x), 0.0f, 1.0f);
-        const ImU32 a = (v.col >> IM_COL32_A_SHIFT) & 0xFF;
-        v.col = (v.col & ~IM_COL32_A_MASK) | (static_cast<ImU32>(static_cast<float>(a) * (1.0f - tt)) << IM_COL32_A_SHIFT);
+    if (right > x + Fs()) {
+        const int start = draw->VtxBuffer.Size;
+        draw->AddRectFilled(ImVec2(x + Fs() * 0.7f, lineY), ImVec2(right, lineY + 1.0f), Col(p.border, 0.7f));
+        for (int i = start; i < draw->VtxBuffer.Size; ++i) {
+            ImDrawVert& v = draw->VtxBuffer[i];
+            const float tt = std::clamp((v.pos.x - x) / std::max(1.0f, right - x), 0.0f, 1.0f);
+            const ImU32 a = (v.col >> IM_COL32_A_SHIFT) & 0xFF;
+            v.col = (v.col & ~IM_COL32_A_MASK) | (static_cast<ImU32>(static_cast<float>(a) * (1.0f - tt)) << IM_COL32_A_SHIFT);
+        }
     }
-    ImGui::Dummy(ImVec2(0.0f, medium->FontSize + Fs() * 0.35f));
+    ImGui::Dummy(ImVec2(0.0f, size + Fs() * 0.45f));
 }
 
 // Una "tarjeta" de vidrio con contenido normal de ImGui adentro (para grupos
@@ -432,7 +481,10 @@ void EndGroupCard() {
     const ImVec2 end(card.start.x + card.width, ImGui::GetItemRectMax().y + pad);
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->ChannelsSetCurrent(0);
-    glass::Surface(draw, card.start, end, Rounding() * 0.8f, ImGui::GetStyle().Alpha, 0.0f);
+    const theme::Palette& p = theme::P();
+    const float r = Rounding() * 0.75f;
+    draw->AddRectFilled(card.start, end, Col(p.surface), r);
+    draw->AddRect(card.start, end, Col(p.border, 0.55f), r, 0, 1.0f);
     draw->ChannelsMerge();
     ImGui::SetCursorScreenPos(ImVec2(card.start.x, end.y + Fs() * 0.6f));
     ImGui::Dummy(ImVec2(0, 0));
@@ -442,17 +494,17 @@ void EndGroupCard() {
 // Una fila "etiqueta ........ control" dentro de una tarjeta.
 void RowLabel(const char* label, const char* hint = nullptr) {
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(label);
+    ImGui::TextUnformatted(Tr(label));
     if (hint != nullptr) {
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", hint);
+        ImGui::TextDisabled("%s", Tr(hint));
     }
     ImGui::SameLine(Fs() * 15.0f);
 }
 
 void KeybindButton(const char* id, int key, bool capturing, CaptureTarget target, Module* module) {
     const theme::Palette& p = theme::P();
-    const std::string label = capturing ? std::string("Pulsa una tecla...") : keys::Name(key);
+    const std::string label = capturing ? std::string(Tr("Pulsa una tecla...")) : keys::Name(key);
     ImGui::PushID(id);
     const ImVec2 size(Fs() * 9.0f, ImGui::GetFrameHeight());
     const ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -463,20 +515,23 @@ void KeybindButton(const char* id, int key, bool capturing, CaptureTarget target
     }
     const bool hovered = ImGui::IsItemHovered();
     HoverFeedback(hovered);
+    const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 18.0f);
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 max(pos.x + size.x, pos.y + size.y);
+    const float r = std::min(size.y * 0.5f, Rounding() * 0.55f);
     if (capturing) {
         // Parpadeo suave mientras espera la tecla.
         const float pulse = 0.55f + 0.45f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.0f);
-        draw->AddRectFilled(pos, max, Col(theme::Accent(0.35f + 0.35f * pulse)), size.y * 0.5f);
+        draw->AddRectFilled(pos, max, Col(theme::Accent(0.35f + 0.35f * pulse)), r);
     } else {
-        glass::Surface(draw, pos, max, size.y * 0.5f, ImGui::GetStyle().Alpha, hovered ? 1.0f : 0.0f);
+        draw->AddRectFilled(pos, max, Col(theme::WithAlpha(p.field, 1.0f + 0.9f * hover)), r);
+        draw->AddRect(pos, max, Col(theme::WithAlpha(p.border, 0.55f + 0.45f * hover)), r, 0, 1.0f);
     }
-    icons::Draw(draw, icons::kKey, ImVec2(pos.x + size.y * 0.6f, pos.y + size.y * 0.5f), Fs(), Col(p.textDim));
+    icons::Draw(draw, icons::kKey, ImVec2(pos.x + size.y * 0.6f, pos.y + size.y * 0.5f), Fs() * 0.95f, Col(p.textDim));
     CenteredText(draw, ImGui::GetFont(), ImVec2(pos.x + size.y * 0.6f, pos.y), max,
                  Col(capturing ? p.onAccentText : p.text), label.c_str());
     if (hovered) {
-        ImGui::SetTooltip("Clic: cambiar la tecla. Clic derecho: quitarla.\nMientras espera: Esc cancela, Retroceso la quita.");
+        ImGui::SetTooltip("%s", Tr("Clic: cambiar la tecla. Clic derecho: quitarla.\nMientras espera: Esc cancela, Retroceso la quita."));
     }
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && target == CaptureTarget::Module && module != nullptr) {
         module->SetKeybind(keys::kNone);
@@ -485,23 +540,23 @@ void KeybindButton(const char* id, int key, bool capturing, CaptureTarget target
     ImGui::PopID();
 }
 
-// Caja de búsqueda de vidrio con lupa.
+// Caja de búsqueda con lupa.
 void SearchField(float width) {
     const theme::Palette& p = theme::P();
     const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const float height = ImGui::GetFrameHeight() * 1.1f;
+    const float height = ImGui::GetFrameHeight() * 1.05f;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const bool active = ImGui::GetActiveID() == ImGui::GetID("##search");
-    glass::Surface(draw, pos, ImVec2(pos.x + width, pos.y + height), height * 0.5f, ImGui::GetStyle().Alpha,
-                   active ? 1.0f : 0.0f);
-    icons::Draw(draw, icons::kSearch, ImVec2(pos.x + height * 0.55f, pos.y + height * 0.5f), Fs() * 1.05f,
-                Col(p.textDim));
+    const float r = std::min(height * 0.5f, Rounding() * 0.55f);
+    draw->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), Col(theme::WithAlpha(p.field, active ? 1.6f : 1.0f)), r);
+    draw->AddRect(pos, ImVec2(pos.x + width, pos.y + height), active ? Col(theme::Accent(0.7f)) : Col(p.border, 0.55f), r, 0, 1.0f);
+    icons::Draw(draw, icons::kSearch, ImVec2(pos.x + height * 0.55f, pos.y + height * 0.5f), Fs() * 0.95f, Col(p.textDim));
     ImGui::SetCursorScreenPos(ImVec2(pos.x + height, pos.y + (height - ImGui::GetFrameHeight()) * 0.5f));
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));
     ImGui::SetNextItemWidth(width - height * 1.3f);
-    ImGui::InputTextWithHint("##search", "Buscar módulos...", g_search, sizeof(g_search));
+    ImGui::InputTextWithHint("##search", Tr("Buscar módulos..."), g_search, sizeof(g_search));
     ImGui::PopStyleColor(3);
     ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + height));
 }
@@ -510,22 +565,78 @@ void SearchField(float width) {
 //  Tarjetas de módulos
 // =============================================================================
 
+// La "lámpara" de un módulo: un cuadrado redondeado con su ícono. Encendido,
+// se ilumina con el acento (con un halo); apagado, es una superficie tenue.
+void DrawLamp(ImDrawList* draw, ImVec2 center, float size, const char* icon, float on, float alpha) {
+    const theme::Palette& p = theme::P();
+    const float half = size * 0.5f;
+    const float r = std::min(half, Rounding() * 0.6f);
+    if (on > 0.01f) {
+        const float g = size * 0.16f;
+        draw->AddRectFilled(ImVec2(center.x - half - g, center.y - half - g), ImVec2(center.x + half + g, center.y + half + g),
+                            Col(theme::Accent(0.14f * on), alpha), r + g);
+    }
+    draw->AddRectFilled(ImVec2(center.x - half, center.y - half), ImVec2(center.x + half, center.y + half),
+                        Col(Mix(p.field, theme::Accent(1.0f), on), alpha), r);
+    icons::Draw(draw, icon, center, size * 0.56f, Col(Mix(theme::WithAlpha(p.text, 0.8f), p.onAccentText, on), alpha));
+}
+
+// Chip con el nombre de una tecla (arriba a la derecha de un módulo).
+float KeyChip(ImDrawList* draw, ImVec2 rightTop, int key, float alpha) {
+    const theme::Palette& p = theme::P();
+    const std::string name = keys::Name(key);
+    const ImVec2 ks = ImGui::CalcTextSize(name.c_str());
+    const float padX = Fs() * 0.42f;
+    const ImVec2 kMax(rightTop.x, rightTop.y + ks.y + Fs() * 0.3f);
+    const ImVec2 kMin(kMax.x - ks.x - padX * 2.0f, rightTop.y);
+    draw->AddRectFilled(kMin, kMax, Col(p.field, alpha), Fs() * 0.3f);
+    draw->AddRect(kMin, kMax, Col(p.border, alpha * 0.6f), Fs() * 0.3f, 0, 1.0f);
+    draw->AddText(ImVec2(kMin.x + padX, kMin.y + Fs() * 0.15f), Col(p.textDim, alpha), name.c_str());
+    return kMax.x - kMin.x;
+}
+
+// El texto de estado bajo el nombre: encendido / apagado / no disponible / qué hace un clic.
+const char* ModuleStatus(const Module& module, bool hovered) {
+    if (!Manager::IsAvailable(module)) return Tr("No disponible en esta versión");
+    if (hovered) return module.IsEnabled() ? Tr("Clic: apagar") : Tr("Clic: encender");
+    return module.IsEnabled() ? Tr("Encendido") : Tr("Apagado");
+}
+
+// El fondo de un módulo (bloque o fila). Encendido: una luz cálida que baja
+// desde arriba. Elegido (con su panel de opciones abierto): borde del acento.
+void ModuleBackground(ImDrawList* draw, ImVec2 min, ImVec2 max, float r, float hover, float on, bool selected, float alpha) {
+    const theme::Palette& p = theme::P();
+    draw->AddRectFilled(min, max, Col(Mix(p.surface, p.surfaceHover, hover), alpha), r);
+    if (on > 0.01f) {
+        const int start = draw->VtxBuffer.Size;
+        draw->AddRectFilled(min, max, Col(theme::Accent(0.13f * on), alpha), r);
+        glass::VerticalFade(draw, start, min.y, max.y, 1.0f, 0.15f);
+    }
+    const ImVec4 border = selected ? theme::Accent(0.9f) : Mix(theme::WithAlpha(p.border, 0.55f + 0.35f * hover), theme::Accent(0.45f), on * 0.6f);
+    draw->AddRect(min, max, Col(border, alpha), r, 0, selected ? 1.6f : 1.0f);
+}
+
+// Abre (o cierra, si ya estaba) el panel de opciones de un módulo.
+void ToggleDetail(Module& module) {
+    g_detail = g_detail == &module ? nullptr : &module;
+    sound::Play(sound::Effect::Click);
+}
+
+// Entrada escalonada: cada módulo aparece un poquito después que el anterior.
+float EnterAnim(int index) {
+    if (!theme::Get().animations) return 1.0f;
+    return EaseOut(static_cast<float>((MsSince(g_pageChangedAt) - index * 25.0) / 240.0));
+}
+
+// --- Vista "bloques" -------------------------------------------------------------
 void ModuleCard(Module& module, float width, float height, int index) {
     ImGui::PushID(module.Id().c_str());
     const theme::Palette& p = theme::P();
     const float fs = Fs();
     const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float enter = EnterAnim(index);
+    const float enterOffset = (1.0f - enter) * fs * 1.0f;
 
-    // Aparición escalonada: cada tarjeta entra un poco después que la anterior.
-    float enter = 1.0f;
-    if (theme::Get().animations) {
-        enter = EaseOut(static_cast<float>((MsSince(g_pageChangedAt) - index * 35.0) / 260.0));
-    }
-    const float enterOffset = (1.0f - enter) * fs * 1.2f;
-
-    const float toggleHeight = fs * 1.35f;
-    // Clic en la tarjeta = activar/desactivar. "AllowOverlap" deja que los
-    // botones de encima (engranaje e interruptor) reciban su propio clic.
     ImGui::SetNextItemAllowOverlap();
     const bool clicked = ImGui::InvisibleButton("##card", ImVec2(width, height));
     const bool rightClicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
@@ -535,77 +646,142 @@ void ModuleCard(Module& module, float width, float height, int index) {
     const float on = Animate(ImGui::GetItemID() + 1, module.IsEnabled() ? 1.0f : 0.0f, 10.0f);
 
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    const float r = Rounding() * 0.85f;
-    const float lift = hover * fs * 0.18f;
-    const ImVec2 cMin(pos.x, pos.y - lift + enterOffset);
-    const ImVec2 cMax(pos.x + width, pos.y + height - lift + enterOffset);
-    const float alpha = enter * ImGui::GetStyle().Alpha;
+    const float r = Rounding() * 0.8f;
+    const ImVec2 cMin(pos.x, pos.y + enterOffset);
+    const ImVec2 cMax(pos.x + width, pos.y + height + enterOffset);
+    const float alpha = enter;
+    ModuleBackground(draw, cMin, cMax, r, hover, on, g_detail == &module, alpha);
 
-    // Sombra que crece al levantarse.
-    draw->AddRectFilled(ImVec2(cMin.x + 2, cMin.y + 4 + lift), ImVec2(cMax.x + 2, cMax.y + 4 + lift * 2.0f),
-                        Col(p.shadow, (0.35f + 0.5f * hover) * enter), r);
-    glass::Surface(draw, cMin, cMax, r, alpha, hover);
-    if (on > 0.01f) {
-        // Brillo del acento en el borde cuando está activo.
-        draw->AddRect(cMin, cMax, Col(theme::Accent(0.55f * on), enter), r, 0, 1.6f);
-    }
-
-    // Ícono dentro de un círculo: con el acento si está activo.
-    const float circle = fs * 3.1f;
-    const ImVec2 iconCenter(cMin.x + fs * 1.1f + circle * 0.5f, cMin.y + fs * 1.1f + circle * 0.5f);
-    draw->AddCircleFilled(iconCenter, circle * 0.5f, Col(Mix(p.field, theme::Accent(1.0f), on), enter), 40);
-    draw->AddCircle(iconCenter, circle * 0.5f, Col(p.border, enter * (1.0f - on)), 40, 1.0f);
-    icons::Draw(draw, ModuleIcon(module), iconCenter, fs * 1.6f, Col(Mix(p.text, p.onAccentText, on), enter));
-
-    // Tecla asignada, arriba a la derecha.
+    const float pad = fs * 0.95f;
+    const float lamp = fs * 2.4f;
+    DrawLamp(draw, ImVec2(cMin.x + pad + lamp * 0.5f, cMin.y + pad + lamp * 0.5f), lamp, ModuleIcon(module), on, alpha);
     if (module.Keybind() != keys::kNone) {
-        const std::string key = keys::Name(module.Keybind());
-        const ImVec2 ks = ImGui::CalcTextSize(key.c_str());
-        const ImVec2 kMax(cMax.x - fs * 0.9f, cMin.y + fs * 0.9f + ks.y + fs * 0.35f);
-        const ImVec2 kMin(kMax.x - ks.x - fs * 0.9f, cMin.y + fs * 0.9f);
-        draw->AddRectFilled(kMin, kMax, Col(p.field, enter), (kMax.y - kMin.y) * 0.5f);
-        draw->AddText(ImVec2(kMin.x + fs * 0.45f, kMin.y + fs * 0.17f), Col(p.textDim, enter), key.c_str());
+        KeyChip(draw, ImVec2(cMax.x - pad, cMin.y + pad), module.Keybind(), alpha);
     }
 
-    // Nombre y categoría.
+    // Nombre y estado, abajo a la izquierda.
     ImFont* medium = theme::GetFonts().medium;
-    const float textY = iconCenter.y + circle * 0.5f + fs * 0.7f;
-    draw->PushClipRect(cMin, ImVec2(cMax.x - fs * 0.6f, cMax.y), true);
-    draw->AddText(medium, medium->FontSize, ImVec2(cMin.x + fs * 1.1f, textY), Col(p.text, enter), module.Name().c_str());
-    draw->AddText(ImVec2(cMin.x + fs * 1.1f, textY + medium->FontSize + fs * 0.15f), Col(p.textDim, enter),
-                  !Manager::IsAvailable(module) ? "No disponible en esta versión"
-                  : hover > 0.5f ? (module.IsEnabled() ? "Clic: desactivar" : "Clic: activar")
-                                 : modules::CategoryName(module.GetCategory()));
+    const float statusY = cMax.y - pad - fs;
+    const float nameY = statusY - medium->FontSize - fs * 0.1f;
+    const float toggleHeight = fs * 1.45f;
+    const float toggleWidth = std::floor(std::floor(toggleHeight * 0.78f) * 1.85f);
+    draw->PushClipRect(cMin, ImVec2(cMax.x - pad - toggleWidth - fs * 0.4f, cMax.y), true);
+    draw->AddText(medium, medium->FontSize, ImVec2(cMin.x + pad, nameY), Col(p.text, alpha), module.DisplayName());
+    draw->AddText(ImVec2(cMin.x + pad, statusY), Col(module.IsEnabled() && !hovered ? theme::Accent(0.95f) : p.textDim, alpha),
+                  ModuleStatus(module, hovered));
     draw->PopClipRect();
 
-    // Interruptor, abajo a la derecha (un botón aparte sobre la tarjeta).
-    const float toggleWidth = toggleHeight * 1.75f;
-    ImGui::SetCursorScreenPos(ImVec2(cMax.x - fs * 1.0f - toggleWidth, cMax.y - fs * 1.0f - toggleHeight));
+    // Interruptor abajo a la derecha; el engranaje aparece al pasar el mouse.
+    ImGui::SetCursorScreenPos(ImVec2(cMax.x - pad - toggleWidth, cMax.y - pad - toggleHeight + fs * 0.2f));
     bool enabled = module.IsEnabled();
     if (Toggle("##toggle", &enabled, toggleHeight)) {
         Manager::SetEnabled(module, enabled, /*notify=*/false);
         config::MarkDirty();
     }
     const bool overToggle = ImGui::IsItemHovered();
-
-    // Engranaje a la izquierda del interruptor: abre las opciones del módulo.
-    const float gear = toggleHeight * 1.1f;
-    ImGui::SetCursorScreenPos(ImVec2(cMax.x - fs * 1.6f - toggleWidth - gear, cMax.y - fs * 1.0f - toggleHeight - (gear - toggleHeight) * 0.5f));
-    const bool openOptions = ImGui::InvisibleButton("##options", ImVec2(gear, gear));
-    const bool overGear = ImGui::IsItemHovered();
-    HoverFeedback(overGear);
-    const float gearHover = Animate(ImGui::GetItemID(), overGear ? 1.0f : 0.0f, 18.0f);
-    const ImVec2 gearCenter(ImGui::GetItemRectMin().x + gear * 0.5f, ImGui::GetItemRectMin().y + gear * 0.5f);
-    if (gearHover > 0.01f) {
-        draw->AddCircleFilled(gearCenter, gear * 0.5f, Col(p.surfaceHover, gearHover * enter), 32);
+    bool overGear = false;
+    bool openOptions = false;
+    if (hover > 0.05f || g_detail == &module) {
+        const float gear = fs * 1.6f;
+        const ImVec2 gearPos(cMax.x - pad - gear + fs * 0.25f,
+                             module.Keybind() != keys::kNone ? cMin.y + pad + fs * 1.5f : cMin.y + pad - fs * 0.2f);
+        ImGui::SetCursorScreenPos(gearPos);
+        openOptions = ImGui::InvisibleButton("##options", ImVec2(gear, gear));
+        overGear = ImGui::IsItemHovered();
+        const float gh = Animate(ImGui::GetItemID(), overGear ? 1.0f : 0.0f, 18.0f);
+        const ImVec2 gc(gearPos.x + gear * 0.5f, gearPos.y + gear * 0.5f);
+        if (gh > 0.01f) draw->AddCircleFilled(gc, gear * 0.5f, Col(p.surfaceHover, gh * alpha), 24);
+        icons::Draw(draw, icons::kSettings, gc, gear * 0.62f, Col(theme::WithAlpha(p.text, 0.45f + 0.55f * std::max(gh, hover * 0.6f)), alpha));
     }
-    icons::Draw(draw, icons::kSettings, gearCenter, gear * 0.72f, Col(theme::WithAlpha(p.text, 0.55f + 0.45f * hover), enter));
 
     if (overGear) {
-        ImGui::SetTooltip("Opciones y tecla");
+        ImGui::SetTooltip("%s", Tr("Opciones y tecla"));
     } else if (hovered && !overToggle) {
-        ImGui::SetTooltip("%s\n\nClic: activar o desactivar · Engranaje o clic derecho: opciones",
-                          module.Description().c_str());
+        ImGui::SetTooltip(Tr("%s\n\n%s"), module.DisplayDescription(), Tr("Clic: encender o apagar · Engranaje o clic derecho: opciones"));
+    }
+    if (clicked && !overGear) {
+        Manager::SetEnabled(module, !module.IsEnabled(), /*notify=*/false);
+        sound::Play(module.IsEnabled() ? sound::Effect::ToggleOn : sound::Effect::ToggleOff);
+        config::MarkDirty();
+    }
+    if (openOptions || rightClicked) {
+        ToggleDetail(module);
+    }
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::Dummy(ImVec2(width, height));
+    ImGui::PopID();
+}
+
+// --- Vista "lista" (apilados) ------------------------------------------------------
+void ModuleRow(Module& module, float width, int index) {
+    ImGui::PushID(module.Id().c_str());
+    const theme::Palette& p = theme::P();
+    const float fs = Fs();
+    const float height = fs * 3.1f;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float enter = EnterAnim(index);
+    const float enterOffset = (1.0f - enter) * fs * 0.8f;
+
+    ImGui::SetNextItemAllowOverlap();
+    const bool clicked = ImGui::InvisibleButton("##row", ImVec2(width, height));
+    const bool rightClicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
+    const bool hovered = ImGui::IsItemHovered();
+    HoverFeedback(hovered);
+    const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 14.0f);
+    const float on = Animate(ImGui::GetItemID() + 1, module.IsEnabled() ? 1.0f : 0.0f, 10.0f);
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float r = Rounding() * 0.6f;
+    const ImVec2 cMin(pos.x + enterOffset, pos.y);
+    const ImVec2 cMax(pos.x + width + enterOffset, pos.y + height);
+    const float alpha = enter;
+    ModuleBackground(draw, cMin, cMax, r, hover, on, g_detail == &module, alpha);
+
+    const float pad = fs * 0.75f;
+    const float lamp = fs * 1.95f;
+    DrawLamp(draw, ImVec2(cMin.x + pad + lamp * 0.5f, cMin.y + height * 0.5f), lamp, ModuleIcon(module), on, alpha);
+
+    // A la derecha: tecla, engranaje e interruptor.
+    const float toggleHeight = fs * 1.45f;
+    const float toggleWidth = std::floor(std::floor(toggleHeight * 0.78f) * 1.85f);
+    float right = cMax.x - pad - toggleWidth;
+    ImGui::SetCursorScreenPos(ImVec2(right, cMin.y + (height - toggleHeight) * 0.5f));
+    bool enabled = module.IsEnabled();
+    if (Toggle("##toggle", &enabled, toggleHeight)) {
+        Manager::SetEnabled(module, enabled, /*notify=*/false);
+        config::MarkDirty();
+    }
+    const bool overToggle = ImGui::IsItemHovered();
+    const float gear = fs * 1.6f;
+    right -= gear + fs * 0.4f;
+    ImGui::SetCursorScreenPos(ImVec2(right, cMin.y + (height - gear) * 0.5f));
+    const bool openOptions = ImGui::InvisibleButton("##options", ImVec2(gear, gear));
+    const bool overGear = ImGui::IsItemHovered();
+    const float gh = Animate(ImGui::GetItemID(), overGear ? 1.0f : 0.0f, 18.0f);
+    const ImVec2 gc(right + gear * 0.5f, cMin.y + height * 0.5f);
+    if (gh > 0.01f) draw->AddCircleFilled(gc, gear * 0.5f, Col(p.surfaceHover, gh * alpha), 24);
+    icons::Draw(draw, icons::kSettings, gc, gear * 0.62f, Col(theme::WithAlpha(p.text, 0.35f + 0.65f * std::max(gh, hover * 0.5f)), alpha));
+    if (module.Keybind() != keys::kNone) {
+        right -= fs * 0.5f;
+        const ImVec2 ks = ImGui::CalcTextSize(keys::Name(module.Keybind()).c_str());
+        right -= KeyChip(draw, ImVec2(right, cMin.y + (height - ks.y - fs * 0.3f) * 0.5f), module.Keybind(), alpha);
+    }
+
+    // Nombre y descripción (recortada) en el medio.
+    ImFont* medium = theme::GetFonts().medium;
+    const float textX = cMin.x + pad * 2.0f + lamp;
+    const float blockH = medium->FontSize + fs * 1.05f;
+    const float textY = cMin.y + (height - blockH) * 0.5f;
+    draw->PushClipRect(cMin, ImVec2(right - fs * 0.6f, cMax.y), true);
+    draw->AddText(medium, medium->FontSize, ImVec2(textX, textY), Col(p.text, alpha), module.DisplayName());
+    const char* second = !Manager::IsAvailable(module) ? Tr("No disponible en esta versión") : module.DisplayDescription();
+    draw->AddText(ImVec2(textX, textY + medium->FontSize + fs * 0.05f), Col(p.textDim, alpha), second);
+    draw->PopClipRect();
+
+    if (overGear) {
+        ImGui::SetTooltip("%s", Tr("Opciones y tecla"));
+    } else if (hovered && !overToggle) {
+        ImGui::SetTooltip("%s", Tr("Clic: encender o apagar · Engranaje o clic derecho: opciones"));
     }
     if (clicked) {
         Manager::SetEnabled(module, !module.IsEnabled(), /*notify=*/false);
@@ -613,17 +789,16 @@ void ModuleCard(Module& module, float width, float height, int index) {
         config::MarkDirty();
     }
     if (openOptions || rightClicked) {
-        g_detail = &module;
-        OnNavigate();
+        ToggleDetail(module);
     }
-
-    ImGui::SetCursorScreenPos(pos);
-    ImGui::Dummy(ImVec2(width, height));
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + height + fs * 0.45f));
+    ImGui::Dummy(ImVec2(width, 0.0f));
     ImGui::PopID();
 }
 
-// Grilla de una categoría. Devuelve cuántas tarjetas dibujó. "index" lleva la
-// cuenta global para la aparición escalonada.
+// Los módulos de una categoría, en bloques o en lista (Apariencia > Vista de
+// módulos, o los botones de arriba). Devuelve cuántos dibujó. "index" lleva
+// la cuenta global para la aparición escalonada.
 int ModuleGrid(Category category, bool withHeader, int& index) {
     std::array<Module*, 64> matches{};
     std::size_t count = 0;
@@ -631,7 +806,8 @@ int ModuleGrid(Category category, bool withHeader, int& index) {
         if (module->GetCategory() != category || count == matches.size()) {
             continue;
         }
-        if (ContainsInsensitive(module->Name(), g_search) || ContainsInsensitive(module->Description(), g_search)) {
+        if (ContainsInsensitive(module->DisplayName(), g_search) || ContainsInsensitive(module->DisplayDescription(), g_search) ||
+            ContainsInsensitive(module->Name(), g_search)) {
             matches[count++] = module.get();
         }
     }
@@ -642,11 +818,17 @@ int ModuleGrid(Category category, bool withHeader, int& index) {
         SectionHeader(CategoryIcon(category), modules::CategoryName(category), static_cast<int>(count));
     }
     const float fs = Fs();
-    const float gap = fs * 0.9f;
     const float available = ImGui::GetContentRegionAvail().x;
-    const int columns = std::max(1, static_cast<int>((available + gap) / (fs * 13.5f + gap)));
-    const float width = (available - gap * static_cast<float>(columns - 1)) / static_cast<float>(columns);
-    const float height = fs * 9.6f;
+    if (theme::Get().moduleView == 1) {
+        for (std::size_t i = 0; i < count; ++i) {
+            ModuleRow(*matches[i], available, index++);
+        }
+        return static_cast<int>(count);
+    }
+    const float gap = fs * 0.75f;
+    const int columns = std::max(1, static_cast<int>((available + gap) / (fs * 12.0f + gap)));
+    const float width = std::floor((available - gap * static_cast<float>(columns - 1)) / static_cast<float>(columns));
+    const float height = fs * 7.4f;
     for (std::size_t i = 0; i < count; ++i) {
         if (i % static_cast<std::size_t>(columns) != 0) {
             ImGui::SameLine(0.0f, gap);
@@ -665,11 +847,12 @@ int ModuleGrid(Category category, bool withHeader, int& index) {
 
 void PageHeader(const char* title, const char* subtitle) {
     ImGui::PushFont(theme::GetFonts().title);
-    ImGui::TextUnformatted(title);
+    ImGui::TextUnformatted(Tr(title));
     ImGui::PopFont();
     if (subtitle != nullptr) {
-        ImGui::TextDisabled("%s", subtitle);
+        ImGui::TextDisabled("%s", Tr(subtitle));
     }
+    ImGui::Dummy(ImVec2(0, Fs() * 0.2f));
 }
 
 void RefreshProfiles() {
@@ -677,58 +860,79 @@ void RefreshProfiles() {
     g_profilesDirty = false;
 }
 
-void ProfileCombo(float width) {
-    const std::string active = config::ActiveProfile();
-    ImGui::SetNextItemWidth(width);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, ImGui::GetFrameHeight() * 0.55f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(Fs() * 0.8f, ImGui::GetStyle().FramePadding.y * 1.2f));
-    const std::string preview = "Perfil: " + active;
-    if (ImGui::BeginCombo("##profile", preview.c_str())) {
-        if (ImGui::IsWindowAppearing() || g_profilesDirty) {
-            RefreshProfiles();
-        }
-        std::string chosen;
-        for (const std::string& name : g_profiles) {
-            if (ImGui::Selectable(name.c_str(), name == active)) {
-                chosen = name;
-            }
-        }
-        ImGui::EndCombo();
-        if (!chosen.empty() && config::SwitchProfile(chosen)) {
-            theme::Apply();
-            g_profilesDirty = true;
-            sound::Play(sound::Effect::Click);
-        }
-    }
-    ImGui::PopStyleVar(2);
+
+// Botón cuadrado solo con ícono (por ejemplo, la vista bloques / lista).
+bool IconToggle(const char* id, const char* icon, bool selected, const char* tooltip) {
+    const theme::Palette& p = theme::P();
+    const float size = ImGui::GetFrameHeight() * 1.05f;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(size, size));
+    const bool hovered = ImGui::IsItemHovered();
+    HoverFeedback(hovered);
+    const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 18.0f);
+    const float sel = Animate(ImGui::GetItemID() + 1, selected ? 1.0f : 0.0f, 16.0f);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 max(pos.x + size, pos.y + size);
+    const float r = std::min(size * 0.5f, Rounding() * 0.55f);
+    draw->AddRectFilled(pos, max, Col(Mix(theme::WithAlpha(p.field, 1.0f + 0.8f * hover), theme::Accent(0.22f), sel)), r);
+    draw->AddRect(pos, max, Col(Mix(theme::WithAlpha(p.border, 0.55f), theme::Accent(0.8f), sel)), r, 0, 1.0f);
+    icons::Draw(draw, icon, ImVec2(pos.x + size * 0.5f, pos.y + size * 0.5f), size * 0.5f,
+                Col(Mix(theme::WithAlpha(p.text, 0.7f), theme::Accent(1.0f), sel)));
+    if (hovered && tooltip != nullptr) ImGui::SetTooltip("%s", Tr(tooltip));
+    if (clicked) sound::Play(sound::Effect::Click);
+    return clicked;
 }
+
+void DrawModuleDetail(Module& module);
 
 void DrawModulesPage() {
     const float fs = Fs();
-    // Encabezado: título a la izquierda; búsqueda, perfil y HUD a la derecha.
+    // Encabezado: título a la izquierda; búsqueda, vista y HUD a la derecha.
     const float headerY = ImGui::GetCursorPosY();
     const float contentRight = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-    const char* title = g_categoryFilter == Category::Count ? "Módulos" : modules::CategoryName(g_categoryFilter);
-    PageHeader(title, g_categoryFilter == Category::Count ? "Todo lo que Luma puede hacer."
-                                                         : "Módulos de esta categoría.");
+    const char* title = g_categoryFilter == Category::Count ? Tr("Módulos") : modules::CategoryName(g_categoryFilter);
+    PageHeader(title, g_categoryFilter == Category::Count ? "Todo lo que Luma puede hacer." : "Módulos de esta categoría.");
     const float afterHeader = ImGui::GetCursorPosY();
-    const float rightWidth = std::min(ImGui::GetContentRegionAvail().x * 0.62f, fs * 34.0f);
-    const float searchWidth = rightWidth - fs * 21.0f;
-    ImGui::SetCursorPos(ImVec2(contentRight - rightWidth, headerY + fs * 0.25f));
-    SearchField(std::max(fs * 9.0f, searchWidth));
-    ImGui::SetCursorPos(ImVec2(contentRight - rightWidth + std::max(fs * 9.0f, searchWidth) + fs * 0.6f,
-                               headerY + fs * 0.25f));
-    ProfileCombo(fs * 10.0f);
-    ImGui::SameLine(0.0f, fs * 0.6f);
-    if (GlassButton("Editar HUD", icons::kMove, ImVec2(fs * 9.4f, ImGui::GetFrameHeight() * 1.1f), true)) {
+    const float buttonH = ImGui::GetFrameHeight() * 1.05f;
+    const char* hudLabel = Tr("Editar HUD");
+    const float hudWidth = ImGui::CalcTextSize(hudLabel).x + fs * 3.2f;
+    const float searchWidth = std::clamp(ImGui::GetContentRegionAvail().x * 0.3f, fs * 9.0f, fs * 16.0f);
+    const float rightWidth = searchWidth + fs * 0.5f + buttonH * 2.0f + fs * 0.3f + fs * 0.5f + hudWidth;
+    float x = contentRight - rightWidth;
+    ImGui::SetCursorPos(ImVec2(x, headerY + fs * 0.2f));
+    SearchField(searchWidth);
+    x += searchWidth + fs * 0.5f;
+    ImGui::SetCursorPos(ImVec2(x, headerY + fs * 0.2f));
+    int& view = theme::Get().moduleView;
+    if (IconToggle("##viewgrid", icons::kAll, view == 0, "Bloques") && view != 0) {
+        view = 0;
+        g_pageChangedAt = perf::Now();
+        config::MarkDirty();
+    }
+    ImGui::SameLine(0.0f, fs * 0.3f);
+    if (IconToggle("##viewlist", icons::kList, view == 1, "Lista (apilados)") && view != 1) {
+        view = 1;
+        g_pageChangedAt = perf::Now();
+        config::MarkDirty();
+    }
+    ImGui::SameLine(0.0f, fs * 0.5f);
+    if (GlassButton("Editar HUD", icons::kMove, ImVec2(hudWidth, buttonH), true)) {
         hudeditor::Begin();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Mover y escalar los elementos del HUD activos.");
+        ImGui::SetTooltip("%s", Tr("Mover y escalar los elementos del HUD activos."));
     }
-    ImGui::SetCursorPosY(std::max(afterHeader, headerY + ImGui::GetFrameHeight() * 1.1f + fs * 0.25f) + fs * 0.4f);
+    ImGui::SetCursorPosY(std::max(afterHeader, headerY + buttonH + fs * 0.2f) + fs * 0.3f);
 
-    ImGui::BeginChild("##grid", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+    // La lista de módulos y, si elegiste uno, su panel de opciones a la derecha.
+    const float gap = fs * 0.9f;
+    const float panelWidth = g_detail != nullptr ? std::clamp(ImGui::GetContentRegionAvail().x * 0.42f, fs * 20.0f, fs * 27.0f) : 0.0f;
+    const float listWidth = ImGui::GetContentRegionAvail().x - (g_detail != nullptr ? panelWidth + gap : 0.0f);
+    const ImVec2 listPos = ImGui::GetCursorScreenPos();
+    const float listHeight = ImGui::GetContentRegionAvail().y;
+    ImGui::BeginChild("##grid", ImVec2(listWidth, listHeight), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
+    SmoothScroll();
     const bool searching = g_search[0] != '\0';
     int shown = 0;
     int index = 0;
@@ -745,10 +949,9 @@ void DrawModulesPage() {
         ImDrawList* draw = ImGui::GetWindowDrawList();
         const ImVec2 avail = ImGui::GetContentRegionAvail();
         const ImVec2 center(ImGui::GetCursorScreenPos().x + avail.x * 0.5f, ImGui::GetCursorScreenPos().y + fs * 5.0f);
-        icons::Draw(draw, searching ? icons::kSearch : CategoryIcon(g_categoryFilter), center, fs * 3.5f,
-                    Col(p.textDim), fs * 0.16f);
-        const char* line1 = searching ? "Ningún módulo coincide" : "Todavía no hay módulos aquí";
-        const char* line2 = searching ? "Prueba con otra palabra." : UpcomingPhase(g_categoryFilter);
+        icons::Draw(draw, searching ? icons::kSearch : CategoryIcon(g_categoryFilter), center, fs * 3.5f, Col(p.textDim), fs * 0.16f);
+        const char* line1 = searching ? Tr("Ningún módulo coincide") : Tr("Todavía no hay módulos aquí");
+        const char* line2 = searching ? Tr("Prueba con otra palabra.") : Tr("Llegan en las próximas versiones.");
         ImFont* medium = theme::GetFonts().medium;
         CenteredText(draw, medium, ImVec2(center.x - avail.x * 0.5f, center.y + fs * 2.6f),
                      ImVec2(center.x + avail.x * 0.5f, center.y + fs * 4.0f), Col(p.text), line1);
@@ -757,53 +960,76 @@ void DrawModulesPage() {
         ImGui::Dummy(ImVec2(0, fs * 11.0f));
     }
     ImGui::EndChild();
+
+    if (g_detail != nullptr) {
+        const theme::Palette& p = theme::P();
+        const ImVec2 pMin(listPos.x + listWidth + gap, listPos.y);
+        const ImVec2 pMax(pMin.x + panelWidth, pMin.y + listHeight);
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(pMin, pMax, Col(p.surface), Rounding() * 0.8f);
+        draw->AddRect(pMin, pMax, Col(p.border, 0.55f), Rounding() * 0.8f, 0, 1.0f);
+        ImGui::SetCursorScreenPos(pMin);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(fs * 1.0f, fs * 1.0f));
+        ImGui::BeginChild("##detail", ImVec2(panelWidth, listHeight), ImGuiChildFlags_AlwaysUseWindowPadding,
+                          ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
+        SmoothScroll();
+        ui::SetLabelColumn(9.5f);
+        DrawModuleDetail(*g_detail);
+        ui::SetLabelColumn(15.0f);
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+    }
 }
 
+// El panel de opciones de un módulo (a la derecha de la lista).
 void DrawModuleDetail(Module& module) {
     const theme::Palette& p = theme::P();
     const float fs = Fs();
-    if (GlassButton("Volver", icons::kBack, ImVec2(0, 0))) {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float lamp = fs * 3.0f;
+    const float on = Animate(ImGui::GetID("##hero"), module.IsEnabled() ? 1.0f : 0.0f, 10.0f);
+    DrawLamp(draw, ImVec2(pos.x + lamp * 0.5f, pos.y + lamp * 0.5f), lamp, ModuleIcon(module), on, 1.0f);
+
+    // Cerrar el panel (arriba a la derecha).
+    const float close = fs * 1.7f;
+    const ImVec2 closePos(pos.x + ImGui::GetContentRegionAvail().x - close, pos.y);
+    ImGui::SetCursorScreenPos(closePos);
+    if (ImGui::InvisibleButton("##closedetail", ImVec2(close, close))) {
         g_detail = nullptr;
-        OnNavigate();
+        sound::Play(sound::Effect::Click);
         return;
     }
-    ImGui::Dummy(ImVec2(0, fs * 0.4f));
+    const float ch = Animate(ImGui::GetItemID(), ImGui::IsItemHovered() ? 1.0f : 0.0f, 18.0f);
+    if (ch > 0.01f) draw->AddCircleFilled(ImVec2(closePos.x + close * 0.5f, closePos.y + close * 0.5f), close * 0.5f, Col(p.surfaceHover, ch), 24);
+    icons::Draw(draw, icons::kClose, ImVec2(closePos.x + close * 0.5f, closePos.y + close * 0.5f), close * 0.5f, Col(p.textDim));
 
-    // Encabezado grande: ícono en círculo, nombre, categoría.
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const float circle = fs * 4.6f;
-    const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const float on = Animate(ImGui::GetID("##hero"), module.IsEnabled() ? 1.0f : 0.0f, 10.0f);
-    const ImVec2 center(pos.x + circle * 0.5f, pos.y + circle * 0.5f);
-    draw->AddCircleFilled(center, circle * 0.5f, Col(Mix(p.field, theme::Accent(1.0f), on)), 48);
-    icons::Draw(draw, ModuleIcon(module), center, fs * 2.3f, Col(Mix(p.text, p.onAccentText, on)));
-    ImGui::SetCursorScreenPos(ImVec2(pos.x + circle + fs, pos.y + fs * 0.4f));
-    ImGui::BeginGroup();
-    ImGui::PushFont(theme::GetFonts().title);
-    ImGui::TextUnformatted(module.Name().c_str());
-    ImGui::PopFont();
-    ImGui::TextDisabled("%s", modules::CategoryName(module.GetCategory()));
-    ImGui::EndGroup();
-    ImGui::SetCursorScreenPos(ImVec2(pos.x, std::max(ImGui::GetCursorScreenPos().y, pos.y + circle) + fs * 0.8f));
+    ImFont* titleFont = theme::GetFonts().medium;
+    draw->PushClipRect(pos, ImVec2(closePos.x - fs * 0.3f, pos.y + lamp + fs), true);
+    draw->AddText(titleFont, titleFont->FontSize, ImVec2(pos.x + lamp + fs * 0.8f, pos.y + fs * 0.25f), Col(p.text), module.DisplayName());
+    draw->AddText(ImVec2(pos.x + lamp + fs * 0.8f, pos.y + fs * 0.35f + titleFont->FontSize), Col(p.textDim),
+                  modules::CategoryName(module.GetCategory()));
+    draw->PopClipRect();
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + lamp + fs * 0.7f));
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextUnformatted(module.Description().c_str());
+    ImGui::PushStyleColor(ImGuiCol_Text, p.textDim);
+    ImGui::TextUnformatted(module.DisplayDescription());
+    ImGui::PopStyleColor();
     ImGui::PopTextWrapPos();
 
-    SectionHeader(icons::kSettings, "General");
-    BeginGroupCard("general");
-    RowLabel("Activado");
+    ui::Section("General");
     bool enabled = module.IsEnabled();
-    if (Toggle("##detail_toggle", &enabled, ImGui::GetFrameHeight() * 0.95f)) {
+    if (ui::Toggle("Encendido", &enabled)) {
         Manager::SetEnabled(module, enabled, /*notify=*/false);
         config::MarkDirty();
     }
-    RowLabel("Tecla");
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(Tr("Tecla"));
+    ImGui::SameLine(fs * 9.5f);
     const bool capturing = g_capture == CaptureTarget::Module && g_captureModule == &module;
     KeybindButton("##detail_key", module.Keybind(), capturing, CaptureTarget::Module, &module);
-    EndGroupCard();
 
-    SectionHeader(icons::kUtility, "Opciones");
-    BeginGroupCard("options");
+    ui::Section("Opciones");
     if (module.HasSettings() || module.IsHudElement()) {
         if (moduleoptions::Draw(module)) {
             config::MarkDirty();
@@ -815,13 +1041,12 @@ void DrawModuleDetail(Module& module) {
             }
         }
     } else {
-        ImGui::TextDisabled("Este módulo no tiene opciones.");
+        ImGui::TextDisabled("%s", Tr("Este módulo no tiene opciones."));
     }
-    EndGroupCard();
 }
 
 void DrawThemePage() {
-    PageHeader("Tema", "El aspecto de Luma: vidrio, colores, forma y sonido.");
+    PageHeader("Apariencia", "El aspecto de Luma: colores, vidrio, forma y sonido.");
     theme::Settings& t = theme::Get();
     bool changed = false;
 
@@ -834,7 +1059,12 @@ void DrawThemePage() {
         t.style = style == 1 ? theme::Style::Light : theme::Style::Dark;
         changed = true;
     }
-    RowLabel("Colores de Luma", "(carbón y marfil)");
+    RowLabel("Vista de módulos");
+    static const char* const kViews[] = {"Bloques", "Lista"};
+    if (Segmented("moduleview", kViews, 2, &t.moduleView)) {
+        changed = true;
+    }
+    RowLabel("Color de Luma", "(el marfil del logo)");
     if (Toggle("##accentAuto", &t.accentAuto, ImGui::GetFrameHeight() * 0.95f)) {
         changed = true;
     }
@@ -878,7 +1108,7 @@ void DrawThemePage() {
         }
         if (h.font == render::hud::FontChoice::Pixel) {
             ImGui::SameLine();
-            ImGui::TextDisabled(render::hud::PixelFontAvailable() ? "(la del juego)" : "(no se encontró: se usa Luma)");
+            ImGui::TextDisabled("%s", render::hud::PixelFontAvailable() ? Tr("(la del juego)") : Tr("(no se encontró: se usa Luma)"));
         }
         RowLabel("Fondo de las cajas");
         hudChanged |= ImGui::SliderFloat("##hudbg", &h.background, 0.0f, 1.0f, "%.2f");
@@ -971,21 +1201,17 @@ void DrawProfilesPage() {
         const float hover = Animate(ImGui::GetItemID(), ImGui::IsItemHovered() ? 1.0f : 0.0f);
         ImDrawList* draw = ImGui::GetWindowDrawList();
         const ImVec2 max(pos.x + width, pos.y + height);
-        glass::Surface(draw, pos, max, Rounding() * 0.7f, ImGui::GetStyle().Alpha, hover);
-        if (isActive) {
-            draw->AddRect(pos, max, Col(theme::Accent(0.6f)), Rounding() * 0.7f, 0, 1.5f);
-        }
+        ModuleBackground(draw, pos, max, Rounding() * 0.7f, hover, isActive ? 1.0f : 0.0f, false, 1.0f);
         const float circle = fs * 1.9f;
         const ImVec2 c(pos.x + fs * 0.8f + circle * 0.5f, pos.y + height * 0.5f);
-        draw->AddCircleFilled(c, circle * 0.5f, Col(isActive ? theme::Accent(1.0f) : p.field), 32);
-        icons::Draw(draw, icons::kProfiles, c, fs * 1.1f, Col(isActive ? p.onAccentText : p.text));
+        DrawLamp(draw, c, circle, icons::kProfiles, isActive ? 1.0f : 0.0f, 1.0f);
         ImFont* medium = theme::GetFonts().medium;
         draw->AddText(medium, medium->FontSize, ImVec2(c.x + circle * 0.5f + fs * 0.7f, pos.y + (height - medium->FontSize) * 0.5f),
                       Col(p.text), name.c_str());
         if (isActive) {
             const ImVec2 ns = medium->CalcTextSizeA(medium->FontSize, FLT_MAX, 0.0f, name.c_str());
             draw->AddText(ImVec2(c.x + circle * 0.5f + fs * 1.3f + ns.x, pos.y + (height - fs) * 0.5f),
-                          Col(p.textDim), "activo");
+                          Col(p.textDim), Tr("activo"));
         } else {
             ImGui::SetCursorScreenPos(ImVec2(max.x - fs * 11.0f, pos.y + (height - ImGui::GetFrameHeight() * 1.1f) * 0.5f));
             if (GlassButton("Cargar", nullptr, ImVec2(fs * 5.0f, 0))) toLoad = name;
@@ -1007,7 +1233,7 @@ void DrawProfilesPage() {
     SectionHeader(icons::kSparkle, "Nuevo perfil");
     BeginGroupCard("new");
     ImGui::SetNextItemWidth(fs * 14.0f);
-    ImGui::InputTextWithHint("##newprofile", "Nombre", g_newProfile, sizeof(g_newProfile));
+    ImGui::InputTextWithHint("##newprofile", Tr("Nombre"), g_newProfile, sizeof(g_newProfile));
     ImGui::SameLine();
     const bool valid = config::IsValidProfileName(g_newProfile);
     ImGui::BeginDisabled(!valid);
@@ -1018,7 +1244,7 @@ void DrawProfilesPage() {
     }
     ImGui::EndDisabled();
     if (!valid && g_newProfile[0] != '\0') {
-        ImGui::TextDisabled("Solo letras, números, espacios, '-' y '_' (máx. 32).");
+        ImGui::TextDisabled("%s", Tr("Solo letras, números, espacios, '-' y '_' (máx. 32)."));
     }
     EndGroupCard();
 
@@ -1028,7 +1254,7 @@ void DrawProfilesPage() {
         ImGui::OpenPopup("##confirm_reset");
     }
     if (ImGui::BeginPopup("##confirm_reset")) {
-        ImGui::Text("¿Volver todo el perfil \"%s\" a los valores de fábrica?", active.c_str());
+        ImGui::Text(Tr("¿Volver todo el perfil \"%s\" a los valores de fábrica?"), active.c_str());
         if (GlassButton("Sí, restablecer", nullptr, ImVec2(0, 0), true)) {
             config::ResetActiveProfile();
             theme::Apply();
@@ -1043,8 +1269,39 @@ void DrawProfilesPage() {
     EndGroupCard();
 }
 
+// Guarda el idioma en launcher.json (el mismo archivo que usa el launcher: así
+// los dos quedan siempre en el mismo idioma).
+void SaveLanguage(i18n::Language language) {
+    const std::filesystem::path path = paths::DataDir() / L"launcher.json";
+    nlohmann::json data;
+    {
+        std::ifstream file(path);
+        if (file) data = nlohmann::json::parse(file, nullptr, false);
+    }
+    if (!data.is_object()) data = nlohmann::json::object();
+    data["language"] = i18n::LanguageCode(language);
+    const std::filesystem::path temp = paths::DataDir() / L"launcher.json.tmp";
+    std::ofstream(temp, std::ios::trunc) << data.dump(2);
+    MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+
 void DrawSettingsPage() {
-    PageHeader("Ajustes", "Teclas de Luma y archivos.");
+    PageHeader(i18n::T("settings.title"), i18n::T("settings.subtitle"));
+    SectionHeader(icons::kAll, i18n::T("settings.language"));
+    BeginGroupCard("language");
+    RowLabel(i18n::T("settings.language"));
+    static const char* labels[i18n::kLanguageCount];
+    for (int i = 0; i < i18n::kLanguageCount; ++i) labels[i] = i18n::LanguageName(static_cast<i18n::Language>(i));
+    int language = static_cast<int>(i18n::CurrentLanguage());
+    if (Segmented("language", labels, i18n::kLanguageCount, &language)) {
+        i18n::SetLanguage(static_cast<i18n::Language>(language));
+        SaveLanguage(static_cast<i18n::Language>(language));
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", i18n::T("settings.language_hint"));
+    ImGui::PopTextWrapPos();
+    EndGroupCard();
+
     SectionHeader(icons::kKey, "Teclas de Luma");
     BeginGroupCard("keys");
     RowLabel("Abrir / cerrar el menú");
@@ -1053,8 +1310,8 @@ void DrawSettingsPage() {
     KeybindButton("##unloadkey", config::g_unloadKey.load(), g_capture == CaptureTarget::UnloadKey,
                   CaptureTarget::UnloadKey, nullptr);
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Esc también cierra el menú. Limitación conocida: si la tecla del menú es una "
-                        "letra, escribirla en el chat abre el menú (se corrige en la Fase 7).");
+    ImGui::TextDisabled("%s", Tr("Esc también cierra el menú. Limitación conocida: si la tecla del menú es una "
+                        "letra, escribirla en el chat abre el menú (se corrige en la Fase 7)."));
     ImGui::PopTextWrapPos();
     EndGroupCard();
 
@@ -1064,7 +1321,7 @@ void DrawSettingsPage() {
         ShellExecuteW(nullptr, L"open", paths::DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("Config, perfiles y logs.");
+    ImGui::TextDisabled("%s", Tr("Config, perfiles y logs."));
     EndGroupCard();
 }
 
@@ -1088,15 +1345,18 @@ std::string ActiveOptimizations() {
 
 const char* StatusText(perf::windows::Status s) {
     switch (s) {
-        case perf::windows::Status::On:  return "Activado";
-        case perf::windows::Status::Off: return "Desactivado";
-        default:                          return "No disponible";
+        case perf::windows::Status::On:  return Tr("Activado");
+        case perf::windows::Status::Off: return Tr("Desactivado");
+        default:                          return Tr("No disponible");
     }
 }
 
 // Una fila de consejo: título, estado (con color), explicación y un botón
 // que abre la página de Configuración de Windows donde se cambia.
 void TipRow(const char* title, const char* status, bool good, const char* text, const wchar_t* settingsUri) {
+    title = Tr(title);
+    status = Tr(status);
+    text = Tr(text);
     const theme::Palette& p = theme::P();
     ImGui::PushID(title);
     ImGui::AlignTextToFramePadding();
@@ -1131,7 +1391,7 @@ void DrawBenchmarkPage() {
     BeginGroupCard("bench");
     ImGui::BeginDisabled(!idle);
     RowLabel("Nombre");
-    ImGui::InputTextWithHint("##benchlabel", "Por ejemplo: sin optimizaciones", g_benchLabel, sizeof(g_benchLabel));
+    ImGui::InputTextWithHint("##benchlabel", Tr("Por ejemplo: sin optimizaciones"), g_benchLabel, sizeof(g_benchLabel));
     RowLabel("Duración");
     ImGui::SliderInt("##benchsecs", &g_benchSeconds, 10, 300, "%d s");
     RowLabel("Modo");
@@ -1139,58 +1399,58 @@ void DrawBenchmarkPage() {
     Segmented("benchmode", kModes, 2, &g_benchMode);
     RowLabel("Optimizaciones");
     const std::string optimizations = ActiveOptimizations();
-    ImGui::TextUnformatted(optimizations.empty() ? "ninguna" : optimizations.c_str());
+    ImGui::TextUnformatted(optimizations.empty() ? Tr("ninguna") : optimizations.c_str());
     ImGui::EndDisabled();
 
     if (idle) {
         if (GlassButton("Empezar (el menú se cierra)", icons::kChart, ImVec2(0, 0), true)) {
             const auto mode = g_benchMode == 1 ? perf::benchmark::Mode::Resting : perf::benchmark::Mode::WithHud;
             if (perf::benchmark::Start(g_benchSeconds, 5.0, g_benchLabel, mode, optimizations)) {
-                notify::Push(notify::Kind::Info, "Benchmark en 5 s: no abras el menú y no te muevas");
+                notify::Push(notify::Kind::Info, Tr("Benchmark en 5 s: no abras el menú y no te muevas"));
                 // Cerrar el menú desde el hilo de la ventana (ver input.h).
                 render::input::RequestMenuToggle();
             }
         }
     } else {
         const char* what = state == perf::benchmark::State::Countdown ? "Empieza en" : "Grabando: faltan";
-        ImGui::Text("%s %.0f s", what, perf::benchmark::SecondsLeft());
+        ImGui::Text(Tr("%s %.0f s"), what, perf::benchmark::SecondsLeft());
         ImGui::SameLine();
         if (GlassButton("Cancelar", icons::kClose, ImVec2(0, 0))) {
             perf::benchmark::Cancel("cancelado desde el menú");
         }
     }
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Para comparar: quédate quieto en el mismo lugar y mirando lo mismo en cada prueba. "
+    ImGui::TextDisabled("%s", Tr("Para comparar: quédate quieto en el mismo lugar y mirando lo mismo en cada prueba. "
                         "\"Luma en reposo\" no dibuja nada durante la prueba: su costo es ~0,001 ms, así que es "
-                        "la referencia \"sin Luma\". Después activa UNA optimización y repite.");
+                        "la referencia \"sin Luma\". Después activa UNA optimización y repite."));
     ImGui::PopTextWrapPos();
     EndGroupCard();
 
     const std::vector<perf::benchmark::Result> results = perf::benchmark::Results();
     SectionHeader(icons::kDiagnostics, "Resultados de esta sesión", static_cast<int>(results.size()));
     if (results.empty()) {
-        ImGui::TextDisabled("Todavía no hiciste ninguna prueba.");
+        ImGui::TextDisabled("%s", Tr("Todavía no hiciste ninguna prueba."));
     } else {
         constexpr ImGuiTableFlags kTable = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
                                            ImGuiTableFlags_BordersInnerH;
         if (ImGui::BeginTable("##results", 7, kTable)) {
-            ImGui::TableSetupColumn("Nombre", ImGuiTableColumnFlags_WidthStretch, 2.2f);
-            ImGui::TableSetupColumn("Modo", ImGuiTableColumnFlags_WidthStretch, 1.2f);
-            ImGui::TableSetupColumn("Optimizaciones", ImGuiTableColumnFlags_WidthStretch, 2.4f);
-            ImGui::TableSetupColumn("FPS", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-            ImGui::TableSetupColumn("1% low", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-            ImGui::TableSetupColumn("Frametime", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-            ImGui::TableSetupColumn("Luma", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn(Tr("Nombre"), ImGuiTableColumnFlags_WidthStretch, 2.2f);
+            ImGui::TableSetupColumn(Tr("Modo"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
+            ImGui::TableSetupColumn(Tr("Optimizaciones"), ImGuiTableColumnFlags_WidthStretch, 2.4f);
+            ImGui::TableSetupColumn(Tr("FPS"), ImGuiTableColumnFlags_WidthStretch, 0.8f);
+            ImGui::TableSetupColumn(Tr("1% low"), ImGuiTableColumnFlags_WidthStretch, 0.9f);
+            ImGui::TableSetupColumn(Tr("Frametime"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn(Tr("Luma"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
             ImGui::TableHeadersRow();
             for (auto it = results.rbegin(); it != results.rend(); ++it) {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn(); ImGui::TextUnformatted(it->label.c_str());
                 ImGui::TableNextColumn(); ImGui::TextUnformatted(it->mode.c_str());
                 ImGui::TableNextColumn(); ImGui::TextUnformatted(it->optimizations.c_str());
-                ImGui::TableNextColumn(); ImGui::Text("%.1f", it->averageFps);
-                ImGui::TableNextColumn(); ImGui::Text("%.1f", it->low1Fps);
-                ImGui::TableNextColumn(); ImGui::Text("%.2f ms", it->averageMs);
-                ImGui::TableNextColumn(); ImGui::Text("%.3f ms", it->lumaCostMs);
+                ImGui::TableNextColumn(); ImGui::Text(Tr("%.1f"), it->averageFps);
+                ImGui::TableNextColumn(); ImGui::Text(Tr("%.1f"), it->low1Fps);
+                ImGui::TableNextColumn(); ImGui::Text(Tr("%.2f ms"), it->averageMs);
+                ImGui::TableNextColumn(); ImGui::Text(Tr("%.3f ms"), it->lumaCostMs);
             }
             ImGui::EndTable();
         }
@@ -1202,7 +1462,7 @@ void DrawBenchmarkPage() {
         ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("resumen.csv = una fila por prueba; un .csv por prueba con cada frame.");
+    ImGui::TextDisabled("%s", Tr("resumen.csv = una fila por prueba; un .csv por prueba con cada frame."));
 
     // --- Consejos de Windows ---------------------------------------------------
     if (g_windowsInfoDirty) {
@@ -1214,8 +1474,8 @@ void DrawBenchmarkPage() {
     SectionHeader(icons::kSettings, "Consejos de Windows");
     BeginGroupCard("windows");
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextUnformatted("Luma solo te muestra cómo están estas opciones: nunca las cambia por su cuenta. "
-                           "Prueba cada una con el benchmark.");
+    ImGui::TextUnformatted(Tr("Luma solo te muestra cómo están estas opciones: nunca las cambia por su cuenta. "
+                           "Prueba cada una con el benchmark."));
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, fs * 0.3f));
     TipRow("Modo de juego", StatusText(w.gameMode), w.gameMode == Status::On,
@@ -1232,12 +1492,12 @@ void DrawBenchmarkPage() {
            "Minecraft Bedrock juega en ventana: esta opción le da casi la misma latencia que la pantalla completa. "
            "(Mismo lugar que la anterior.)",
            L"ms-settings:display-advancedgraphics");
-    const std::string plan = "Plan actual: " + (w.powerPlan.empty() ? std::string("desconocido") : w.powerPlan);
+    const std::string plan = TrFormat("Plan actual: {}", w.powerPlan.empty() ? std::string(Tr("desconocido")) : w.powerPlan);
     TipRow("Plan de energía", plan.c_str(), w.powerPlanIsHighPerformance,
            "En portátiles, \"Equilibrado\" puede bajar la frecuencia de la CPU. \"Alto rendimiento\" (o el modo de "
            "energía \"Mejor rendimiento\" en Windows 11) la mantiene alta. Enchufa el cargador para jugar.",
            L"ms-settings:powersleep");
-    const std::string gpu = "Ahora: " + w.gpuPreference;
+    const std::string gpu = TrFormat("Ahora: {}", std::string(Tr(w.gpuPreference.c_str())));
     TipRow("GPU para Minecraft", gpu.c_str(), w.gpuPreference == "Alto rendimiento",
            "En portátiles con dos GPU (integrada + dedicada), elige \"Alto rendimiento\" para Minecraft en "
            "Configuración > Pantalla > Gráficos. Si tu PC tiene una sola GPU, no hace falta.",
@@ -1246,7 +1506,7 @@ void DrawBenchmarkPage() {
         g_windowsInfoDirty = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("Nada de \"limpiadores de RAM\" ni trucos de registro: no tienen evidencia.");
+    ImGui::TextDisabled("%s", Tr("Nada de \"limpiadores de RAM\" ni trucos de registro: no tienen evidencia."));
     EndGroupCard();
 }
 
@@ -1291,12 +1551,13 @@ HistoryStats ComputeStats(const perf::History& history) {
 
 // Una "cifra grande" con su etiqueta, para el panel de diagnóstico.
 void StatTile(const char* label, const char* value, float width) {
+    label = Tr(label);
     const theme::Palette& p = theme::P();
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const float height = Fs() * 4.2f;
     ImGui::Dummy(ImVec2(width, height));
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    glass::Surface(draw, pos, ImVec2(pos.x + width, pos.y + height), Rounding() * 0.7f, ImGui::GetStyle().Alpha, 0.0f);
+    ModuleBackground(draw, pos, ImVec2(pos.x + width, pos.y + height), Rounding() * 0.7f, 0.0f, 0.0f, false, 1.0f);
     ImFont* title = theme::GetFonts().title;
     draw->AddText(title, title->FontSize, ImVec2(pos.x + Fs() * 0.9f, pos.y + Fs() * 0.6f), Col(p.text), value);
     draw->AddText(ImVec2(pos.x + Fs() * 0.9f, pos.y + height - Fs() * 1.6f), Col(p.textDim), label);
@@ -1338,33 +1599,33 @@ void DrawDiagnosticsPage(const RenderInfo& info) {
     ImGui::PlotLines("##frametime", history.frameMs.data(), static_cast<int>(history.count), offset, nullptr, 0.0f,
                      scaleMax, ImVec2(ImGui::GetContentRegionAvail().x - Fs() * 1.8f, Fs() * 6.0f));
     ImGui::PopStyleColor();
-    ImGui::TextDisabled("Últimos %zu frames · máx %.2f ms · más abajo = mejor, picos = tirones", history.count, stats.maxMs);
+    ImGui::TextDisabled(Tr("Últimos %zu frames · máx %.2f ms · más abajo = mejor, picos = tirones"), history.count, stats.maxMs);
     EndGroupCard();
 
     SectionHeader(icons::kPerformance, "Costo de Luma");
     BeginGroupCard("cost");
     if (summary.valid && summary.closedFrames > 0) {
-        ImGui::Text("Menú cerrado (últimos %.0f s): %.4f ms promedio, %.4f ms máximo", summary.seconds,
+        ImGui::Text(Tr("Menú cerrado (últimos %.0f s): %.4f ms promedio, %.4f ms máximo"), summary.seconds,
                     summary.averageCostUs / 1000.0, summary.maxCostUs / 1000.0);
     } else {
-        ImGui::TextDisabled("Menú cerrado: deja el menú cerrado 30 s y vuelve a abrirlo.");
+        ImGui::TextDisabled("%s", Tr("Menú cerrado: deja el menú cerrado 30 s y vuelve a abrirlo."));
     }
-    ImGui::Text("Menú abierto (ahora, con el vidrio): %.3f ms promedio, %.3f ms máximo",
+    ImGui::Text(Tr("Menú abierto (ahora, con el vidrio): %.3f ms promedio, %.3f ms máximo"),
                 stats.openCostAvgUs / 1000.0f, stats.openCostMaxUs / 1000.0f);
-    ImGui::TextDisabled("DirectX 12 · %u x %u · %s · %u buffers", info.width, info.height, info.formatName, info.bufferCount);
+    ImGui::TextDisabled(Tr("DirectX 12 · %u x %u · %s · %u buffers"), info.width, info.height, info.formatName, info.bufferCount);
     EndGroupCard();
 
     // Estado del SDK: qué datos del juego encontró Luma en esta versión.
     SectionHeader(icons::kWorld, "Datos del juego (SDK)");
     BeginGroupCard("sdk");
     RowLabel("Jugador local");
-    ImGui::TextUnformatted(!sdk::player::Available() ? "No disponible"
+    ImGui::TextUnformatted(!sdk::player::Available() ? Tr("No disponible")
                            : sdk::player::LocalPlayer() != 0 ? "Encontrado"
                                                              : "Mueve el mouse dentro de un mundo");
     RowLabel("Red (ping)");
-    ImGui::TextUnformatted(sdk::network::Available() ? "Disponible" : "No disponible");
+    ImGui::TextUnformatted(sdk::network::Available() ? Tr("Disponible") : Tr("No disponible"));
     RowLabel("Dónde estás");
-    ImGui::TextUnformatted(sdk::network::OnServer() ? "En un servidor" : "Mundo local (o menú)");
+    ImGui::TextUnformatted(sdk::network::OnServer() ? Tr("En un servidor") : Tr("Mundo local (o menú)"));
     EndGroupCard();
 }
 
@@ -1630,6 +1891,7 @@ void Equip(const ClosetSkin& s) {
     j["id"] = s.id;
     std::ofstream(SkinsDir() / L"active.json", std::ios::trunc) << j.dump(2);
     g_activeSkin = s.id;
+    skinpack::Write();  // la equipada queda primera en el paquete "Luma" del Vestidor
     char text[160];
     std::snprintf(text, sizeof(text), i18n::T("closet.equipped_toast"), s.name.c_str());
     notify::Push(notify::Kind::Info, text);
@@ -1657,8 +1919,7 @@ void DrawClosetPage() {
             const ImVec2 pos = ImGui::GetCursorScreenPos();
             const ImVec2 max(pos.x + tileW, pos.y + tileH);
             const bool equipped = s.id == g_activeSkin;
-            glass::Surface(draw, pos, max, Rounding() * 0.8f, ImGui::GetStyle().Alpha, equipped ? 0.6f : 0.0f);
-            if (equipped) draw->AddRect(pos, max, Col(theme::Accent(1.0f)), Rounding() * 0.8f, 0, 2.0f);
+            ModuleBackground(draw, pos, max, Rounding() * 0.8f, 0.0f, equipped ? 1.0f : 0.0f, equipped, 1.0f);
             // la cara
             const float face = tileW * 0.55f;
             const ImVec2 fmin(pos.x + (tileW - face) * 0.5f, pos.y + fs * 0.9f);
@@ -1699,9 +1960,13 @@ void DrawClosetPage() {
     EndGroupCard();
 }
 
-bool NavItem(const char* label, const char* icon, bool selected) {
+// Una entrada de la barra lateral: ícono, texto y (opcional) un número a la
+// derecha. La elegida se ilumina: fondo cálido tenue, texto y una rayita del
+// acento a la izquierda (que se desliza de una a otra, ver Sidebar).
+bool NavItem(const char* label, const char* icon, bool selected, int count = -1) {
+    label = Tr(label);
     const theme::Palette& p = theme::P();
-    const float height = Fs() * 2.35f;
+    const float height = Fs() * 2.2f;
     const float width = ImGui::GetContentRegionAvail().x;
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const bool clicked = ImGui::InvisibleButton(label, ImVec2(width, height));
@@ -1710,25 +1975,44 @@ bool NavItem(const char* label, const char* icon, bool selected) {
     const float hover = Animate(ImGui::GetItemID(), hovered && !selected ? 1.0f : 0.0f, 18.0f);
     const float active = Animate(ImGui::GetItemID() + 1, selected ? 1.0f : 0.0f, 14.0f);
     ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float r = Rounding() * 0.55f;
     if (hover > 0.01f) {
-        draw->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), Col(p.surface, hover), height * 0.5f);
+        draw->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), Col(p.surface, hover), r);
     }
     if (selected) {
         g_navPillTarget = pos.y - ImGui::GetWindowPos().y;
         g_navPillHeight = height;
     }
-    const ImVec4 color = Mix(theme::WithAlpha(p.text, 0.72f), p.onAccentText, active);
-    const float iconSize = Fs() * 1.15f;
-    const float nudge = hover * Fs() * 0.2f;
-    icons::Draw(draw, icon, ImVec2(pos.x + Fs() * 1.25f + nudge, pos.y + height * 0.5f), iconSize, Col(color));
-    draw->AddText(ImVec2(pos.x + Fs() * 2.6f + nudge, pos.y + (height - Fs()) * 0.5f), Col(color), label);
+    const ImVec4 color = Mix(theme::WithAlpha(p.text, 0.72f), theme::Accent(1.0f), active);
+    const float iconSize = Fs() * 1.05f;
+    icons::Draw(draw, icon, ImVec2(pos.x + Fs() * 1.3f, pos.y + height * 0.5f), iconSize, Col(color));
+    draw->AddText(ImVec2(pos.x + Fs() * 2.55f, pos.y + (height - Fs()) * 0.5f), Col(Mix(theme::WithAlpha(p.text, 0.85f), p.text, active)), label);
+    if (count >= 0) {
+        char buffer[16];
+        std::snprintf(buffer, sizeof(buffer), "%d", count);
+        const ImVec2 cs = ImGui::CalcTextSize(buffer);
+        draw->AddText(ImVec2(pos.x + width - Fs() * 0.7f - cs.x, pos.y + (height - cs.y) * 0.5f), Col(p.textDim), buffer);
+    }
     return clicked;
 }
 
 void NavLabel(const char* text) {
-    ImGui::Dummy(ImVec2(0, Fs() * 0.5f));
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + Fs() * 0.6f);
-    ImGui::TextDisabled("%s", text);
+    ImGui::Dummy(ImVec2(0, Fs() * 0.55f));
+    const theme::Palette& p = theme::P();
+    ImFont* medium = theme::GetFonts().medium;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::GetWindowDrawList()->AddText(medium, medium->FontSize * 0.72f, ImVec2(pos.x + Fs() * 0.7f, pos.y), Col(p.textDim, 0.85f),
+                                        Tr(text));
+    ImGui::Dummy(ImVec2(0, medium->FontSize * 0.72f + Fs() * 0.3f));
+}
+
+// Cuántos módulos hay en una categoría (para la barra lateral).
+int CountModules(Category c) {
+    int n = 0;
+    for (const auto& m : Manager::All()) {
+        if (c == Category::Count || m->GetCategory() == c) ++n;
+    }
+    return n;
 }
 
 void Sidebar() {
@@ -1736,43 +2020,39 @@ void Sidebar() {
     const float fs = Fs();
     ImDrawList* draw = ImGui::GetWindowDrawList();
 
-    // Marca: el logo de Luma y su nombre.
+    // Marca: el logo con un halo cálido, "Luma" y la versión.
     const ImVec2 brand = ImGui::GetCursorScreenPos();
-    const float logo = fs * 2.3f;
-    assets::DrawLogo(draw, ImVec2(brand.x + fs * 0.6f + logo * 0.5f, brand.y + logo * 0.5f), logo, Col(p.text));
+    const float logo = fs * 2.2f;
+    const ImVec2 lc(brand.x + fs * 0.5f + logo * 0.5f, brand.y + logo * 0.5f);
+    draw->AddCircleFilled(lc, logo * 0.72f, Col(theme::Accent(0.10f)), 32);
+    assets::DrawLogo(draw, lc, logo, Col(p.text));
     ImFont* title = theme::GetFonts().title;
-    draw->AddText(title, title->FontSize, ImVec2(brand.x + fs * 1.1f + logo, brand.y + (logo - title->FontSize) * 0.5f),
-                  Col(p.text), kName);
-    ImGui::Dummy(ImVec2(0, logo + fs * 0.6f));
+    const float tx = brand.x + fs * 1.1f + logo;
+    draw->AddText(title, title->FontSize, ImVec2(tx, brand.y + logo * 0.5f - title->FontSize * 0.62f), Col(p.text), kName);
+    draw->AddText(ImVec2(tx, brand.y + logo * 0.5f + title->FontSize * 0.38f), Col(p.textDim), kVersion);
+    ImGui::Dummy(ImVec2(0, logo + fs * 0.5f));
 
-    // Todo lo de la barra se dibuja en dos "canales": la píldora en el de
-    // abajo y los botones encima, así el texto queda sobre la píldora.
+    // Dos "canales": la marca de la elegida abajo y los botones encima.
     draw->ChannelsSplit(2);
     draw->ChannelsSetCurrent(1);
     g_navPillTarget = -1.0f;
 
-    // Volver al menú radial (el de los 4 botones).
-    if (NavItem(i18n::T("radial.home"), icons::kBack, false)) {
-        g_radial = true;
-        OnNavigate();
-    }
-    NavLabel("MÓDULOS");
+    NavLabel("Mods");
     auto category = [](const char* label, const char* icon, Category c) {
         const bool selected = g_page == Page::Modules && g_categoryFilter == c;
-        if (NavItem(label, icon, selected) && !(selected && g_detail == nullptr)) {
+        if (NavItem(label, icon, selected, CountModules(c)) && !selected) {
             g_page = Page::Modules;
             g_categoryFilter = c;
-            g_detail = nullptr;
             OnNavigate();
         }
     };
     category("Todos", icons::kAll, Category::Count);
     for (int i = 0; i < static_cast<int>(Category::Count); ++i) {
         const auto c = static_cast<Category>(i);
-        category(modules::CategoryName(c), CategoryIcon(c), c);
+        if (CountModules(c) > 0) category(modules::CategoryName(c), CategoryIcon(c), c);
     }
 
-    NavLabel("LUMA");
+    NavLabel("Luma");
     auto page = [](const char* label, const char* icon, Page pg) {
         if (NavItem(label, icon, g_page == pg) && g_page != pg) {
             g_page = pg;
@@ -1783,37 +2063,45 @@ void Sidebar() {
         }
     };
     page(i18n::T("closet.title"), icons::kProfiles, Page::Closet);
-    page("Tema", icons::kTheme, Page::Theme);
+    page("Apariencia", icons::kTheme, Page::Theme);
     page("Perfiles", icons::kProfiles, Page::Profiles);
     page("Ajustes", icons::kSettings, Page::Settings);
     page("Benchmark", icons::kChart, Page::Benchmark);
     page("Diagnóstico", icons::kDiagnostics, Page::Diagnostics);
 
-    // La píldora: se desliza hasta la entrada elegida con un leve rebote.
+    // La marca de la elegida: un fondo cálido tenue y una rayita del acento
+    // que se desliza hasta ella.
     draw->ChannelsSetCurrent(0);
     if (g_navPillTarget >= 0.0f) {
         if (g_navPillY < 0.0f || !theme::Get().animations) {
             g_navPillY = g_navPillTarget;
         } else {
-            g_navPillY = ImLerp(g_navPillY, g_navPillTarget, std::min(1.0f, ImGui::GetIO().DeltaTime * 15.0f));
+            g_navPillY = ImLerp(g_navPillY, g_navPillTarget, std::min(1.0f, ImGui::GetIO().DeltaTime * 16.0f));
         }
         const ImVec2 win = ImGui::GetWindowPos();
         const float left = win.x + ImGui::GetStyle().WindowPadding.x;
         const float right = win.x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
         const ImVec2 min(left, win.y + g_navPillY);
         const ImVec2 max(right, min.y + g_navPillHeight);
-        draw->AddRectFilled(ImVec2(min.x, min.y + 2), ImVec2(max.x, max.y + 3), Col(p.shadow, 0.6f), g_navPillHeight * 0.5f);
-        draw->AddRectFilled(min, max, Col(theme::Accent(1.0f)), g_navPillHeight * 0.5f);
+        draw->AddRectFilled(min, max, Col(theme::Accent(0.13f)), Rounding() * 0.55f);
+        const float barH = g_navPillHeight * 0.5f;
+        draw->AddRectFilled(ImVec2(min.x, min.y + (g_navPillHeight - barH) * 0.5f), ImVec2(min.x + 3.0f, max.y - (g_navPillHeight - barH) * 0.5f),
+                            Col(theme::Accent(1.0f)), 1.5f);
     }
     draw->ChannelsMerge();
 
-    // Al pie: perfil y versión.
-    const float footerY = ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - fs * 2.6f;
+    // Al pie: volver al inicio (el radial) y el perfil activo.
+    const float footerH = fs * 2.2f + fs * 1.6f;
+    const float footerY = ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - ImGui::GetStyle().WindowPadding.y - footerH;
     if (ImGui::GetCursorScreenPos().y < footerY) {
-        ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x + fs * 0.6f, footerY));
-        ImGui::TextDisabled("%s", ("Perfil: " + config::ActiveProfile()).c_str());
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + fs * 0.6f);
-        ImGui::TextDisabled("Luma %s", kVersion);
+        ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, footerY));
+        if (NavItem(i18n::T("radial.home"), icons::kHome, false)) {
+            g_radial = true;
+            OnNavigate();
+        }
+        const std::string profile = TrFormat("Perfil: {}", config::ActiveProfile());
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + fs * 0.7f);
+        ImGui::TextDisabled("%s", profile.c_str());
     }
 }
 
@@ -1882,7 +2170,7 @@ void OnKeyCaptured(int vk) {
             return;
     }
     if (!clear && vk == config::g_menuKey.load() && target == CaptureTarget::Module) {
-        notify::Push(notify::Kind::Warning, "Esa tecla también abre el menú");
+        notify::Push(notify::Kind::Warning, Tr("Esa tecla también abre el menú"));
     }
     sound::Play(sound::Effect::ToggleOn);
     config::MarkDirty();
@@ -1913,7 +2201,7 @@ void Draw(const RenderInfo& info) {
     } else if (theme::Get().animations) {
         const float t = static_cast<float>(MsSince(g_openedAt) / kOpenMs);
         appear = EaseOut(t);
-        scale = 0.94f + 0.06f * EaseOutBack(t);  // crece hasta su tamaño con un leve rebote
+        scale = 0.96f + 0.04f * EaseOutBack(t);  // crece hasta su tamaño con un leve rebote
     }
     g_appear = appear;
 
@@ -1928,14 +2216,14 @@ void Draw(const RenderInfo& info) {
             ImGui::ColorConvertFloat4ToU32(ImVec4(0.02f, 0.02f, 0.03f, dim)));
     }
 
-    // Ventana anfitriona invisible que cubre la pantalla; los paneles de
-    // vidrio se dibujan dentro, centrados y de tamaño fijo.
     // Al abrir: el menú radial (Mods, HUD, Closet, Ajustes).
     if (g_radial) {
         DrawRadial(appear, scale);
         return;
     }
 
+    // Una ventana anfitriona invisible que cubre la pantalla; adentro, UNA
+    // ventana de vidrio centrada con la barra lateral y el contenido.
     ImGui::SetNextWindowPos(viewport->Pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(viewport->Size, ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, appear);
@@ -1945,53 +2233,53 @@ void Draw(const RenderInfo& info) {
                                         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse;
     if (ImGui::Begin("##luma_menu", nullptr, kFlags)) {
         ImDrawList* draw = ImGui::GetWindowDrawList();
-        const float width = std::clamp(viewport->Size.x * 0.72f, fs * 58.0f, fs * 100.0f) * scale;
-        const float height = std::clamp(viewport->Size.y * 0.76f, fs * 34.0f, fs * 62.0f) * scale;
-        const float rise = (1.0f - appear) * fs * 1.6f;
-        const ImVec2 origin(viewport->Pos.x + (viewport->Size.x - width) * 0.5f,
-                            viewport->Pos.y + (viewport->Size.y - height) * 0.5f + rise);
-        const float sidebarWidth = fs * 15.5f * scale;
-        const float gap = fs * 0.9f;
-        const float r = Rounding() * 1.25f;
+        const theme::Palette& p = theme::P();
+        const float width = std::clamp(viewport->Size.x * 0.74f, fs * 60.0f, fs * 104.0f) * scale;
+        const float height = std::clamp(viewport->Size.y * 0.78f, fs * 36.0f, fs * 64.0f) * scale;
+        const float rise = (1.0f - appear) * fs * 1.2f;
+        const ImVec2 origin(std::floor(viewport->Pos.x + (viewport->Size.x - width) * 0.5f),
+                            std::floor(viewport->Pos.y + (viewport->Size.y - height) * 0.5f + rise));
+        const ImVec2 end(origin.x + width, origin.y + height);
+        const float sidebarWidth = std::floor(fs * 14.0f * scale);
+        const float r = Rounding() * 1.1f;
 
-        const ImVec2 sideMin = origin;
-        const ImVec2 sideMax(origin.x + sidebarWidth, origin.y + height);
-        const ImVec2 mainMin(sideMax.x + gap, origin.y);
-        const ImVec2 mainMax(origin.x + width, origin.y + height);
-        glass::Panel(draw, sideMin, sideMax, r, appear);
-        glass::Panel(draw, mainMin, mainMax, r, appear);
+        glass::Panel(draw, origin, end, r, appear);
+        // La barra lateral: un poco más oscura, separada por una línea fina.
+        draw->AddRectFilled(origin, ImVec2(origin.x + sidebarWidth, end.y), Col(ImVec4(0, 0, 0, p.text.x > 0.5f ? 0.16f : 0.04f)), r,
+                            ImDrawFlags_RoundCornersLeft);
+        draw->AddRectFilled(ImVec2(origin.x + sidebarWidth, origin.y + r), ImVec2(origin.x + sidebarWidth + 1.0f, end.y - r), Col(p.border, 0.6f));
 
-        const float pad = fs * 1.2f;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
-
-        ImGui::SetCursorScreenPos(sideMin);
+        const float pad = fs * 1.1f;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad * 0.8f, pad));
+        ImGui::SetCursorScreenPos(origin);
         ImGui::BeginChild("##sidebar", ImVec2(sidebarWidth, height), ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
         Sidebar();
         ImGui::EndChild();
+        ImGui::PopStyleVar();
 
         // Transición entre páginas: el contenido nuevo aparece y se desliza.
         float pageT = 1.0f;
         if (theme::Get().animations && !closing) {
             pageT = EaseOut(static_cast<float>(MsSince(g_pageChangedAt) / kPageMs));
         }
-        const float slide = (1.0f - pageT) * fs * 2.0f;
+        const float slide = (1.0f - pageT) * fs * 1.5f;
+        const ImVec2 mainMin(origin.x + sidebarWidth + 1.0f, origin.y);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad * 1.3f, pad * 1.15f));
         ImGui::SetCursorScreenPos(ImVec2(mainMin.x + slide, mainMin.y));
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, appear * pageT);
-        ImGui::BeginChild("##main", ImVec2(mainMax.x - mainMin.x, height), ImGuiChildFlags_AlwaysUseWindowPadding,
-                          ImGuiWindowFlags_NoBackground);
-        if (g_page == Page::Modules && g_detail != nullptr) {
-            DrawModuleDetail(*g_detail);
-        } else {
-            switch (g_page) {
-                case Page::Theme:       DrawThemePage(); break;
-                case Page::Profiles:    DrawProfilesPage(); break;
-                case Page::Settings:    DrawSettingsPage(); break;
-                case Page::Benchmark:   DrawBenchmarkPage(); break;
-                case Page::Diagnostics: DrawDiagnosticsPage(info); break;
-                case Page::Modules:     DrawModulesPage(); break;
-                case Page::Closet:      DrawClosetPage(); break;
-            }
+        ImGui::BeginChild("##main", ImVec2(end.x - mainMin.x, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+                          ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse |
+                              (g_page == Page::Modules ? ImGuiWindowFlags_NoScrollbar : 0));
+        if (g_page != Page::Modules) SmoothScroll();
+        switch (g_page) {
+            case Page::Theme:       DrawThemePage(); break;
+            case Page::Profiles:    DrawProfilesPage(); break;
+            case Page::Settings:    DrawSettingsPage(); break;
+            case Page::Benchmark:   DrawBenchmarkPage(); break;
+            case Page::Diagnostics: DrawDiagnosticsPage(info); break;
+            case Page::Modules:     DrawModulesPage(); break;
+            case Page::Closet:      DrawClosetPage(); break;
         }
         ImGui::EndChild();
         ImGui::PopStyleVar(2);
@@ -2018,10 +2306,10 @@ float g_labelColumn = 15.0f;  // ancho de la columna de etiquetas (en tamaños d
 
 void Row(const char* label, const char* hint) {
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(label);
+    ImGui::TextUnformatted(Tr(label));
     if (hint != nullptr) {
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", hint);
+        ImGui::TextDisabled("%s", Tr(hint));
     }
     ImGui::SameLine(ImGui::GetFontSize() * g_labelColumn);
 }
@@ -2038,6 +2326,7 @@ void SetLabelColumn(float fontSizes) {
 }
 
 void Section(const char* title) {
+    title = Tr(title);
     ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize() * 0.3f));
     const theme::Palette& p = theme::P();
     ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -2054,7 +2343,7 @@ void Section(const char* title) {
 
 void Hint(const char* text) {
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("%s", text);
+    ImGui::TextDisabled("%s", Tr(text));
     ImGui::PopTextWrapPos();
 }
 
@@ -2069,22 +2358,25 @@ bool Toggle(const char* label, bool* value, const char* hint) {
 bool Choice(const char* label, int* index, std::initializer_list<const char*> options) {
     ImGui::PushID(label);
     Row(label, nullptr);
-    const int count = static_cast<int>(options.size());
+    const int count = std::min(static_cast<int>(options.size()), 16);
     *index = std::clamp(*index, 0, count - 1);
     bool changed = false;
+    // Las opciones en el idioma elegido.
+    const char* labels[16];
+    for (int i = 0; i < count; ++i) labels[i] = Tr(options.begin()[i]);
     // ¿Entran como control segmentado? (cada segmento mide 7 letras de ancho)
     std::size_t longest = 0;
-    for (const char* o : options) {
-        longest = std::max(longest, std::strlen(o));
+    for (int i = 0; i < count; ++i) {
+        longest = std::max(longest, std::strlen(labels[i]));
     }
     if (count <= 4 && longest <= 11 && ImGui::GetContentRegionAvail().x >= ImGui::GetFontSize() * 7.0f * count) {
-        changed = m::Segmented("##s", options.begin(), count, index);
+        changed = m::Segmented("##s", labels, count, index);
     } else {
         FillWidth();
-        const char* preview = options.begin()[*index];
+        const char* preview = labels[*index];
         if (ImGui::BeginCombo("##c", preview)) {
             for (int i = 0; i < count; ++i) {
-                if (ImGui::Selectable(options.begin()[i], i == *index) && i != *index) {
+                if (ImGui::Selectable(labels[i], i == *index) && i != *index) {
                     *index = i;
                     changed = true;
                     sound::Play(sound::Effect::Click);
@@ -2101,7 +2393,7 @@ bool Slider(const char* label, float* value, float min, float max, const char* f
     ImGui::PushID(label);
     Row(label, nullptr);
     FillWidth();
-    const bool changed = ImGui::SliderFloat("##v", value, min, max, format);
+    const bool changed = ImGui::SliderFloat("##v", value, min, max, Tr(format));
     ImGui::PopID();
     return changed;
 }
@@ -2110,7 +2402,7 @@ bool SliderInt(const char* label, int* value, int min, int max, const char* form
     ImGui::PushID(label);
     Row(label, nullptr);
     FillWidth();
-    const bool changed = ImGui::SliderInt("##v", value, min, max, format);
+    const bool changed = ImGui::SliderInt("##v", value, min, max, Tr(format));
     ImGui::PopID();
     return changed;
 }
@@ -2136,7 +2428,7 @@ bool Text(const char* label, char* buffer, int size, const char* placeholder) {
     ImGui::PushID(label);
     Row(label, nullptr);
     FillWidth();
-    const bool changed = ImGui::InputTextWithHint("##t", placeholder, buffer, static_cast<std::size_t>(size));
+    const bool changed = ImGui::InputTextWithHint("##t", Tr(placeholder), buffer, static_cast<std::size_t>(size));
     ImGui::PopID();
     return changed;
 }

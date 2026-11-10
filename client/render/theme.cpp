@@ -171,6 +171,7 @@ void Save(nlohmann::json& out) {
     t["sounds"] = g_settings.sounds;
     t["soundVolume"] = g_settings.soundVolume;
     t["backgroundDim"] = g_settings.backgroundDim;
+    t["moduleView"] = g_settings.moduleView;
     out["theme"] = std::move(t);
 }
 
@@ -195,6 +196,7 @@ void Load(const nlohmann::json& in) {
         g_settings.sounds = t.value("sounds", defaults.sounds);
         g_settings.soundVolume = std::clamp(t.value("soundVolume", defaults.soundVolume), 0.0f, 1.0f);
         g_settings.backgroundDim = std::clamp(t.value("backgroundDim", defaults.backgroundDim), 0.0f, 0.8f);
+        g_settings.moduleView = std::clamp(t.value("moduleView", defaults.moduleView), 0, 1);
     }
     if (g_settings.fontSize != oldFont) {
         RequestFontRebuild();

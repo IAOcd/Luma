@@ -196,6 +196,30 @@ std::string LoadRefreshToken() {
 void DeleteSession() {
     std::error_code ec;
     fs::remove(SessionPath(), ec);
+    fs::remove(SessionPath().parent_path() / L"session.dat", ec);  // el pase de Luma
+}
+
+// --- El "pase de Luma" (para que los usuarios de Luma se reconozcan) ------------------
+// Le mostramos al servidor de Luma tu encabezado de Xbox; el servidor se lo
+// pregunta a Xbox (así nadie puede hacerse pasar por otro gamertag) y nos da un
+// pase de 30 días. Lo guardamos cifrado con DPAPI en session.dat; Luma.dll lo
+// lee para avisar "estoy usando Luma". Si falla, no pasa nada: solo no hay logo.
+void FetchLumaPass(const std::string& authHeader) {
+    Response response;
+    if (!PostJson(L"https://luma-api.gios-app.workers.dev/v1/auth", json{{"xbl", authHeader}}, L"", response) ||
+        response.status != 200) {
+        return;
+    }
+    const json reply = json::parse(response.body, nullptr, false);
+    if (!reply.is_object() || !reply.contains("token") || !reply["token"].is_string()) return;
+    const std::string token = reply["token"].get<std::string>();
+    if (token.size() != 64) return;
+    DATA_BLOB in{static_cast<DWORD>(token.size()), reinterpret_cast<BYTE*>(const_cast<char*>(token.data()))};
+    DATA_BLOB out{};
+    if (!CryptProtectData(&in, L"Luma", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) return;
+    std::ofstream(SessionPath().parent_path() / L"session.dat", std::ios::binary | std::ios::trunc)
+        .write(reinterpret_cast<const char*>(out.pbData), out.cbData);
+    LocalFree(out.pbData);
 }
 
 // --- Paso 1: el navegador y el mini servidor en localhost ------------------------------
@@ -411,6 +435,7 @@ void Finish(const std::string& accessToken, bool silent) {
         g_info.errorKey.clear();
         g_info.detail.clear();
     }
+    FetchLumaPass(xbox.authHeader);
     FetchPicture(xbox.authHeader);
 }
 

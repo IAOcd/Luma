@@ -2,6 +2,7 @@
 //  paperdoll.cpp - Mover y agrandar el muñeco del HUD del juego (ver paperdoll.h)
 // =============================================================================
 #include "sdk/paperdoll.h"
+#include "sdk/hud_ui.h"
 
 #include <atomic>
 #include <cmath>
@@ -189,6 +190,15 @@ void Apply(std::uintptr_t root) {
 
 void __fastcall SetupAndRenderDetour(void* view, void* ctx) {
     hooks::ActiveCallGuard guard;
+    // Antes de dibujar: volver a poner el scoreboard (si el juego lo recreó).
+    if (!g_unloading.load(std::memory_order_relaxed)) {
+        std::uintptr_t tree0 = 0;
+        std::uintptr_t root0 = 0;
+        if (SafeRead(reinterpret_cast<std::uintptr_t>(view) + kViewVisualTree, tree0) && LooksLikePointer(tree0) &&
+            SafeRead(tree0 + kTreeRoot, root0) && LooksLikePointer(root0) && NameIs(root0, "hud_screen")) {
+            hudui::BeforeHudRender(root0);
+        }
+    }
     g_original(view, ctx);
     if (g_unloading.load(std::memory_order_relaxed)) {
         return;
@@ -201,6 +211,7 @@ void __fastcall SetupAndRenderDetour(void* view, void* ctx) {
         return;
     }
     Apply(root);
+    hudui::OnHudScreen(root);  // coordenadas y scoreboard del juego (sdk/hud_ui.h)
 }
 
 }  // namespace
@@ -244,6 +255,7 @@ bool Found() {
 void BeginUnload() {
     // Dejamos de tocar la interfaz y devolvemos el muñeco a su lugar (con
     // escrituras seguras: si el control ya no existe, no pasa nada).
+    hudui::BeginUnload();  // primero: necesita que este hook siga pasándole los frames
     g_unloading.store(true);
     Restore();
 }

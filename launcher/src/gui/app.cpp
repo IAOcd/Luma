@@ -574,12 +574,321 @@ void DrawTitleBar(ImDrawList* d, ImVec2 display) {
 }
 
 // --- Barra lateral --------------------------------------------------------------------
+// --- Decoración y secciones nuevas -------------------------------------------------------
+// Abrir una página web en el navegador (solo direcciones de Luma, fijas).
+void OpenUrl(const wchar_t* url) {
+    ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+// Un brillo suave: el color arriba con "alphaTop" que se desvanece hasta 0 abajo.
+void Glow(ImDrawList* d, ImVec2 min, ImVec2 max, const ImVec4& color, float alphaTop, float rounding) {
+    const int start = d->VtxBuffer.Size;
+    d->AddRectFilled(min, max, C(color, alphaTop), rounding, ImDrawFlags_RoundCornersTop);
+    const float h = std::max(1.0f, max.y - min.y);
+    for (int i = start; i < d->VtxBuffer.Size; ++i) {
+        ImDrawVert& v = d->VtxBuffer[i];
+        const float t = std::clamp((v.pos.y - min.y) / h, 0.0f, 1.0f);
+        const ImU32 a = (v.col >> IM_COL32_A_SHIFT) & 0xFF;
+        v.col = (v.col & ~IM_COL32_A_MASK) | (static_cast<ImU32>(static_cast<float>(a) * (1.0f - t)) << IM_COL32_A_SHIFT);
+    }
+}
+
+// Un "chip" con el nombre de una tecla (L, Fin, Tab...).
+float KeyCap(ImDrawList* d, ImVec2 pos, const char* key) {
+    const Palette& p = P();
+    const ImVec2 ts = TextSize(g_fonts.semibold, key);
+    const float w = std::max(S(34.0f), ts.x + S(18.0f));
+    const float h = S(32.0f);
+    d->AddRectFilled(ImVec2(pos.x, pos.y + S(2.0f)), ImVec2(pos.x + w, pos.y + h + S(2.0f)), C(p.border), S(8.0f));
+    d->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), C(p.background), S(8.0f));
+    d->AddRect(pos, ImVec2(pos.x + w, pos.y + h), C(p.border), S(8.0f));
+    Text(d, g_fonts.semibold, ImVec2(pos.x + (w - ts.x) * 0.5f, pos.y + (h - ts.y) * 0.5f), C(p.text), key);
+    return w;
+}
+
+// Estrellitas de píxel que titilan alrededor del logo de la barra lateral.
+void DrawSidebarStars(ImDrawList* d, float width) {
+    const Palette& p = P();
+    struct Star {
+        float x, y, size, phase;
+    };
+    static const Star kStars[] = {
+        {0.18f, 28.0f, 3.0f, 0.0f}, {0.80f, 40.0f, 2.0f, 1.7f}, {0.30f, 104.0f, 2.0f, 3.1f},
+        {0.86f, 96.0f, 3.0f, 4.4f}, {0.08f, 70.0f, 2.0f, 2.2f}, {0.68f, 18.0f, 2.0f, 5.3f},
+    };
+    const float t = static_cast<float>(ImGui::GetTime());
+    for (const Star& s : kStars) {
+        const float a = 0.12f + 0.22f * (0.5f + 0.5f * std::sin(t * 1.3f + s.phase));
+        const float px = std::floor(width * s.x);
+        const float py = std::floor(S(s.y));
+        const float sz = std::floor(S(s.size));
+        d->AddRectFilled(ImVec2(px, py), ImVec2(px + sz, py + sz), Col(p.text, a));
+    }
+}
+
+// Tarjeta de "Consejo" en la barra lateral: cambia sola cada 9 segundos.
+void DrawSidebarTip(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    static const char* const kTips[] = {"tip.menu", "tip.tab", "tip.unload", "tip.skins", "tip.view", "tip.zoom", "tip.language"};
+    constexpr int kCount = static_cast<int>(sizeof(kTips) / sizeof(kTips[0]));
+    constexpr double kEvery = 9.0;
+    const double t = ImGui::GetTime();
+    const int index = static_cast<int>(t / kEvery) % kCount;
+    const float local = static_cast<float>(std::fmod(t, kEvery));
+    const float fade = std::clamp(std::min(local / 0.5f, (static_cast<float>(kEvery) - local) / 0.5f), 0.0f, 1.0f);
+    d->AddRectFilled(min, max, Col(p.card), S(12.0f));
+    d->AddRect(min, max, Col(p.border), S(12.0f));
+    // un brillo suave arriba
+    Glow(d, min, ImVec2(max.x, min.y + (max.y - min.y) * 0.6f), p.text, 0.05f, S(12.0f));
+    const ImVec2 ic(min.x + S(22.0f), min.y + S(22.0f));
+    icons::Draw(d, kIconStar, ic, S(13.0f), Col(p.text, 0.85f));
+    Text(d, g_fonts.tiny, ImVec2(ic.x + S(14.0f), ic.y - g_fonts.tiny->FontSize * 0.5f), Col(p.textDim), T("tip.title"));
+    const float textW = max.x - min.x - S(28.0f);
+    d->AddText(g_fonts.regular, g_fonts.regular->FontSize, ImVec2(min.x + S(14.0f), min.y + S(40.0f)), Col(p.text, fade),
+               T(kTips[index]), nullptr, textW);
+    // puntitos: cuál consejo es
+    const float dotsW = kCount * S(9.0f);
+    float dx = min.x + (max.x - min.x - dotsW) * 0.5f + S(3.0f);
+    for (int i = 0; i < kCount; ++i) {
+        d->AddCircleFilled(ImVec2(dx, max.y - S(12.0f)), S(2.2f), Col(p.text, i == index ? 0.8f : 0.18f));
+        dx += S(9.0f);
+    }
+}
+
+// --- Add-ons: los paquetes instalados en Minecraft ---------------------------------------
+struct InstalledPack {
+    std::string name;
+    std::string version;
+    int kind = 0;  // 0 = recursos, 1 = comportamiento, 2 = skins
+};
+std::vector<InstalledPack> g_packs;
+int g_packCount[3]{};
+bool g_packsScanned = false;
+float g_packScroll = 0.0f;
+
+fs::path MojangDir() {
+    PWSTR raw = nullptr;
+    fs::path path;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &raw)) && raw) {
+        path = fs::path(raw) / L"Minecraft Bedrock" / L"Users" / L"Shared" / L"games" / L"com.mojang";
+    }
+    CoTaskMemFree(raw);
+    return path;
+}
+
+// Lee las carpetas de paquetes (solo leer: Luma no toca tus paquetes).
+void ScanPacks() {
+    g_packsScanned = true;
+    g_packs.clear();
+    for (int& c : g_packCount) c = 0;
+    const fs::path base = MojangDir();
+    const wchar_t* folders[3] = {L"resource_packs", L"behavior_packs", L"skin_packs"};
+    std::error_code ec;
+    for (int kind = 0; kind < 3; ++kind) {
+        const fs::path dir = base / folders[kind];
+        if (!fs::is_directory(dir, ec)) continue;
+        for (const fs::directory_entry& e : fs::directory_iterator(dir, ec)) {
+            if (!e.is_directory(ec)) continue;
+            const nlohmann::json manifest = ReadJson(e.path() / L"manifest.json");
+            InstalledPack pack;
+            pack.kind = kind;
+            if (manifest.is_object() && manifest.contains("header") && manifest["header"].is_object()) {
+                const nlohmann::json& h = manifest["header"];
+                pack.name = h.value("name", std::string());
+                if (h.contains("version") && h["version"].is_array() && h["version"].size() == 3) {
+                    char v[32];
+                    std::snprintf(v, sizeof(v), "%d.%d.%d", h["version"][0].get<int>(), h["version"][1].get<int>(),
+                                  h["version"][2].get<int>());
+                    pack.version = v;
+                }
+            }
+            // Si el nombre es una clave de traducción ("pack.name") o está vacío, el de la carpeta.
+            if (pack.name.empty() || pack.name.rfind("pack.", 0) == 0) {
+                const std::u8string folder = e.path().filename().u8string();
+                pack.name.assign(folder.begin(), folder.end());
+            }
+            g_packs.push_back(std::move(pack));
+            ++g_packCount[kind];
+            if (g_packs.size() >= 500) break;
+        }
+    }
+    std::sort(g_packs.begin(), g_packs.end(), [](const InstalledPack& a, const InstalledPack& b) {
+        return a.kind != b.kind ? a.kind < b.kind : a.name < b.name;
+    });
+}
+
+const char* PackIcon(int kind) {
+    return kind == 0 ? kIconAddons : kind == 1 ? kIconSliders : kIconSkins;
+}
+
+void DrawAddonsPage(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    if (!g_packsScanned) ScanPacks();
+    // Encabezado
+    Text(d, g_fonts.title, ImVec2(min.x + S(4.0f), min.y + S(2.0f)), C(p.text), T("nav.addons"));
+    Text(d, g_fonts.tiny, ImVec2(min.x + S(4.0f), min.y + S(6.0f) + g_fonts.title->FontSize), C(p.textDim), T("addons.subtitle"));
+    const char* openLabel = T("addons.open");
+    const float openW = TextSize(g_fonts.semibold, openLabel).x + S(32.0f);
+    if (Button("##addons_open", ImVec2(max.x - openW, min.y + S(4.0f)), openLabel, true)) {
+        OpenFolder(MojangDir());
+    }
+    const char* refreshLabel = T("addons.refresh");
+    const float refreshW = TextSize(g_fonts.semibold, refreshLabel).x + S(32.0f);
+    if (Button("##addons_refresh", ImVec2(max.x - openW - S(10.0f) - refreshW, min.y + S(4.0f)), refreshLabel, false)) {
+        ScanPacks();
+    }
+
+    // Tres cifras: cuántos paquetes de cada tipo.
+    const float gap = S(kGap);
+    const float top = min.y + S(66.0f);
+    const float tileH = S(92.0f);
+    const float tileW = (max.x - min.x - gap * 2.0f) / 3.0f;
+    const char* labels[3] = {T("addons.resource"), T("addons.behavior"), T("addons.skin")};
+    for (int i = 0; i < 3; ++i) {
+        const ImVec2 tmin(min.x + i * (tileW + gap), top);
+        const ImVec2 tmax(tmin.x + tileW, top + tileH);
+        Card(d, tmin, tmax);
+        Glow(d, tmin, ImVec2(tmax.x, tmin.y + tileH * 0.7f), p.text, 0.045f, S(kRound));
+        const ImVec2 ic(tmin.x + S(46.0f), tmin.y + tileH * 0.5f);
+        d->AddCircleFilled(ic, S(24.0f), C(p.background));
+        icons::Draw(d, PackIcon(i), ic, S(22.0f), C(p.text), S(1.7f));
+        char number[16];
+        std::snprintf(number, sizeof(number), "%d", g_packCount[i]);
+        Text(d, g_fonts.title, ImVec2(ic.x + S(40.0f), ic.y - g_fonts.title->FontSize * 0.82f), C(p.text), number);
+        Text(d, g_fonts.tiny, ImVec2(ic.x + S(40.0f), ic.y + S(6.0f)), C(p.textDim), labels[i]);
+    }
+
+    // Abajo: la lista (izquierda) y lo que viene (derecha).
+    const float listTop = top + tileH + gap;
+    const float sideW = std::clamp((max.x - min.x) * 0.3f, S(260.0f), S(360.0f));
+    const ImVec2 lmin(min.x, listTop);
+    const ImVec2 lmax(max.x - sideW - gap, max.y);
+    Card(d, lmin, lmax);
+    SectionTitle(d, ImVec2(lmin.x + S(20.0f), lmin.y + S(18.0f)), T("addons.installed"));
+    const ImVec2 areaMin(lmin.x + S(12.0f), lmin.y + S(54.0f));
+    const ImVec2 areaMax(lmax.x - S(12.0f), lmax.y - S(10.0f));
+    const float rowH = S(48.0f);
+    if (g_packs.empty()) {
+        const char* empty = T("addons.empty");
+        const ImVec2 es = TextSize(g_fonts.regular, empty);
+        Text(d, g_fonts.regular, ImVec2((areaMin.x + areaMax.x - es.x) * 0.5f, (areaMin.y + areaMax.y - es.y) * 0.5f), C(p.textDim),
+             empty);
+    } else {
+        // Scroll con la rueda, suave.
+        const float content = g_packs.size() * rowH;
+        const float maxScroll = std::max(0.0f, content - (areaMax.y - areaMin.y));
+        static float target = 0.0f;
+        if (ImGui::IsMouseHoveringRect(areaMin, areaMax)) target -= ImGui::GetIO().MouseWheel * rowH * 2.0f;
+        target = std::clamp(target, 0.0f, maxScroll);
+        g_packScroll += (target - g_packScroll) * std::min(1.0f, Dt() * 14.0f);
+        d->PushClipRect(areaMin, areaMax, true);
+        const char* kinds[3] = {T("addons.kind_resource"), T("addons.kind_behavior"), T("addons.kind_skin")};
+        for (std::size_t i = 0; i < g_packs.size(); ++i) {
+            const float y = areaMin.y + i * rowH - g_packScroll;
+            if (y + rowH < areaMin.y || y > areaMax.y) continue;
+            const InstalledPack& pk = g_packs[i];
+            if (i % 2 == 0) d->AddRectFilled(ImVec2(areaMin.x, y), ImVec2(areaMax.x, y + rowH - S(4.0f)), C(p.background, 0.55f), S(10.0f));
+            const ImVec2 ic(areaMin.x + S(24.0f), y + (rowH - S(4.0f)) * 0.5f);
+            icons::Draw(d, PackIcon(pk.kind), ic, S(18.0f), C(p.textDim), S(1.6f));
+            // tipo (chip) y versión a la derecha
+            const ImVec2 ks = TextSize(g_fonts.tiny, kinds[pk.kind]);
+            const float chipX = areaMax.x - S(14.0f) - ks.x - S(16.0f) - (pk.version.empty() ? 0.0f : S(70.0f));
+            d->AddRectFilled(ImVec2(chipX, ic.y - S(11.0f)), ImVec2(chipX + ks.x + S(16.0f), ic.y + S(11.0f)), C(p.cardHover), S(11.0f));
+            Text(d, g_fonts.tiny, ImVec2(chipX + S(8.0f), ic.y - ks.y * 0.5f), C(p.textDim), kinds[pk.kind]);
+            if (!pk.version.empty()) {
+                const ImVec2 vs = TextSize(g_fonts.tiny, pk.version.c_str());
+                Text(d, g_fonts.tiny, ImVec2(areaMax.x - S(14.0f) - vs.x, ic.y - vs.y * 0.5f), C(p.textDim), pk.version.c_str());
+            }
+            TextFit(d, g_fonts.semibold, ImVec2(ic.x + S(22.0f), ic.y - g_fonts.semibold->FontSize * 0.5f), C(p.text), pk.name.c_str(),
+                    chipX - ic.x - S(34.0f));
+        }
+        d->PopClipRect();
+    }
+
+    // Lo que viene en Add-ons.
+    const ImVec2 smin(max.x - sideW, listTop);
+    Card(d, smin, max);
+    Glow(d, smin, ImVec2(max.x, smin.y + S(140.0f)), p.text, 0.05f, S(kRound));
+    SectionTitle(d, ImVec2(smin.x + S(20.0f), smin.y + S(18.0f)), T("soon.title"));
+    // el logo de Luma, grande y tenue, al pie de la tarjeta
+    icons::Draw(d, icons::kLumaLogo, ImVec2((smin.x + max.x) * 0.5f, max.y - S(90.0f)), S(110.0f), C(p.text, 0.05f));
+    const char* soon[] = {"addons.soon1", "addons.soon2", "addons.soon3", "addons.soon4"};
+    float y = smin.y + S(62.0f);
+    for (const char* key : soon) {
+        d->AddCircleFilled(ImVec2(smin.x + S(30.0f), y + S(9.0f)), S(9.0f), C(p.background));
+        icons::Draw(d, kIconCheck, ImVec2(smin.x + S(30.0f), y + S(9.0f)), S(11.0f), C(p.textDim), S(1.8f));
+        y += TextWrap(d, g_fonts.regular, ImVec2(smin.x + S(48.0f), y), C(p.text), T(key), max.x - smin.x - S(66.0f)) + S(16.0f);
+    }
+}
+
+// --- Skins: cómo ponerla en el juego -------------------------------------------------------
+void DrawSkinGuide(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(16.0f)), T("skins.guide_title"));
+    const char* steps[3] = {T("skins.guide1"), T("skins.guide2"), T("skins.guide3")};
+    const float stepW = (max.x - min.x - S(40.0f)) / 3.0f;
+    for (int i = 0; i < 3; ++i) {
+        const float x = min.x + S(20.0f) + i * stepW;
+        const ImVec2 c(x + S(15.0f), min.y + S(68.0f));
+        d->AddCircleFilled(c, S(15.0f), C(p.accent));
+        char n[4];
+        std::snprintf(n, sizeof(n), "%d", i + 1);
+        const ImVec2 ns = TextSize(g_fonts.semibold, n);
+        Text(d, g_fonts.semibold, ImVec2(c.x - ns.x * 0.5f, c.y - ns.y * 0.5f), C(p.onAccent), n);
+        if (i < 2) d->AddLine(ImVec2(c.x + S(22.0f), c.y), ImVec2(x + stepW - S(8.0f), c.y), C(p.border), S(1.5f));
+        TextWrap(d, g_fonts.tiny, ImVec2(x, c.y + S(24.0f)), C(p.textDim), steps[i], stepW - S(16.0f));
+    }
+}
+
+// --- Ajustes: atajos y enlaces ------------------------------------------------------------
+void DrawSettingsShortcuts(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("settings.shortcuts"));
+    struct Shortcut {
+        const char* key;
+        const char* text;
+    };
+    const Shortcut items[] = {
+        {"L", "shortcut.menu"}, {T("shortcut.end_key"), "shortcut.unload"}, {"Tab", "shortcut.tab"}, {"C", "shortcut.zoom"},
+    };
+    const float colW = (max.x - min.x - S(44.0f)) * 0.5f;
+    for (int i = 0; i < 4; ++i) {
+        const float x = min.x + S(22.0f) + (i % 2) * colW;
+        const float y = min.y + S(52.0f) + (i / 2) * S(40.0f);
+        const float kw = KeyCap(d, ImVec2(x, y), items[i].key);
+        TextFit(d, g_fonts.regular, ImVec2(x + kw + S(12.0f), y + (S(32.0f) - g_fonts.regular->FontSize) * 0.5f), C(p.text),
+                T(items[i].text), colW - kw - S(24.0f));
+    }
+}
+
+void DrawSettingsLinks(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("settings.links"));
+    float x = min.x + S(22.0f);
+    float y = min.y + S(52.0f);
+    float w = 0.0f;
+    if (Button("##link_github", ImVec2(x, y), "GitHub", false, &w)) OpenUrl(L"https://github.com/IAOcd/Luma");
+    x += w + S(10.0f);
+    const char* issues = T("settings.report");
+    if (x + TextSize(g_fonts.semibold, issues).x + S(32.0f) > max.x - S(22.0f)) {
+        x = min.x + S(22.0f);
+        y += S(46.0f);
+    }
+    if (Button("##link_issues", ImVec2(x, y), issues, false, &w)) OpenUrl(L"https://github.com/IAOcd/Luma/issues");
+    TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(22.0f), y + S(50.0f)), C(p.textDim), T("settings.license"),
+             max.x - min.x - S(44.0f));
+}
+
 void DrawSidebar(ImDrawList* d, ImVec2 display, const account::Info& acc, const LocalData& data) {
     const Palette& p = P();
     const float width = S(kSidebarWidth);
     d->AddRectFilled(ImVec2(0, 0), ImVec2(width, display.y), Col(p.sidebar));
     d->AddLine(ImVec2(width, 0), ImVec2(width, display.y), Col(p.border));
 
+    DrawSidebarStars(d, width);
     // Logo + "LUMA"
     const float logoSize = S(46.0f);
     const ImVec2 logoCenter(width * 0.5f, S(62.0f));
@@ -629,6 +938,10 @@ void DrawSidebar(ImDrawList* d, ImVec2 display, const account::Info& acc, const 
 
     // Perfil (abajo): clic = ir a Ajustes (donde está la cuenta)
     const float py = display.y - S(78.0f);
+    // Un consejo arriba del perfil (si hay lugar).
+    if (py - S(150.0f) > y + S(16.0f)) {
+        DrawSidebarTip(d, ImVec2(S(14.0f), py - S(146.0f)), ImVec2(width - S(14.0f), py - S(16.0f)));
+    }
     d->AddLine(ImVec2(S(18.0f), py), ImVec2(width - S(18.0f), py), Col(p.border));
     float hover = 0.0f;
     if (Hit("##profile", ImVec2(S(10.0f), py + S(8.0f)), ImVec2(width - S(10.0f), display.y - S(8.0f)), &hover)) {
@@ -1556,6 +1869,12 @@ void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& ac
     const float accountH = S(220.0f);
     DrawSettingsAccount(d, ImVec2(rightX, min.y), ImVec2(max.x, min.y + accountH), acc, data);
     DrawSettingsAbout(d, ImVec2(rightX, min.y + accountH + gap), ImVec2(max.x, min.y + generalH + gap + foldersH));
+    const float rowY = min.y + generalH + gap + foldersH + gap;
+    const float rowH = std::min(S(170.0f), max.y - rowY);
+    if (rowH > S(120.0f)) {
+        DrawSettingsShortcuts(d, ImVec2(min.x, rowY), ImVec2(min.x + leftW, rowY + rowH));
+        DrawSettingsLinks(d, ImVec2(rightX, rowY), ImVec2(max.x, rowY + rowH));
+    }
 }
 
 // Pantalla de "Actualizando Luma..." (tapa todo mientras baja e instala).
@@ -1888,7 +2207,9 @@ void DrawSkinsPage(ImDrawList* d, ImVec2 min, ImVec2 max) {
     const float gap = S(kGap);
     const float showW = std::clamp((max.x - min.x) * 0.38f, S(320.0f), S(520.0f));
     DrawShowcase(d, ImVec2(min.x, top), ImVec2(min.x + showW, max.y));
-    DrawWardrobe(d, ImVec2(min.x + showW + gap + S(4.0f), top + S(4.0f)), ImVec2(max.x - S(12.0f), max.y));
+    const float guideH = S(140.0f);
+    DrawWardrobe(d, ImVec2(min.x + showW + gap + S(4.0f), top + S(4.0f)), ImVec2(max.x - S(12.0f), max.y - guideH - gap));
+    DrawSkinGuide(d, ImVec2(min.x + showW + gap, max.y - guideH), max);
 }
 
 // Secciones que llegan en las próximas partes.
@@ -2119,7 +2440,7 @@ void AppFrame() {
     const ImVec2 cmax(display.x - S(kPad), display.y - S(kPad) + offset);
     switch (g_page) {
         case Page::Home: DrawHome(d, cmin, cmax, data, name); break;
-        case Page::Addons: DrawComingSoon(d, cmin, cmax, kIconAddons, "nav.addons", "soon.addons"); break;
+        case Page::Addons: DrawAddonsPage(d, cmin, cmax); break;
         case Page::Skins: DrawSkinsPage(d, cmin, cmax); break;
         case Page::Settings: DrawSettings(d, cmin, cmax, acc, data); break;
     }

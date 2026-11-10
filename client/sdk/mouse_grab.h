@@ -67,6 +67,8 @@ void OnMenuClosed();
 //  -1 = no se sabe (firmas no encontradas o todavía no se vio el objeto).
 int GameMouseState();
 
+// El objeto "cliente" del juego (ClientInstance), o nullptr si todavía no se vio.
+void* Client();
 void BeginUnload();
 
 }  // namespace luma::sdk::mouse

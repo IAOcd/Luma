@@ -1,7 +1,8 @@
 // =============================================================================
 //  theme.h - Tema visual de Luma (configurable)
 // =============================================================================
-//  Identidad de Luma (del logo): carbón #25282B sobre marfil cálido #E9E6DF.
+//  Identidad de Luma (del logo): carbón #25282B y marfil cálido #E9E6DF. Lo
+//  que está "encendido" se ilumina con el marfil (oscuro) o el carbón (claro).
 //
 //  Estilo "liquid glass": paneles de vidrio que dejan ver el juego desenfocado
 //  detrás, con un tinte, un brillo arriba y un borde que capta la luz. Hay dos
@@ -25,15 +26,16 @@ struct Settings {
     // Acento: por defecto ("automático") es el color de Luma que contrasta con
     // el estilo (marfil en oscuro, carbón en claro). Se puede elegir otro.
     bool accentAuto = true;
-    float accent[3] = {0.914f, 0.902f, 0.875f};  // #E9E6DF
+    float accent[3] = {0.914f, 0.902f, 0.875f};  // #E9E6DF (el marfil del logo)
     float glassOpacity = 0.55f;   // cuánto tinte tiene el vidrio (0 = transparente)
     float blur = 0.75f;           // cuánto se desenfoca el juego detrás (0..1)
-    float rounding = 18.0f;       // esquinas, en píxeles a 1080p
+    float rounding = 12.0f;       // esquinas, en píxeles a 1080p
     float fontSize = 18.0f;       // en píxeles a 1080p (se escala con la resolución)
     bool animations = true;
     bool sounds = true;           // efectos de sonido del menú
     float soundVolume = 0.6f;     // 0..1
-    float backgroundDim = 0.25f;  // cuánto se oscurece el juego detrás del menú (0..0.8)
+    float backgroundDim = 0.30f;  // cuánto se oscurece el juego detrás del menú (0..0.8)
+    int moduleView = 0;           // cómo se ven los módulos: 0 = bloques, 1 = lista (apilados)
 };
 
 Settings& Get();

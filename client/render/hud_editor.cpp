@@ -2,6 +2,7 @@
 //  hud_editor.cpp - Implementación del editor de HUD
 // =============================================================================
 #include "render/hud_editor.h"
+#include "core/tr.h"
 
 #include <imgui.h>
 
@@ -59,7 +60,7 @@ Module* CornerHitTest(ImVec2 mouse, float radius, int& corner) {
     const auto& list = Manager::ActiveHud();
     for (auto it = list.rbegin(); it != list.rend(); ++it) {
         Module* m = *it;
-        if (!m->IsHudElement()) {
+        if (!m->IsHudElement() || !m->CanScale()) {
             continue;
         }
         for (int c = 0; c < 4; ++c) {
@@ -163,17 +164,17 @@ void DrawToolbar(ImVec2 display) {
     if (ImGui::Begin("##hud_editor_toolbar", nullptr, kFlags)) {
         glass::Panel(ImGui::GetWindowDrawList(), g_toolbarMin, g_toolbarMax, theme::Get().rounding, 1.0f);
         ImGui::PushFont(theme::GetFonts().medium);
-        ImGui::TextUnformatted("Editor de HUD");
+        ImGui::TextUnformatted(Tr("Editor de HUD"));
         ImGui::PopFont();
-        ImGui::TextDisabled("Arrastra para mover · esquinas o rueda: tamaño · clic derecho: opciones · Shift: sin imanes");
+        ImGui::TextDisabled("%s", Tr("Arrastra para mover · esquinas o rueda: tamaño · clic derecho: opciones · Shift: sin imanes"));
 
         const float buttonsWidth = fs * 15.5f;
         ImGui::SetCursorPos(ImVec2(size.x - buttonsWidth - fs * 0.9f, (size.y - ImGui::GetFrameHeight()) * 0.5f));
-        if (ImGui::Checkbox("Imanes", &g_snapping)) {
+        if (ImGui::Checkbox(Tr("Imanes"), &g_snapping)) {
             sound::Play(sound::Effect::Click);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Restablecer")) {
+        if (ImGui::Button(Tr("Restablecer"))) {
             for (Module* m : Manager::ActiveHud()) {
                 Manager::ResetLayout(*m);
             }
@@ -184,7 +185,7 @@ void DrawToolbar(ImVec2 display) {
         ImGui::PushStyleColor(ImGuiCol_Button, theme::Accent(1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::Accent(0.85f));
         ImGui::PushStyleColor(ImGuiCol_Text, theme::P().onAccentText);
-        if (ImGui::Button("  Listo  ")) {
+        if (ImGui::Button(Tr("  Listo  "))) {
             End();
         }
         ImGui::PopStyleColor(3);
@@ -349,7 +350,7 @@ void Draw() {
             // Clic derecho: abrir (o cerrar) su panel de opciones.
             g_panel = g_panel == hovered ? nullptr : hovered;
             sound::Play(sound::Effect::Click);
-        } else if (io.MouseWheel != 0.0f) {
+        } else if (io.MouseWheel != 0.0f && hovered->CanScale()) {
             // Saltos de 0.25: con la letra pixelada, cada salto de 0.5 es un
             // tamaño nítido nuevo.
             float& scale = hovered->Layout().scale;
@@ -400,7 +401,11 @@ void Draw() {
         if (active) {
             // Nombre y tamaño encima (o debajo, si no entra arriba).
             char label[96];
-            std::snprintf(label, sizeof(label), "%s  ·  %.0f%%", m->Name().c_str(), m->Layout().scale * 100.0f);
+            if (m->CanScale()) {
+                std::snprintf(label, sizeof(label), "%s  ·  %.0f%%", m->DisplayName(), m->Layout().scale * 100.0f);
+            } else {
+                std::snprintf(label, sizeof(label), "%s", m->DisplayName());
+            }
             const ImVec2 ts = ImGui::CalcTextSize(label);
             const float pad = ImGui::GetFontSize() * 0.35f;
             float ly = min.y - ts.y - pad * 2.0f - 2.0f;
@@ -412,7 +417,7 @@ void Draw() {
             draw->AddText(ImVec2(lx + pad, ly + pad), Col(theme::P().onAccentText), label);
             // Las 4 esquinas: cuadraditos para agarrar y cambiar el tamaño.
             const float h = 3.0f * theme::UiScale();
-            for (int c = 0; c < 4; ++c) {
+            for (int c = 0; c < 4 && m->CanScale(); ++c) {
                 const ImVec2 p = Corner(*m, c);
                 draw->AddRectFilled(ImVec2(p.x - h, p.y - h), ImVec2(p.x + h, p.y + h), Col(accent));
                 draw->AddRect(ImVec2(p.x - h, p.y - h), ImVec2(p.x + h, p.y + h), IM_COL32(255, 255, 255, 200));
@@ -426,7 +431,7 @@ void Draw() {
         draw->AddLine(ImVec2(0, g_guideY), ImVec2(display.x, g_guideY), Col(accent, 0.8f), 1.5f);
     }
     if (count == 0) {
-        const char* text = "No hay elementos del HUD activos. Activa alguno (FPS, Keystrokes...) en el menú.";
+        const char* text = Tr("No hay elementos del HUD activos. Activa alguno (FPS, Keystrokes...) en el menú.");
         const ImVec2 ts = ImGui::CalcTextSize(text);
         draw->AddText(ImVec2((display.x - ts.x) * 0.5f, display.y * 0.5f - ts.y), IM_COL32(255, 255, 255, 220), text);
     }

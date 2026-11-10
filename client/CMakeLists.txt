@@ -18,12 +18,17 @@ add_library(Luma SHARED
     core/luma.cpp
     core/paths.cpp
     core/stats.cpp
+    core/tr.cpp                             # traducciones de los textos del juego
+    core/cloud.cpp                          # hablar con el servidor de Luma (usuarios de Luma)
+    ${PROJECT_SOURCE_DIR}/shared/skin_pack.cpp  # tus skins como paquete del juego
     ${PROJECT_SOURCE_DIR}/shared/i18n.cpp   # textos en inglés, español y portugués (los mismos del launcher)
     modules/module_manager.cpp
     modules/registry.cpp
     modules/hud/hud_modules.cpp
     modules/hud/inventory_hud.cpp
     modules/hud/paperdoll.cpp
+    modules/hud/player_list.cpp
+    modules/hud/scoreboard.cpp
     modules/hud/player_hud.cpp
     modules/hud/watermark.cpp
     modules/performance/perf_overlay.cpp
@@ -63,10 +68,13 @@ add_library(Luma SHARED
     sdk/inventory.cpp
     sdk/memory.cpp
     sdk/paperdoll.cpp
+    sdk/hud_ui.cpp
+    sdk/watch.cpp                           # diagnóstico: quién escribe en una dirección
     sdk/skin.cpp
     sdk/mouse_queue.cpp
     sdk/network.cpp
     sdk/player.cpp
+    sdk/players.cpp
     sdk/scanner.cpp
     # Recursos incrustados en la DLL (el logo). Visual Studio compila los .rc solo.
     assets/luma.rc
@@ -88,4 +96,6 @@ target_link_libraries(Luma PRIVATE
     d3dcompiler               # compilar el shader del desenfoque
     winmm                     # timeBeginPeriod (optimización "Timer de 1 ms")
     powrprof                  # leer el plan de energía (consejos de Windows)
+    winhttp                   # HTTPS al servidor de Luma (core/cloud.cpp)
+    crypt32                   # DPAPI: abrir el pase de Luma cifrado
 )

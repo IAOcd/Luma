@@ -25,6 +25,7 @@
 #pragma once
 
 #include <imgui.h>
+#include "core/tr.h"
 #include <nlohmann/json.hpp>
 
 #include <string>
@@ -83,6 +84,9 @@ public:
     const std::string& Id() const { return id_; }
     const std::string& Name() const { return name_; }
     const std::string& Description() const { return description_; }
+    // El nombre y la descripción en el idioma elegido (ver core/tr.h).
+    const char* DisplayName() const { return Tr(name_.c_str()); }
+    const char* DisplayDescription() const { return Tr(description_.c_str()); }
     Category GetCategory() const { return category_; }
 
     bool IsEnabled() const { return enabled_; }
@@ -116,6 +120,9 @@ public:
     // ¿Es un "elemento" del HUD que se puede mover y escalar con el editor?
     // (La mira, por ejemplo, dibuja pero siempre en el centro: no lo es.)
     virtual bool IsHudElement() const { return HasHud(); }
+    // ¿Se le puede cambiar el tamaño en el editor de HUD? (No, por ejemplo, si
+    // lo dibuja el juego y Luma solo lo mueve, como el scoreboard.)
+    virtual bool CanScale() const { return true; }
     // Dibuja su parte del HUD (dentro de un frame de ImGui) con su esquina
     // superior izquierda en frame.pos, y devuelve el tamaño que ocupó (el
     // editor lo usa para saber dónde está y el gestor para ubicarlo).

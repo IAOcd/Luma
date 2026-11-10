@@ -2,6 +2,7 @@
 //  config.cpp - Implementación de la configuración
 // =============================================================================
 #include "core/config.h"
+#include "core/tr.h"
 
 #include <windows.h>
 
@@ -155,13 +156,13 @@ void LoadProfile(const std::string& name) {
     const fs::path path = ProfilePath(name);
     if (ReadJson(path, data, corrupt)) {
         if (!ApplyProfileJson(data)) {
-            notify::Push(notify::Kind::Warning, "La config tenía valores inválidos: se usó la de fábrica");
+            notify::Push(notify::Kind::Warning, Tr("La config tenía valores inválidos: se usó la de fábrica"));
         }
         log::Info("Perfil cargado: {}", name);
     } else {
         if (corrupt) {
             BackupCorrupt(path);
-            notify::Push(notify::Kind::Warning, "Config dañada: se usó la de fábrica (hay una copia)");
+            notify::Push(notify::Kind::Warning, Tr("Config dañada: se usó la de fábrica (hay una copia)"));
         }
         ApplyProfileJson(json::object());
         log::Info("Perfil {} sin archivo: valores de fábrica.", name);
@@ -278,7 +279,7 @@ bool SwitchProfile(const std::string& name) {
     WriteJsonAtomic(ProfilePath(g_activeProfile), BuildProfileJson());
     LoadProfile(name);
     WriteActiveProfileName();
-    notify::Push(notify::Kind::Info, std::format("Perfil: {}", name));
+    notify::Push(notify::Kind::Info, TrFormat("Perfil: {}", name));
     return true;
 }
 
@@ -288,18 +289,18 @@ bool CreateProfile(const std::string& name) {
     }
     std::error_code ec;
     if (fs::exists(ProfilePath(name), ec)) {
-        notify::Push(notify::Kind::Warning, "Ya existe un perfil con ese nombre");
+        notify::Push(notify::Kind::Warning, Tr("Ya existe un perfil con ese nombre"));
         return false;
     }
     WriteJsonAtomic(ProfilePath(g_activeProfile), BuildProfileJson());
     // El nuevo perfil empieza como copia del actual.
     if (!WriteJsonAtomic(ProfilePath(name), BuildProfileJson())) {
-        notify::Push(notify::Kind::Error, "No se pudo crear el perfil");
+        notify::Push(notify::Kind::Error, Tr("No se pudo crear el perfil"));
         return false;
     }
     g_activeProfile = name;
     WriteActiveProfileName();
-    notify::Push(notify::Kind::Success, std::format("Perfil creado: {}", name));
+    notify::Push(notify::Kind::Success, TrFormat("Perfil creado: {}", name));
     return true;
 }
 
@@ -310,7 +311,7 @@ bool DeleteProfile(const std::string& name) {
     std::error_code ec;
     const bool removed = fs::remove(ProfilePath(name), ec);
     if (removed) {
-        notify::Push(notify::Kind::Info, std::format("Perfil borrado: {}", name));
+        notify::Push(notify::Kind::Info, TrFormat("Perfil borrado: {}", name));
     }
     return removed;
 }
@@ -318,7 +319,7 @@ bool DeleteProfile(const std::string& name) {
 void ResetActiveProfile() {
     ApplyProfileJson(json::object());
     MarkDirty();
-    notify::Push(notify::Kind::Info, "Perfil restablecido a los valores de fábrica");
+    notify::Push(notify::Kind::Info, Tr("Perfil restablecido a los valores de fábrica"));
 }
 
 }  // namespace luma::config

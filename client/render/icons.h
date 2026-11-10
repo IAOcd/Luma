@@ -63,6 +63,9 @@ inline constexpr const char* kLumaLogo =
     "C8.5 14.4 9.6 14.3 10.4 13.6 C11.6 12.4 12.8 11.6 14.4 11.6 C16.2 11.6 17.4 12.8 18.2 14.0 "
     "C18.6 14.5 19.0 14.2 19.6 14.0 C21.0 13.7 22.2 14.9 22.1 16.4 C22.0 18.3 20.4 19.4 18.6 18.4 "
     "C16.6 17.3 14.6 16.3 12.4 16.6 C10.0 16.9 8.6 18.6 5.8 18.6 C3.6 18.6 2.3 17.1 2.3 15.0 Z";
+// Vista de lista (módulos apilados) y casa (volver al inicio radial).
+inline constexpr const char* kList = "M4 6h16 M4 12h16 M4 18h16";
+inline constexpr const char* kHome = "M4 11L12 4L20 11 M6 9.5V20h12V9.5 M10 20v-5h4v5";
 inline constexpr const char* kCheck = "M5 12.5l4.5 4.5L19 7.5";
 inline constexpr const char* kClose = "M6 6l12 12 M18 6L6 18";
 inline constexpr const char* kKey =

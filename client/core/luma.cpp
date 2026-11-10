@@ -45,9 +45,12 @@
 #include "sdk/mouse_queue.h"
 #include "sdk/camera.h"
 #include "sdk/draw3d.h"
+#include "sdk/hud_ui.h"
 #include "sdk/paperdoll.h"
 #include <nlohmann/json.hpp>
 
+#include "core/cloud.h"
+#include "core/tr.h"
 #include "core/stats.h"
 #include "i18n.h"
 #include "render/skin_heads.h"
@@ -166,7 +169,7 @@ bool Startup(HMODULE module) {
     // dibuja en cuanto llega el primer frame, en paralelo con este hilo).
     render::loading::Begin();
     render::assets::Decode();  // el logo (se sube a la GPU en el próximo frame)
-    render::loading::SetStep("Cargando la configuración...", 0.10f);
+    render::loading::SetStep(Tr("Cargando la configuración..."), 0.10f);
 
     // --- Módulos y configuración (Fase 3) --------------------------------------
     // Primero se crean los módulos (todos desactivados) y después la config
@@ -200,14 +203,14 @@ bool Startup(HMODULE module) {
                                                  "Buscando funciones del juego (4/5)...",
                                                  "Buscando funciones del juego (5/5)...",
                                                  "Conectando con el juego..."};
-            render::loading::SetStep(kSteps[std::min(step, 5)],
+            render::loading::SetStep(Tr(kSteps[std::min(step, 5)]),
                                      0.2f + 0.7f * static_cast<float>(step) / static_cast<float>(total));
         });
     }
     // La cola de acciones del mouse: lo que de verdad le impide al juego
     // recibir clics y movimiento con el menú abierto (ver sdk/mouse_queue.h).
     if (g_hooksReady) {
-        render::loading::SetStep("Conectando con el mouse del juego...", 0.95f);
+        render::loading::SetStep(Tr("Conectando con el mouse del juego..."), 0.95f);
         sdk::mousequeue::Init();
         // El jugador local (Fase 6): se captura al mover el mouse en un mundo.
         sdk::player::Init();
@@ -215,14 +218,16 @@ bool Startup(HMODULE module) {
         sdk::camera::Init();   // brillo, perspectiva, cámara (Fase 8)
         sdk::draw3d::Init();   // dibujar dentro del mundo (contorno, hitboxes)
         sdk::paperdoll::Init();  // mover el muñeco del HUD del juego
+        sdk::hudui::Init();      // scoreboard movible sin titilar (UIControl::updatePos)
         std::lock_guard lock(StateMutex());
         modules::Manager::DisableUnavailable();
     }
     render::loading::Finish();
     stats::Begin();  // una sesión más (para el launcher)
+    cloud::Start();  // "estoy usando Luma" + quién más lo usa (en su propio hilo)
 
     const std::string menuKey = keys::Name(config::g_menuKey.load());
-    notify::Push(notify::Kind::Info, std::format("{} cargado · pulsa {} para abrir el menú", kName, menuKey));
+    notify::Push(notify::Kind::Info, TrFormat("{} cargado · pulsa {} para abrir el menú", kName, menuKey));
     log::Info("Listo. Menú: {}. Descargar: {} (con el juego en primer plano).", menuKey,
               keys::Name(config::g_unloadKey.load()));
     return true;
@@ -307,6 +312,7 @@ void Shutdown() {
         config::SaveNow();
     }
     stats::End();
+    cloud::Stop();
     sdk::camera::BeginUnload();
     sdk::paperdoll::BeginUnload();  // el muñeco vuelve a su lugar
     sdk::network::BeginUnload();

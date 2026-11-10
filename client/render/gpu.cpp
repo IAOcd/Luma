@@ -42,6 +42,7 @@ std::vector<ComPtr<ID3D12Resource>> g_textures;  // las mantenemos vivas
 // --- Desenfoque ----------------------------------------------------------------------
 ComPtr<ID3D12RootSignature> g_rootSignature;
 ComPtr<ID3D12PipelineState> g_pipeline;
+ComPtr<ID3D12PipelineState> g_downPipeline;  // achicar a 1/4 promediando (antes del desenfoque)
 ComPtr<ID3D12PipelineState> g_postPipeline;  // post-procesado (formato del back buffer)
 UINT g_sceneWidth = 0;
 UINT g_sceneHeight = 0;
@@ -58,9 +59,9 @@ bool g_blurActive = false;  // ¿se desenfoca en este frame?
 // El shader del desenfoque, en HLSL.
 //  - VSMain dibuja un triángulo que cubre toda la pantalla (sin necesitar
 //    vértices: los calcula a partir de su número 0, 1, 2).
-//  - PSMain, por cada píxel, promedia 5 muestras de la textura a lo largo de
+//  - PSMain, por cada píxel, promedia 9 muestras de la textura a lo largo de
 //    una dirección (horizontal o vertical), con pesos de una curva gaussiana.
-//    Gracias al filtrado bilineal de la GPU, esas 5 muestras equivalen a 9.
+//    Gracias al filtrado bilineal de la GPU, esas 9 muestras equivalen a 17.
 constexpr const char* kBlurShader = R"(
 cbuffer Params : register(b0) { float2 texel; float2 dir; };
 Texture2D source : register(t0);
@@ -75,14 +76,31 @@ VSOut VSMain(uint id : SV_VertexID) {
     return o;
 }
 
+// 9 muestras bilineales = una campana (gaussiana) de 17 píxeles, con las
+// muestras JUNTAS. (Antes eran 5 muestras muy separadas: dejaban "copias"
+// corridas de la imagen, que se veían como cuadros a través del vidrio.)
 float4 PSMain(VSOut i) : SV_Target {
     float2 d = dir * texel;
-    float3 c = source.Sample(linearClamp, i.uv).rgb * 0.2270270270;
-    c += source.Sample(linearClamp, i.uv + d * 1.3846153846).rgb * 0.3162162162;
-    c += source.Sample(linearClamp, i.uv - d * 1.3846153846).rgb * 0.3162162162;
-    c += source.Sample(linearClamp, i.uv + d * 3.2307692308).rgb * 0.0702702703;
-    c += source.Sample(linearClamp, i.uv - d * 3.2307692308).rgb * 0.0702702703;
+    float3 c = source.Sample(linearClamp, i.uv).rgb * 0.1031526;
+    c += (source.Sample(linearClamp, i.uv + d * 1.4765797).rgb + source.Sample(linearClamp, i.uv - d * 1.4765797).rgb) * 0.1910108;
+    c += (source.Sample(linearClamp, i.uv + d * 3.4455295).rgb + source.Sample(linearClamp, i.uv - d * 3.4455295).rgb) * 0.1404289;
+    c += (source.Sample(linearClamp, i.uv + d * 5.4148988).rgb + source.Sample(linearClamp, i.uv - d * 5.4148988).rgb) * 0.0807155;
+    c += (source.Sample(linearClamp, i.uv + d * 7.3849121).rgb + source.Sample(linearClamp, i.uv - d * 7.3849121).rgb) * 0.0362685;
     return float4(c, 1.0);
+}
+
+// Achicar a 1/4 SIN "parches": cada píxel chico es el promedio de los 4x4
+// píxeles grandes que tapa. Con 4 muestras bilineales (cada una ya promedia
+// 2x2) en las esquinas del bloque se cubren los 16. Sin esto, tomar un solo
+// punto de cada bloque hacía que las texturas pixeladas de Minecraft se
+// vieran como cuadros a través del vidrio.
+float4 PSDown(VSOut i) : SV_Target {
+    float2 t = texel;  // aquí: 1 / tamaño de la imagen GRANDE
+    float3 c = source.Sample(linearClamp, i.uv + float2(-t.x, -t.y)).rgb;
+    c += source.Sample(linearClamp, i.uv + float2(t.x, -t.y)).rgb;
+    c += source.Sample(linearClamp, i.uv + float2(-t.x, t.y)).rgb;
+    c += source.Sample(linearClamp, i.uv + float2(t.x, t.y)).rgb;
+    return float4(c * 0.25, 1.0);
 }
 
 // --- Post-procesado ---------------------------------------------------------
@@ -198,6 +216,14 @@ bool CreatePipeline() {
         log::Error("No se pudo crear el pipeline del desenfoque.");
         return false;
     }
+    // El mismo pipeline con el shader que achica promediando.
+    ComPtr<ID3DBlob> down = Compile("PSDown", "ps_5_0");
+    if (down) {
+        pso.PS = {down->GetBufferPointer(), down->GetBufferSize()};
+        if (FAILED(g_device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&g_downPipeline)))) {
+            g_downPipeline.Reset();  // sin él, el desenfoque funciona igual (con algo de "parches")
+        }
+    }
     return true;
 }
 
@@ -296,6 +322,7 @@ bool Init(ID3D12Device* device, ID3D12CommandQueue* queue) {
 void Shutdown() {
     DestroyBlurTargets();
     g_pipeline.Reset();
+    g_downPipeline.Reset();
     g_postPipeline.Reset();
     g_rootSignature.Reset();
     g_blurRtvHeap.Reset();
@@ -500,10 +527,29 @@ void RecordBlur(ID3D12GraphicsCommandList* list, ID3D12Resource* backBuffer, flo
     list->RSSetViewports(1, &viewport);
     list->RSSetScissorRects(1, &scissor);
 
-    const float spread = 1.0f + strength * 2.2f;            // qué tan "abierta" es cada pasada
-    const int iterations = 1 + static_cast<int>(strength * 2.0f + 0.5f);  // 1 a 3 rondas
+    // Las muestras van siempre juntas (spread 1); más desenfoque = más rondas.
+    const float spread = 1.0f;
+    const int iterations = 1 + static_cast<int>(strength * 3.0f + 0.5f);  // 1 a 4 rondas
     UINT sourceSlot = kSceneSlot;
     int target = 0;
+    if (g_downPipeline) {
+        // Primero achicar promediando, a la textura 1; el desenfoque sale de ahí.
+        // (Así, con un número par de pasadas, la última vuelve a escribir en la 1.)
+        list->SetPipelineState(g_downPipeline.Get());
+        Barrier(list, g_blur[1].Get(), g_blurState[1], D3D12_RESOURCE_STATE_RENDER_TARGET);
+        g_blurState[1] = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        const D3D12_CPU_DESCRIPTOR_HANDLE downRtv = BlurRtv(1);
+        list->OMSetRenderTargets(1, &downRtv, FALSE, nullptr);
+        list->SetGraphicsRootDescriptorTable(0, GpuSlot(kSceneSlot));
+        const float downConstants[4] = {1.0f / static_cast<float>(g_sceneWidth), 1.0f / static_cast<float>(g_sceneHeight), 0.0f, 0.0f};
+        list->SetGraphicsRoot32BitConstants(1, 4, downConstants, 0);
+        list->DrawInstanced(3, 1, 0, 0);
+        Barrier(list, g_blur[1].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        g_blurState[1] = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        list->SetPipelineState(g_pipeline.Get());
+        sourceSlot = kBlurSlots[1];
+        target = 0;
+    }
     for (int pass = 0; pass < iterations * 2; ++pass) {
         const bool horizontal = (pass % 2) == 0;
         Barrier(list, g_blur[target].Get(), g_blurState[target], D3D12_RESOURCE_STATE_RENDER_TARGET);

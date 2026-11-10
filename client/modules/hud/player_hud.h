@@ -24,8 +24,11 @@ public:
     bool DrawSettings() override;
     void SaveSettings(nlohmann::json& out) const override;
     void LoadSettings(const nlohmann::json& in) override;
+    void OnEnable() override;
+    void OnDisable() override;
 
 private:
+    bool hideVanilla_ = true; // esconder las coordenadas del juego (las de "Mostrar coordenadas")
     bool oneLine_ = false;    // "X Y Z" en una línea en vez de tres
     bool decimals_ = false;
     bool showFacing_ = true;  // "Mirando: Norte (-Z)"

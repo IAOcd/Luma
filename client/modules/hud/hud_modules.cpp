@@ -2,6 +2,7 @@
 //  hud_modules.cpp - FPS, CPS, Keystrokes y Reloj
 // =============================================================================
 #include "modules/hud/hud_modules.h"
+#include "core/tr.h"
 
 #include <windows.h>
 
@@ -253,8 +254,8 @@ ImVec2 Keystrokes::OnRenderHud(const HudFrame& frame) {
         const float height = std::floor(key * 0.83f);
         char left[16];
         char right[16];
-        std::snprintf(left, sizeof(left), "%s", mouseLabels_ == 1 ? "Izq." : "LMB");
-        std::snprintf(right, sizeof(right), "%s", mouseLabels_ == 1 ? "Der." : "RMB");
+        std::snprintf(left, sizeof(left), "%s", mouseLabels_ == 1 ? Tr("Izq.") : "LMB");
+        std::snprintf(right, sizeof(right), "%s", mouseLabels_ == 1 ? Tr("Der.") : "RMB");
         if (showCps_) {
             const int l = clicks::PerSecond(clicks::Button::Left);
             const int r = clicks::PerSecond(clicks::Button::Right);

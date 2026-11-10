@@ -33,6 +33,7 @@ add_executable(LumaLauncher WIN32
     src/gui/textures.cpp # imágenes (noticias, skins) como texturas
     src/gui/skin3d.cpp   # tu skin en 3D
     src/gui/skins.cpp    # la biblioteca de skins
+    ${PROJECT_SOURCE_DIR}/shared/skin_pack.cpp  # la biblioteca como paquete de skins del juego
     src/account.cpp      # iniciar sesión con Microsoft/Xbox (opcional)
     src/net.cpp          # pedidos HTTPS (WinHTTP)
     src/signature.cpp    # comprobar la firma de las actualizaciones

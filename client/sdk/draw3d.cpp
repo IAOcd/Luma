@@ -399,7 +399,8 @@ bool LooksLikeParams(void* params) {
 // Arma y dibuja lo nuestro con los parámetros de una llamada del juego.
 // (Función aparte para el __try: no puede tener objetos con destructor.)
 void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, void* a6, std::uintptr_t lrp,
-                 const OutlineSettings& o, const HitboxSettings& h, const int* blockPos, bool hitboxes) {
+                 const OutlineSettings& o, const HitboxSettings& h, const int* blockPos, bool hitboxes,
+                 void* fillMaterial) {
     __try {
         Frame f;
         f.sc = reinterpret_cast<std::uintptr_t>(sc);
@@ -421,20 +422,17 @@ void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, v
                 blo[i] = static_cast<float>(blockPos[i]) - 0.003f;
                 bhi[i] = static_cast<float>(blockPos[i]) + 1.003f;
             }
-            if (o.fill) {
+            if (o.fill && fillMaterial != nullptr) {
+                // Cuadrados: con el material de RELLENO de la selección (el de
+                // líneas no sirve para caras: parpadea y no rellena).
                 FilledBox(f, o.fillColor, blo, bhi);
                 std::memcpy(copy + kParamsBoundsMin, blo, sizeof(blo));
                 std::memcpy(copy + kParamsBoundsMax, bhi, sizeof(bhi));
-                g_renderMesh(sc, tess, material, copy, a5, a6);
+                g_renderMesh(sc, tess, fillMaterial, copy, a5, a6);
             }
         }
-        // 2. Líneas: el contorno y los hitboxes.
+        // 2. Líneas: los hitboxes (el contorno lo dibuja el juego, con nuestro color).
         int drawn = 0;
-        if (blockPos != nullptr) {
-            Box(f, o.line, blo, bhi);
-            Grow(lo, hi, blo, bhi);
-            ++drawn;
-        }
         if (hitboxes) {
             float hlo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
             float hhi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
@@ -464,10 +462,35 @@ void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, v
 
 std::atomic<int> g_meshLogs{0};
 
+// El color con que el juego tiñe lo que dibuja (ScreenContext +0x30 -> float[4]).
+// Dentro de su contorno, el juego lo fija justo antes de esta llamada: lo
+// cambiamos acá por el nuestro y lo devolvemos después.
+bool TintScreen(void* screenContext, const Color& c, float* saved, std::uintptr_t& colorPtr) {
+    if (!SafeRead(reinterpret_cast<std::uintptr_t>(screenContext) + kScreenContextColor, colorPtr) ||
+        !LooksLikePointer(colorPtr) || !SafeCopy(colorPtr, saved, sizeof(float) * 4)) {
+        return false;
+    }
+    const float tint[4] = {c.r, c.g, c.b, c.a};
+    return SafeWrite(colorPtr, tint, sizeof(tint));
+}
+
 void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material, void* params, void* a5, void* a6) {
     hooks::ActiveCallGuard guard;
-    // Primero, lo que el juego quería dibujar.
+    // Primero, lo que el juego quería dibujar (si es su contorno y el módulo
+    // está activo, con nuestro color).
+    float saved[4]{};
+    std::uintptr_t colorPtr = 0;
+    bool tinted = false;
+    if (t_inOutline && !t_outlineDrawn && g_ready.load(std::memory_order_relaxed)) {
+        const OutlineSettings o = CopyOutline();
+        if (o.enabled) {
+            tinted = TintScreen(screenContext, o.line, saved, colorPtr);
+        }
+    }
     g_renderMesh(screenContext, tess, material, params, a5, a6);
+    if (tinted) {
+        SafeWrite(colorPtr, saved, sizeof(saved));
+    }
     if (!g_ready.load(std::memory_order_relaxed)) {
         return;
     }
@@ -483,9 +506,9 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
         const OutlineSettings o = CopyOutline();
         const HitboxSettings h = CopyHitboxes();
         const bool hitboxes = h.enabled && !t_levelDrawn;
-        if ((o.enabled || hitboxes) && LooksLikeParams(params)) {
+        if (((o.enabled && o.fill) || hitboxes) && LooksLikeParams(params)) {
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, o, h, o.enabled ? t_outlinePos : nullptr,
-                        hitboxes);
+                        hitboxes, EnsureMaterials() ? g_overlayMaterial.object : nullptr);
             if (hitboxes) {
                 t_levelDrawn = true;
             }
@@ -499,7 +522,8 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
         const HitboxSettings h = CopyHitboxes();
         if (h.enabled && t_levelLrp != 0 && LooksLikeParams(params)) {
             t_levelDrawn = true;
-            DrawOwnSafe(screenContext, tess, g_gameMaterial, params, a5, a6, t_levelLrp, OutlineSettings{}, h, nullptr, true);
+            DrawOwnSafe(screenContext, tess, g_gameMaterial, params, a5, a6, t_levelLrp, OutlineSettings{}, h, nullptr, true,
+                        nullptr);
         }
     }
 }

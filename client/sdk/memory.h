@@ -23,6 +23,9 @@ namespace luma::sdk {
 // Copia "size" bytes desde "address" a "out". false si la memoria no se pudo leer.
 bool SafeCopy(std::uintptr_t address, void* out, std::size_t size);
 
+// Escribe "size" bytes (false si esa memoria no se pudo escribir).
+bool SafeWrite(std::uintptr_t address, const void* data, std::size_t size);
+
 template <typename T>
 bool SafeRead(std::uintptr_t address, T& out) {
     return SafeCopy(address, &out, sizeof(T));

@@ -19,6 +19,18 @@ bool SafeCopy(std::uintptr_t address, void* out, std::size_t size) {
     }
 }
 
+bool SafeWrite(std::uintptr_t address, const void* data, std::size_t size) {
+    if (address < 0x10000) {
+        return false;
+    }
+    __try {
+        std::memcpy(reinterpret_cast<void*>(address), data, size);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 bool SafeReadString(std::uintptr_t address, char* out, std::size_t outSize) {
     if (outSize == 0) {
         return false;

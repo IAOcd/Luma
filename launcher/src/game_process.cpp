@@ -1,7 +1,7 @@
 // =============================================================================
 //  process.cpp - Implementación de las herramientas de procesos
 // =============================================================================
-#include "process.h"
+#include "game_process.h"
 
 #include <tlhelp32.h>  // "Tool Help": listar procesos y módulos (DLLs) cargados
 

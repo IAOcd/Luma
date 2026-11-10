@@ -40,7 +40,8 @@ cmake --build --preset release
 El resultado queda en `build/bin/Release/`:
 
 - `Luma.dll`
-- `LumaLauncher.exe`
+- `LumaLauncher.exe` (el launcher con ventana)
+- `LumaLauncherCli.exe` (la versión de consola, para pruebas y scripts)
 
 Para una compilación de depuración (más lenta, pero útil para buscar errores), cambia el segundo comando por `cmake --build --preset debug`.
 
@@ -50,9 +51,9 @@ Si algo se rompe raro, borra la carpeta `build/` y vuelve a ejecutar los dos com
 
 ## Cómo usar Luma
 
-1. Abre Minecraft Bedrock (versión GDK).
-2. Ejecuta `build\bin\Release\LumaLauncher.exe` (con doble clic o desde la terminal).
-3. El launcher muestra cada paso con `[OK]`, o un `[ERROR]` que explica qué pasó y qué hacer.
+1. Ejecuta `build\bin\Release\LumaLauncher.exe` con doble clic.
+2. Pulsa **PLAY**. Si Minecraft no está abierto, el launcher lo abre, espera a que cargue e inyecta Luma. Debajo del botón va diciendo qué está haciendo, o el error y qué hacer. Cuando termina, se minimiza.
+3. La tarjeta **Client Info** muestra la versión de Luma y la de Minecraft, y si el juego y Luma están funcionando ahora mismo.
 4. **L** abre y cierra el menú de Luma. Limitación conocida: Luma todavía no sabe si el chat del juego está abierto, así que escribir una "l" en el chat abre el menú. Se corrige en la Fase 7. Mientras tanto puedes cambiar la tecla en *Ajustes*, por ejemplo a Insert.
 5. Para quitar Luma sin cerrar el juego: pulsa **Fin (End)** con la ventana de Minecraft en primer plano. También se puede cambiar en *Ajustes*.
 
@@ -123,7 +124,15 @@ Sobre el CPS:
 - **Escritura segura:** primero se escribe a `.tmp` y después se reemplaza el archivo real, así un corte nunca lo deja a medias.
 - **Archivo dañado:** si un archivo está dañado, se guarda una copia `.corrupto.json`, se usan los valores de fábrica y aparece un aviso.
 
-Opciones del launcher:
+### El launcher
+
+- **Ventana propia:** Win32 + Direct3D 11 + Dear ImGui (`launcher/src/gui/`). Se mueve desde la barra de arriba, se agranda desde los bordes y tiene la sombra y las esquinas redondeadas de Windows 11.
+- **Temas:** oscuro y claro, sacados de los dos colores del logo. Se cambian con el botón del sol o la luna, arriba a la derecha.
+- **Idiomas:** inglés, español y portugués. Los textos están en `shared/i18n.cpp`, una línea por texto con los tres idiomas. El selector llega en la parte 2, y el menú del juego va a usar los mismos textos.
+- **Config:** `%APPDATA%\Luma\launcher.json` guarda el tema y el idioma.
+- **Rendimiento:** minimizado no dibuja nada.
+
+Opciones de `LumaLauncherCli.exe` (la consola):
 
 | Opción | Qué hace |
 |---|---|
@@ -141,7 +150,10 @@ CMakeLists.txt        Receta principal: opciones comunes y subcarpetas
 CMakePresets.json     Atajos de configuración (x64, release, debug)
 cmake/
   Dependencies.cmake  Qué bibliotecas externas se descargan y en qué versión
-launcher/             LumaLauncher.exe: encuentra el juego e inyecta Luma.dll
+launcher/             LumaLauncher.exe (ventana) y LumaLauncherCli.exe (consola)
+  src/flow.cpp        Lo que pasa al pulsar PLAY (abrir el juego, inyectar, confirmar)
+  src/gui/            La ventana: plataforma, temas e interfaz
+shared/               Lo que usan el launcher y (pronto) Luma.dll: traducciones
 client/               Luma.dll
   core/               Arranque, hooks, logger, config, eventos
   render/             Overlay, editor de HUD, dibujo

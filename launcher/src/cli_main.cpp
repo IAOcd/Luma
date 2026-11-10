@@ -1,5 +1,5 @@
 // =============================================================================
-//  main.cpp - LumaLauncher.exe
+//  cli_main.cpp - LumaLauncherCli.exe (la versión de consola, para pruebas)
 // =============================================================================
 //  Pasos que sigue el launcher:
 //    1. Ubicar Luma.dll (tiene que estar en la misma carpeta que el launcher).
@@ -29,7 +29,7 @@
 #include <thread>
 
 #include "injector.h"
-#include "process.h"
+#include "game_process.h"
 
 namespace fs = std::filesystem;  // Abreviatura para no escribir el nombre largo.
 using namespace luma::launcher;

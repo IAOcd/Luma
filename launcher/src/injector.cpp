@@ -20,7 +20,7 @@
 // =============================================================================
 #include "injector.h"
 
-#include "process.h"
+#include "game_process.h"
 
 namespace luma::launcher {
 

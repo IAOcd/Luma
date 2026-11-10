@@ -61,6 +61,7 @@ add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp   # la ventana del launcher
 )
 target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}
@@ -75,4 +76,4 @@ target_compile_definitions(imgui PUBLIC
 )
 # El backend DX12 compila sus shaders al iniciar con d3dcompiler (una DLL que
 # viene con Windows 10/11).
-target_link_libraries(imgui PUBLIC d3d12 dxgi d3dcompiler)
+target_link_libraries(imgui PUBLIC d3d12 d3d11 dxgi d3dcompiler)

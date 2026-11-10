@@ -1,0 +1,9 @@
+// =============================================================================
+//  launcher.rc - Recursos de LumaLauncher.exe
+// =============================================================================
+//  1 ICON = el ícono del programa (el que muestran el Explorador y la barra de
+//  tareas). window.cpp lo carga con MAKEINTRESOURCE(1).
+//  luma.ico se generó a partir de client/assets/luma-icon.png.
+// =============================================================================
+
+1 ICON "luma.ico"

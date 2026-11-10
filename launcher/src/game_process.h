@@ -1,5 +1,5 @@
 // =============================================================================
-//  process.h - Herramientas para encontrar y examinar el proceso del juego
+//  game_process.h - Herramientas para encontrar y examinar el proceso del juego
 // =============================================================================
 //  Un "proceso" es un programa en ejecución. Cada uno tiene un número único,
 //  el PID (Process ID). Para hacerle algo a un proceso (leer su información,

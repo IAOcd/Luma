@@ -64,7 +64,7 @@ constexpr std::uint32_t kTypeXpOrb = 69;
 
 using TessBeginFn = void(__fastcall*)(void* tess, int unused, int primitive, int vertexCount, bool buildFaceData);
 using TessVertexFn = void(__fastcall*)(void* tess, float x, float y, float z);
-using RenderMeshFn = void(__fastcall*)(void* screenContext, void* tess, void* material, char* pad);
+using RenderMeshFn = void(__fastcall*)(void* screenContext, void* tess, void* material, void* params, void* a5, void* a6);
 using RenderOutlineFn = void(__fastcall*)(void* lrp, void* screenContext, void* block, void* region, const int* pos);
 using CreateMaterialFn = void(__fastcall*)(void* group, void* outSharedPtr, const void* hashedName);
 
@@ -75,6 +75,16 @@ RenderOutlineFn g_renderOutline = nullptr;
 std::uintptr_t g_materialGroup = 0;
 std::atomic<bool> g_ready{false};
 std::atomic<bool> g_outlineHooked{false};
+// Mientras el juego dibuja su contorno (en este hilo), para teñir SU malla.
+thread_local bool t_inOutline = false;
+thread_local Color t_outlineColor;
+thread_local bool t_tintOutline = false;
+// Los parámetros (4.º en adelante) que el propio juego le pasa a
+// renderMeshImmediately: los copiamos para nuestras llamadas.
+std::uint8_t g_meshParams[0x80]{};
+void* g_meshA5 = nullptr;
+void* g_meshA6 = nullptr;
+std::atomic<bool> g_haveMeshParams{false};
 
 // Los materiales que pedimos al juego. Guardamos el "shared_ptr" crudo (dos
 // punteros) y nunca lo liberamos: es un objeto del juego que vive mientras
@@ -256,12 +266,16 @@ void Render(const Frame& f, const RawSharedPtr& material) {
         const float white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
         std::memcpy(reinterpret_cast<void*>(colorPtr), white, sizeof(white));
     }
-    char pad[0x58]{};
-    g_renderMesh(reinterpret_cast<void*>(f.sc), reinterpret_cast<void*>(f.tess), material.object, pad);
-    static std::atomic<int> logs{0};
-    if (logs.fetch_add(1) < 2) {
-        log::Info("SDK: renderMeshImmediately terminó sin error.");
+    // Los mismos parámetros extra que usa el juego (si ya los vimos); si no, ceros.
+    alignas(16) std::uint8_t params[0x80]{};
+    void* a5 = nullptr;
+    void* a6 = nullptr;
+    if (g_haveMeshParams.load(std::memory_order_acquire)) {
+        std::memcpy(params, g_meshParams, sizeof(params));
+        a5 = g_meshA5;
+        a6 = g_meshA6;
     }
+    g_renderMesh(reinterpret_cast<void*>(f.sc), reinterpret_cast<void*>(f.tess), material.object, params, a5, a6);
 }
 
 // --- Hitboxes: recorrer todas las cajas de entidades --------------------------------
@@ -372,22 +386,53 @@ void DrawOutline(void* lrp, void* screenContext, void* block, void* region, cons
     }
 }
 
+// Hook de MeshHelpers::renderMeshImmediately: el juego la usa para dibujar su
+// contorno (y muchas otras cosas). Aprovechamos para:
+//   1. aprender qué parámetros le pasa (los copiamos para nuestras llamadas);
+//   2. si es la malla del contorno y el módulo está activo, cambiar el color
+//      de pantalla justo antes (el juego lo fija dentro del contorno, así
+//      que teñir antes de llamar al contorno no alcanza).
+std::atomic<int> g_meshLogs{0};
+void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material, void* params, void* a5, void* a6) {
+    hooks::ActiveCallGuard guard;
+    if (t_inOutline) {
+        if (!g_haveMeshParams.load(std::memory_order_relaxed) && LooksLikePointer(reinterpret_cast<std::uintptr_t>(params))) {
+            if (SafeCopy(reinterpret_cast<std::uintptr_t>(params), g_meshParams, sizeof(g_meshParams))) {
+                g_meshA5 = a5;
+                g_meshA6 = a6;
+                g_haveMeshParams.store(true, std::memory_order_release);
+            }
+        }
+        if (g_meshLogs.fetch_add(1) < 2) {
+            char hex[3 * 0x58 + 1] = "";
+            for (int i = 0; i < 0x58; ++i) {
+                std::snprintf(hex + i * 3, 4, "%02X ", g_meshParams[i]);
+            }
+            log::Info("SDK: el contorno del juego llama a renderMeshImmediately: material 0x{:X} (el nuestro 0x{:X}), "
+                      "5.º 0x{:X}, 6.º 0x{:X}. Parámetros: {}",
+                      reinterpret_cast<std::uintptr_t>(material), reinterpret_cast<std::uintptr_t>(g_boxMaterial.object),
+                      reinterpret_cast<std::uintptr_t>(a5), reinterpret_cast<std::uintptr_t>(a6), hex);
+        }
+        if (t_tintOutline) {
+            std::uintptr_t colorPtr = 0;
+            if (SafeRead(reinterpret_cast<std::uintptr_t>(screenContext) + kScreenContextColor, colorPtr) &&
+                LooksLikePointer(colorPtr)) {
+                const float tint[4] = {t_outlineColor.r, t_outlineColor.g, t_outlineColor.b, t_outlineColor.a};
+                std::memcpy(reinterpret_cast<void*>(colorPtr), tint, sizeof(tint));
+            }
+        }
+    }
+    g_renderMesh(screenContext, tess, material, params, a5, a6);
+}
+
 // Pinta el contorno del juego con nuestro color: el juego multiplica todo lo
 // que dibuja por el "color de pantalla" del ScreenContext (+0x30). Lo
 // cambiamos justo antes de que dibuje su contorno y lo devolvemos después.
 void TintedOriginalOutline(void* lrp, void* screenContext, void* block, void* region, const int* pos, const Color& c) {
-    std::uintptr_t colorPtr = 0;
-    float saved[4]{};
-    const bool ok = SafeRead(reinterpret_cast<std::uintptr_t>(screenContext) + kScreenContextColor, colorPtr) &&
-                    LooksLikePointer(colorPtr) && SafeRead(colorPtr, saved);
-    if (ok) {
-        const float tint[4] = {c.r, c.g, c.b, c.a};
-        std::memcpy(reinterpret_cast<void*>(colorPtr), tint, sizeof(tint));
-    }
+    t_outlineColor = c;
+    t_tintOutline = true;
     g_renderOutline(lrp, screenContext, block, region, pos);
-    if (ok) {
-        std::memcpy(reinterpret_cast<void*>(colorPtr), saved, sizeof(saved));
-    }
+    t_tintOutline = false;
 }
 
 void DrawHitboxesSafe(std::uintptr_t lrp, std::uintptr_t screenContext, const HitboxSettings& s, bool fromLrp);
@@ -409,6 +454,7 @@ void __fastcall RenderOutlineDetour(void* lrp, void* screenContext, void* block,
                   "módulo {}.", pos ? pos[0] : 0, pos ? pos[1] : 0, pos ? pos[2] : 0, c[0], c[1], c[2], c[3],
                   s.enabled ? "activo" : "apagado");
     }
+    t_inOutline = true;
     if (!g_ready.load(std::memory_order_relaxed) || !s.enabled || pos == nullptr) {
         g_renderOutline(lrp, screenContext, block, region, pos);
     } else {
@@ -427,6 +473,7 @@ void __fastcall RenderOutlineDetour(void* lrp, void* screenContext, void* block,
         }
         DrawHitboxesSafe(reinterpret_cast<std::uintptr_t>(lrp), reinterpret_cast<std::uintptr_t>(screenContext), h, true);
     }
+    t_inOutline = false;
 }
 
 // "fromLrp" = el primer número ya es el LevelRendererPlayer (dentro del
@@ -465,7 +512,14 @@ bool Init() {
     }
     g_begin = reinterpret_cast<TessBeginFn>(begin.address);
     g_vertex = reinterpret_cast<TessVertexFn>(vertex.address);
-    g_renderMesh = reinterpret_cast<RenderMeshFn>(mesh.address);
+    {
+        void* target = reinterpret_cast<void*>(mesh.address);
+        if (!hooks::Create(target, reinterpret_cast<void*>(&RenderMeshDetour), reinterpret_cast<void**>(&g_renderMesh),
+                           "juego: dibujar mallas (renderMeshImmediately)") ||
+            !hooks::Enable(target, "juego: dibujar mallas (renderMeshImmediately)")) {
+            g_renderMesh = reinterpret_cast<RenderMeshFn>(mesh.address);  // sin hook: al menos podemos llamarla
+        }
+    }
     g_materialGroup = ResolveRipRelative(group.address + 3, group.address + 7);
     log::Info("SDK: dibujo en el mundo listo (Tessellator juego+0x{:X}, mallas juego+0x{:X}, materiales juego+0x{:X}).",
               begin.address - GameBase(), mesh.address - GameBase(), g_materialGroup - GameBase());

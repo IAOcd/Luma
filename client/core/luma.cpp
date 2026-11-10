@@ -43,6 +43,7 @@
 #include "sdk/mouse_grab.h"
 #include "sdk/mouse_queue.h"
 #include "sdk/camera.h"
+#include "sdk/draw3d.h"
 #include "sdk/network.h"
 #include "sdk/player.h"
 
@@ -197,6 +198,7 @@ bool Startup(HMODULE module) {
         sdk::player::Init();
         sdk::network::Init();  // ping y detección de servidor
         sdk::camera::Init();   // brillo, perspectiva, cámara (Fase 8)
+        sdk::draw3d::Init();   // dibujar dentro del mundo (contorno, hitboxes)
         std::lock_guard lock(StateMutex());
         modules::Manager::DisableUnavailable();
     }

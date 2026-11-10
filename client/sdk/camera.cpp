@@ -10,6 +10,7 @@
 #include "core/hooks.h"
 #include "core/logger.h"
 #include "perf/timer.h"
+#include "sdk/draw3d.h"
 #include "sdk/memory.h"
 #include "sdk/scanner.h"
 
@@ -227,6 +228,8 @@ void __fastcall RenderLevelDetour(void* levelRenderer, void* screenContext, void
     g_renderLevel(levelRenderer, screenContext, unk);
     if (active) {
         ApplyFov(lr);
+        // Hitboxes y otros dibujos dentro del mundo (sdk/draw3d.h).
+        draw3d::OnRenderLevel(lr, reinterpret_cast<std::uintptr_t>(screenContext));
     }
 }
 

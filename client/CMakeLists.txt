@@ -30,6 +30,7 @@ add_library(Luma SHARED
     modules/visual/camera_mods.cpp
     modules/visual/crosshair.cpp
     modules/visual/post_processing.cpp
+    modules/visual/world_draw.cpp
     perf/benchmark.cpp
     perf/frame_stats.cpp
     perf/windows_info.cpp
@@ -53,6 +54,7 @@ add_library(Luma SHARED
     render/theme.cpp
     sdk/mouse_grab.cpp
     sdk/camera.cpp
+    sdk/draw3d.cpp
     sdk/entity.cpp
     sdk/inventory.cpp
     sdk/memory.cpp

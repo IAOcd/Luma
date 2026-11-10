@@ -24,6 +24,7 @@
 #include "modules/visual/camera_mods.h"
 #include "modules/visual/crosshair.h"
 #include "modules/visual/post_processing.h"
+#include "modules/visual/world_draw.h"
 
 namespace luma::modules {
 
@@ -49,6 +50,8 @@ void Manager::RegisterAll() {
     modules_.push_back(std::make_unique<visual::Freelook>());
     modules_.push_back(std::make_unique<visual::Zoom>());
     modules_.push_back(std::make_unique<visual::FovChanger>());
+    modules_.push_back(std::make_unique<visual::BlockOutline>());
+    modules_.push_back(std::make_unique<visual::Hitboxes>());
     // Utilidad
     modules_.push_back(std::make_unique<utility::ToggleKey>(render::input::HoldSlot::Sprint));
     modules_.push_back(std::make_unique<utility::ToggleKey>(render::input::HoldSlot::Sneak));

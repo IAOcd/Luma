@@ -225,7 +225,9 @@ void __fastcall RenderLevelDetour(void* levelRenderer, void* screenContext, void
         StepZoomAnimation();
         ApplyFov(lr);
     }
+    draw3d::BeginLevel(lr);
     g_renderLevel(levelRenderer, screenContext, unk);
+    draw3d::EndLevel();
     if (active) {
         ApplyFov(lr);
         // Hitboxes y otros dibujos dentro del mundo (sdk/draw3d.h).

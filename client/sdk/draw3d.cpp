@@ -76,15 +76,7 @@ std::uintptr_t g_materialGroup = 0;
 std::atomic<bool> g_ready{false};
 std::atomic<bool> g_outlineHooked{false};
 // Mientras el juego dibuja su contorno (en este hilo), para teñir SU malla.
-thread_local bool t_inOutline = false;
-thread_local Color t_outlineColor;
-thread_local bool t_tintOutline = false;
-// Los parámetros (4.º en adelante) que el propio juego le pasa a
-// renderMeshImmediately: los copiamos para nuestras llamadas.
-std::uint8_t g_meshParams[0x80]{};
-void* g_meshA5 = nullptr;
-void* g_meshA6 = nullptr;
-std::atomic<bool> g_haveMeshParams{false};
+thread_local bool t_inOutline = false;  // el juego está dibujando su contorno (en este hilo)
 
 // Los materiales que pedimos al juego. Guardamos el "shared_ptr" crudo (dos
 // punteros) y nunca lo liberamos: es un objeto del juego que vive mientras
@@ -266,23 +258,15 @@ void Render(const Frame& f, const RawSharedPtr& material) {
         const float white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
         std::memcpy(reinterpret_cast<void*>(colorPtr), white, sizeof(white));
     }
-    // Los mismos parámetros extra que usa el juego (si ya los vimos); si no, ceros.
     alignas(16) std::uint8_t params[0x80]{};
-    void* a5 = nullptr;
-    void* a6 = nullptr;
-    if (g_haveMeshParams.load(std::memory_order_acquire)) {
-        std::memcpy(params, g_meshParams, sizeof(params));
-        a5 = g_meshA5;
-        a6 = g_meshA6;
-    }
-    g_renderMesh(reinterpret_cast<void*>(f.sc), reinterpret_cast<void*>(f.tess), material.object, params, a5, a6);
+    g_renderMesh(reinterpret_cast<void*>(f.sc), reinterpret_cast<void*>(f.tess), material.object, params, nullptr, nullptr);
 }
 
 // --- Hitboxes: recorrer todas las cajas de entidades --------------------------------
 std::atomic<int> g_hitboxLogs{0};
 int g_lastDrawn = 0;
 
-void DrawHitboxes(const Frame& f, const HitboxSettings& s) {
+void DrawHitboxes(const Frame& f, const HitboxSettings& s, float* outLo, float* outHi) {
     g_lastDrawn = 0;
     const std::uintptr_t player = sdk::player::LocalPlayer();
     std::uintptr_t registry = 0;
@@ -339,12 +323,15 @@ void DrawHitboxes(const Frame& f, const HitboxSettings& s) {
         const bool isPlayer = (type & 0xFFFF) == kTypePlayer || comp == ownAabb;
         const bool isItem = (type & 0xFFFF) == kTypeItem || (type & 0xFFFF) == kTypeXpOrb ||
                             (typeComp == 0 && width < 0.4f && height < 0.4f);
-        if (isPlayer) {
-            if (s.players) { Box(f, s.playerColor, box, box + 3); ++g_lastDrawn; }
-        } else if (isItem) {
-            if (s.items) { Box(f, s.itemColor, box, box + 3); ++g_lastDrawn; }
-        } else if (s.mobs) {
-            Box(f, s.mobColor, box, box + 3);
+        const Color* color = isPlayer ? (s.players ? &s.playerColor : nullptr)
+                             : isItem ? (s.items ? &s.itemColor : nullptr)
+                                      : (s.mobs ? &s.mobColor : nullptr);
+        if (color != nullptr) {
+            Box(f, *color, box, box + 3);
+            for (int k = 0; k < 3; ++k) {
+                outLo[k] = std::min(outLo[k], box[k]);
+                outHi[k] = std::max(outHi[k], box[k + 3]);
+            }
             ++g_lastDrawn;
         }
     }
@@ -354,7 +341,19 @@ void DrawHitboxes(const Frame& f, const HitboxSettings& s) {
     }
 }
 
-// --- Contorno de bloque: reemplazar el del juego ------------------------------------
+// --- Dibujar DENTRO de las llamadas de mallas del propio juego ----------------------
+//  Lo aprendimos del log (1.26.63): cuando el juego dibuja su contorno llama a
+//  renderMeshImmediately(pantalla, tessellator, material, parámetros, extra).
+//  "parámetros" lleva punteros a datos de ESA llamada y una caja (+0x20 mínimo,
+//  +0x2C máximo, en coordenadas del mundo): lo que queda fuera de esa caja no
+//  se dibuja. Por eso nuestras llamadas "sueltas" (con ceros) no mostraban
+//  nada. Ahora, justo después de una llamada del juego, armamos lo nuestro y
+//  llamamos otra vez con SUS parámetros (y la caja agrandada para que entre lo
+//  nuestro) y SU material del contorno.
+constexpr std::uintptr_t kParamsSize = 0x80;
+constexpr std::uintptr_t kParamsBoundsMin = 0x20;
+constexpr std::uintptr_t kParamsBoundsMax = 0x2C;
+
 OutlineSettings CopyOutline() {
     std::lock_guard lock(g_settingsMutex);
     return g_outline;
@@ -365,138 +364,178 @@ HitboxSettings CopyHitboxes() {
     return g_hitboxes;
 }
 
-void DrawOutline(void* lrp, void* screenContext, void* block, void* region, const int* pos, const OutlineSettings& s) {
+thread_local bool t_inLevel = false;          // dentro de renderLevel
+thread_local bool t_levelDrawn = false;       // ¿ya dibujamos los hitboxes en este frame?
+thread_local int t_levelAttempts = 0;
+thread_local const int* t_outlinePos = nullptr;
+thread_local std::uintptr_t t_lrp = 0;        // LevelRendererPlayer del contorno (tiene el origen)
+thread_local std::uintptr_t t_levelLrp = 0;   // el de renderLevel
+thread_local bool t_outlineDrawn = false;
+void* g_gameMaterial = nullptr;               // el material que usa el juego para su contorno
+std::atomic<int> g_ownLogs{0};
+
+void Grow(float* lo, float* hi, const float* a, const float* b) {
+    for (int i = 0; i < 3; ++i) {
+        lo[i] = std::min(lo[i], a[i]);
+        hi[i] = std::max(hi[i], b[i]);
+    }
+}
+
+// ¿Los parámetros tienen la forma que conocemos? (la caja con números razonables)
+bool LooksLikeParams(void* params) {
+    float box[6]{};
+    if (!LooksLikePointer(reinterpret_cast<std::uintptr_t>(params)) ||
+        !SafeRead(reinterpret_cast<std::uintptr_t>(params) + kParamsBoundsMin, box)) {
+        return false;
+    }
+    for (int i = 0; i < 3; ++i) {
+        if (!std::isfinite(box[i]) || !std::isfinite(box[i + 3]) || box[i] > box[i + 3] || std::fabs(box[i]) > 3.0e7f) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Arma y dibuja lo nuestro con los parámetros de una llamada del juego.
+// (Función aparte para el __try: no puede tener objetos con destructor.)
+void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, void* a6, std::uintptr_t lrp,
+                 const OutlineSettings& o, const HitboxSettings& h, const int* blockPos, bool hitboxes) {
     __try {
         Frame f;
-        f.sc = reinterpret_cast<std::uintptr_t>(screenContext);
-        if (!SafeRead(f.sc + kScreenContextTess, f.tess) || !LooksLikePointer(f.tess) ||
-            !SafeRead(reinterpret_cast<std::uintptr_t>(lrp) + kCameraOrigin, f.origin)) {
-            g_renderOutline(lrp, screenContext, block, region, pos);
+        f.sc = reinterpret_cast<std::uintptr_t>(sc);
+        f.tess = reinterpret_cast<std::uintptr_t>(tess);
+        if (!SafeRead(lrp + kCameraOrigin, f.origin) || !std::isfinite(f.origin[0])) {
             return;
         }
-        // Un poco más grande que el bloque, para que no "pelee" con sus caras.
-        const float lo[3] = {pos[0] - 0.002f, pos[1] - 0.002f, pos[2] - 0.002f};
-        const float hi[3] = {pos[0] + 1.002f, pos[1] + 1.002f, pos[2] + 1.002f};
-        if (g_overlayMaterial.object != nullptr) {
-            FilledBox(f, s.fillColor, lo, hi);
-            Render(f, g_overlayMaterial);
+        alignas(16) std::uint8_t copy[kParamsSize];
+        if (!SafeCopy(reinterpret_cast<std::uintptr_t>(params), copy, sizeof(copy))) {
+            return;
+        }
+        float lo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
+        float hi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
+        // 1. Relleno del contorno (caras): su propia llamada, porque son cuadrados.
+        float blo[3]{};
+        float bhi[3]{};
+        if (blockPos != nullptr) {
+            for (int i = 0; i < 3; ++i) {
+                blo[i] = static_cast<float>(blockPos[i]) - 0.003f;
+                bhi[i] = static_cast<float>(blockPos[i]) + 1.003f;
+            }
+            if (o.fill) {
+                FilledBox(f, o.fillColor, blo, bhi);
+                std::memcpy(copy + kParamsBoundsMin, blo, sizeof(blo));
+                std::memcpy(copy + kParamsBoundsMax, bhi, sizeof(bhi));
+                g_renderMesh(sc, tess, material, copy, a5, a6);
+            }
+        }
+        // 2. Líneas: el contorno y los hitboxes.
+        int drawn = 0;
+        if (blockPos != nullptr) {
+            Box(f, o.line, blo, bhi);
+            Grow(lo, hi, blo, bhi);
+            ++drawn;
+        }
+        if (hitboxes) {
+            float hlo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
+            float hhi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
+            DrawHitboxes(f, h, hlo, hhi);
+            if (g_lastDrawn > 0) {
+                Grow(lo, hi, hlo, hhi);
+                drawn += g_lastDrawn;
+            }
+        }
+        if (drawn == 0) {
+            return;
+        }
+        for (int i = 0; i < 3; ++i) {  // un margen
+            lo[i] -= 1.0f;
+            hi[i] += 1.0f;
+        }
+        std::memcpy(copy + kParamsBoundsMin, lo, sizeof(lo));
+        std::memcpy(copy + kParamsBoundsMax, hi, sizeof(hi));
+        g_renderMesh(sc, tess, material, copy, a5, a6);
+        if (g_ownLogs.fetch_add(1) < 2) {
+            log::Info("SDK: dibujado dentro de una llamada del juego: {} cajas.", drawn);
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        // Algo no era como esperábamos: no dibujar este frame (mejor que crashear).
+        // Algo no era como esperábamos: este frame no se dibuja (mejor que crashear).
     }
 }
 
-// Hook de MeshHelpers::renderMeshImmediately: el juego la usa para dibujar su
-// contorno (y muchas otras cosas). Aprovechamos para:
-//   1. aprender qué parámetros le pasa (los copiamos para nuestras llamadas);
-//   2. si es la malla del contorno y el módulo está activo, cambiar el color
-//      de pantalla justo antes (el juego lo fija dentro del contorno, así
-//      que teñir antes de llamar al contorno no alcanza).
 std::atomic<int> g_meshLogs{0};
+
 void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material, void* params, void* a5, void* a6) {
     hooks::ActiveCallGuard guard;
-    if (t_inOutline) {
-        if (!g_haveMeshParams.load(std::memory_order_relaxed) && LooksLikePointer(reinterpret_cast<std::uintptr_t>(params))) {
-            if (SafeCopy(reinterpret_cast<std::uintptr_t>(params), g_meshParams, sizeof(g_meshParams))) {
-                g_meshA5 = a5;
-                g_meshA6 = a6;
-                g_haveMeshParams.store(true, std::memory_order_release);
+    // Primero, lo que el juego quería dibujar.
+    g_renderMesh(screenContext, tess, material, params, a5, a6);
+    if (!g_ready.load(std::memory_order_relaxed)) {
+        return;
+    }
+    if (t_inOutline && !t_outlineDrawn) {
+        // La malla del contorno del juego: acá dibujamos el nuestro (y los
+        // hitboxes, si en este frame todavía no se pudieron dibujar).
+        t_outlineDrawn = true;
+        g_gameMaterial = material;
+        if (g_meshLogs.fetch_add(1) < 1) {
+            log::Info("SDK: contorno del juego: material 0x{:X}, parámetros con caja.",
+                      reinterpret_cast<std::uintptr_t>(material));
+        }
+        const OutlineSettings o = CopyOutline();
+        const HitboxSettings h = CopyHitboxes();
+        const bool hitboxes = h.enabled && !t_levelDrawn;
+        if ((o.enabled || hitboxes) && LooksLikeParams(params)) {
+            DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, o, h, o.enabled ? t_outlinePos : nullptr,
+                        hitboxes);
+            if (hitboxes) {
+                t_levelDrawn = true;
             }
         }
-        if (g_meshLogs.fetch_add(1) < 2) {
-            char hex[3 * 0x58 + 1] = "";
-            for (int i = 0; i < 0x58; ++i) {
-                std::snprintf(hex + i * 3, 4, "%02X ", g_meshParams[i]);
-            }
-            log::Info("SDK: el contorno del juego llama a renderMeshImmediately: material 0x{:X} (el nuestro 0x{:X}), "
-                      "5.º 0x{:X}, 6.º 0x{:X}. Parámetros: {}",
-                      reinterpret_cast<std::uintptr_t>(material), reinterpret_cast<std::uintptr_t>(g_boxMaterial.object),
-                      reinterpret_cast<std::uintptr_t>(a5), reinterpret_cast<std::uintptr_t>(a6), hex);
-        }
-        if (t_tintOutline) {
-            std::uintptr_t colorPtr = 0;
-            if (SafeRead(reinterpret_cast<std::uintptr_t>(screenContext) + kScreenContextColor, colorPtr) &&
-                LooksLikePointer(colorPtr)) {
-                const float tint[4] = {t_outlineColor.r, t_outlineColor.g, t_outlineColor.b, t_outlineColor.a};
-                std::memcpy(reinterpret_cast<void*>(colorPtr), tint, sizeof(tint));
-            }
+        return;
+    }
+    if (t_inLevel && !t_levelDrawn && g_gameMaterial != nullptr && t_levelAttempts < 64) {
+        // Alguna otra malla del mundo (sin mirar un bloque): si sus parámetros
+        // tienen la misma forma, dibujamos ahí los hitboxes.
+        ++t_levelAttempts;
+        const HitboxSettings h = CopyHitboxes();
+        if (h.enabled && t_levelLrp != 0 && LooksLikeParams(params)) {
+            t_levelDrawn = true;
+            DrawOwnSafe(screenContext, tess, g_gameMaterial, params, a5, a6, t_levelLrp, OutlineSettings{}, h, nullptr, true);
         }
     }
-    g_renderMesh(screenContext, tess, material, params, a5, a6);
 }
-
-// Pinta el contorno del juego con nuestro color: el juego multiplica todo lo
-// que dibuja por el "color de pantalla" del ScreenContext (+0x30). Lo
-// cambiamos justo antes de que dibuje su contorno y lo devolvemos después.
-void TintedOriginalOutline(void* lrp, void* screenContext, void* block, void* region, const int* pos, const Color& c) {
-    t_outlineColor = c;
-    t_tintOutline = true;
-    g_renderOutline(lrp, screenContext, block, region, pos);
-    t_tintOutline = false;
-}
-
-void DrawHitboxesSafe(std::uintptr_t lrp, std::uintptr_t screenContext, const HitboxSettings& s, bool fromLrp);
-
-std::atomic<bool> g_loggedInsideOutline{false};
 
 std::atomic<int> g_outlineCalls{0};
 
 void __fastcall RenderOutlineDetour(void* lrp, void* screenContext, void* block, void* region, const int* pos) {
     hooks::ActiveCallGuard guard;
-    const OutlineSettings s = CopyOutline();
-    // DIAGNÓSTICO: las primeras llamadas, al log.
-    if (g_outlineCalls.fetch_add(1) < 3) {
-        std::uintptr_t colorPtr = 0;
-        float c[4]{};
-        SafeRead(reinterpret_cast<std::uintptr_t>(screenContext) + kScreenContextColor, colorPtr);
-        SafeRead(colorPtr, c);
-        log::Info("SDK: el juego dibuja el contorno: bloque ({}, {}, {}), color de pantalla {:.2f} {:.2f} {:.2f} {:.2f}, "
-                  "módulo {}.", pos ? pos[0] : 0, pos ? pos[1] : 0, pos ? pos[2] : 0, c[0], c[1], c[2], c[3],
-                  s.enabled ? "activo" : "apagado");
+    if (g_outlineCalls.fetch_add(1) < 1) {
+        log::Info("SDK: el juego dibuja el contorno (bloque {}, {}, {}).", pos ? pos[0] : 0, pos ? pos[1] : 0,
+                  pos ? pos[2] : 0);
     }
+    // Marcar que estamos dentro: el hook de mallas hace el resto.
     t_inOutline = true;
-    if (!g_ready.load(std::memory_order_relaxed) || !s.enabled || pos == nullptr) {
-        g_renderOutline(lrp, screenContext, block, region, pos);
-    } else {
-        // Primero el relleno (nuestro), después la línea del juego con nuestro color.
-        if (s.fill && EnsureMaterials()) {
-            DrawOutline(lrp, screenContext, block, region, pos, s);
-        }
-        TintedOriginalOutline(lrp, screenContext, block, region, pos, s.line);
-    }
-    // PRUEBA: los hitboxes también acá (en medio del dibujo del mundo), para
-    // saber si el problema es el momento en que los dibujamos.
-    const HitboxSettings h = CopyHitboxes();
-    if (g_ready.load(std::memory_order_relaxed) && h.enabled && EnsureMaterials()) {
-        if (!g_loggedInsideOutline.exchange(true)) {
-            log::Info("SDK: dibujando hitboxes dentro del contorno (prueba de momento).");
-        }
-        DrawHitboxesSafe(reinterpret_cast<std::uintptr_t>(lrp), reinterpret_cast<std::uintptr_t>(screenContext), h, true);
-    }
+    t_outlineDrawn = false;
+    t_outlinePos = pos;
+    t_lrp = reinterpret_cast<std::uintptr_t>(lrp);
+    g_renderOutline(lrp, screenContext, block, region, pos);
     t_inOutline = false;
 }
 
-// "fromLrp" = el primer número ya es el LevelRendererPlayer (dentro del
-// contorno); si no, es el LevelRenderer (después de renderLevel).
-void DrawHitboxesSafe(std::uintptr_t source, std::uintptr_t screenContext, const HitboxSettings& s, bool fromLrp) {
-    __try {
-        Frame f;
-        bool ok = false;
-        if (fromLrp) {
-            f.sc = screenContext;
-            ok = SafeRead(screenContext + kScreenContextTess, f.tess) && LooksLikePointer(f.tess) &&
-                 SafeRead(source + kCameraOrigin, f.origin);
-        } else {
-            ok = MakeFrame(source, screenContext, f);
-        }
-        if (ok) {
-            DrawHitboxes(f, s);
-            Render(f, g_boxMaterial);
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        // No crashear: si algo falla, este frame no hay hitboxes.
-    }
+}  // namespace
+
+void BeginLevel(std::uintptr_t levelRenderer) {
+    t_inLevel = true;
+    t_levelDrawn = false;
+    t_levelAttempts = 0;
+    std::uintptr_t lrp = 0;
+    t_levelLrp = SafeRead(levelRenderer + kLevelRendererPlayer, lrp) && LooksLikePointer(lrp) ? lrp : 0;
 }
+
+void EndLevel() {
+    t_inLevel = false;
+}
+
+namespace {
 
 }  // namespace
 
@@ -552,14 +591,14 @@ void SetHitboxes(const HitboxSettings& settings) {
 }
 
 void OnRenderLevel(std::uintptr_t levelRenderer, std::uintptr_t screenContext) {
-    if (!g_ready.load(std::memory_order_relaxed)) {
-        return;
+    // Ya no dibujamos aquí: fuera de una llamada del juego no se ve (ver
+    // "Dibujar DENTRO de las llamadas de mallas"). Solo preparamos los
+    // materiales la primera vez.
+    (void)levelRenderer;
+    (void)screenContext;
+    if (g_ready.load(std::memory_order_relaxed)) {
+        EnsureMaterials();
     }
-    const HitboxSettings hitboxes = CopyHitboxes();
-    if (!hitboxes.enabled || !EnsureMaterials()) {
-        return;
-    }
-    DrawHitboxesSafe(levelRenderer, screenContext, hitboxes, false);
 }
 
 }  // namespace luma::sdk::draw3d

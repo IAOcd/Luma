@@ -57,6 +57,10 @@ struct HitboxSettings {
 };
 void SetHitboxes(const HitboxSettings& settings);
 
+// sdk/camera.cpp las llama alrededor de LevelRenderer::renderLevel.
+void BeginLevel(std::uintptr_t levelRenderer);
+void EndLevel();
+
 // Llamado por sdk/camera.cpp justo después de que el juego dibuja el mundo.
 void OnRenderLevel(std::uintptr_t levelRenderer, std::uintptr_t screenContext);
 

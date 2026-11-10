@@ -111,9 +111,13 @@ bool Hitboxes::SdkReady() const {
 void Hitboxes::Push() const {
     sdk::draw3d::HitboxSettings s;
     s.enabled = IsEnabled();
-    s.line = ToColor(line_);
+    s.players = players_;
+    s.playerColor = ToColor(playerColor_);
+    s.mobs = mobs_;
+    s.mobColor = ToColor(mobColor_);
+    s.items = items_;
+    s.itemColor = ToColor(itemColor_);
     s.maxDistance = maxDistance_;
-    s.includeItems = includeItems_;
     s.showSelf = showSelf_;
     sdk::draw3d::SetHitboxes(s);
 }
@@ -128,10 +132,23 @@ void Hitboxes::OnDisable() {
 
 bool Hitboxes::DrawSettings() {
     bool changed = false;
-    changed |= ui::ColorAlpha("Color", line_);
+    ui::Section("Jugadores");
+    changed |= ui::Toggle("Mostrar jugadores", &players_);
+    if (players_) {
+        changed |= ui::ColorAlpha("Color de jugadores", playerColor_);
+        changed |= ui::Toggle("Tu propia caja", &showSelf_, "(en tercera persona)");
+    }
+    ui::Section("Entidades");
+    changed |= ui::Toggle("Mostrar mobs", &mobs_, "(animales, monstruos...)");
+    if (mobs_) {
+        changed |= ui::ColorAlpha("Color de mobs", mobColor_);
+    }
+    changed |= ui::Toggle("Mostrar ítems y orbes", &items_);
+    if (items_) {
+        changed |= ui::ColorAlpha("Color de ítems", itemColor_);
+    }
+    ui::Section("Alcance");
     changed |= ui::Slider("Distancia", &maxDistance_, 8.0f, 96.0f, "%.0f bloques");
-    changed |= ui::Toggle("Ítems tirados y orbes", &includeItems_);
-    changed |= ui::Toggle("Tu propia caja", &showSelf_, "(en tercera persona)");
     if (changed) {
         Push();
     }
@@ -139,16 +156,24 @@ bool Hitboxes::DrawSettings() {
 }
 
 void Hitboxes::SaveSettings(nlohmann::json& out) const {
-    SaveColor(out, "line", line_);
+    out["players"] = players_;
+    SaveColor(out, "playerColor", playerColor_);
+    out["mobs"] = mobs_;
+    SaveColor(out, "mobColor", mobColor_);
+    out["items"] = items_;
+    SaveColor(out, "itemColor", itemColor_);
     out["maxDistance"] = maxDistance_;
-    out["includeItems"] = includeItems_;
     out["showSelf"] = showSelf_;
 }
 
 void Hitboxes::LoadSettings(const nlohmann::json& in) {
-    LoadColor(in, "line", line_);
+    players_ = in.value("players", true);
+    LoadColor(in, "playerColor", playerColor_);
+    mobs_ = in.value("mobs", true);
+    LoadColor(in, "mobColor", mobColor_);
+    items_ = in.value("items", in.value("includeItems", false));
+    LoadColor(in, "itemColor", itemColor_);
     maxDistance_ = std::clamp(in.value("maxDistance", 32.0f), 8.0f, 96.0f);
-    includeItems_ = in.value("includeItems", false);
     showSelf_ = in.value("showSelf", false);
     Push();
 }

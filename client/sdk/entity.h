@@ -25,4 +25,9 @@ namespace luma::sdk::entity {
 // entidad "actor", o 0 si no lo tiene o no se pudo leer.
 std::uintptr_t Component(std::uintptr_t actor, std::uint32_t typeHash, std::uintptr_t size);
 
+// Lo mismo, a partir del registro y el número de entidad (para recorrer
+// todas las entidades, no solo al jugador).
+std::uintptr_t Storage(std::uintptr_t registry, std::uint32_t typeHash);
+std::uintptr_t ComponentOf(std::uintptr_t storage, std::uint32_t entityId, std::uintptr_t size);
+
 }  // namespace luma::sdk::entity

@@ -46,9 +46,13 @@ void SetOutline(const OutlineSettings& settings);
 // Hitboxes: la caja de cada entidad cercana (y opcionalmente hacia dónde mira).
 struct HitboxSettings {
     bool enabled = false;
-    Color line{1.0f, 1.0f, 1.0f, 1.0f};
+    bool players = true;        // otros jugadores
+    Color playerColor{1.0f, 1.0f, 1.0f, 1.0f};
+    bool mobs = true;           // animales, monstruos y demás entidades
+    Color mobColor{1.0f, 0.85f, 0.3f, 1.0f};
+    bool items = false;         // ítems tirados, orbes de experiencia, flechas...
+    Color itemColor{0.5f, 0.8f, 1.0f, 1.0f};
     float maxDistance = 32.0f;  // bloques
-    bool includeItems = false;  // ítems tirados y orbes de experiencia (cajas chiquitas)
     bool showSelf = false;      // tu propia caja (solo se ve en tercera persona)
 };
 void SetHitboxes(const HitboxSettings& settings);

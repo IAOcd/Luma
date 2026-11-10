@@ -7,12 +7,14 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
 
 #include "core/hooks.h"
 #include "core/logger.h"
+#include "sdk/entity.h"
 #include "sdk/memory.h"
 #include "sdk/offsets.h"
 #include "sdk/player.h"
@@ -54,6 +56,11 @@ constexpr int kPrimitiveQuad = 1;
 // AABBShapeComponent (las cajas de las entidades) en el sistema de entidades.
 constexpr std::uint32_t kAabbHash = 0xBAC1B3CF;
 constexpr std::uintptr_t kAabbComponentSize = 0x20;  // Vec3 min, Vec3 max, Vec2 tamaño
+// ActorTypeComponent: el tipo de entidad (un número; 319 = jugador).
+constexpr std::uint32_t kActorTypeHash = 0x4F6BA419;
+constexpr std::uint32_t kTypePlayer = 319;
+constexpr std::uint32_t kTypeItem = 64;
+constexpr std::uint32_t kTypeXpOrb = 69;
 
 using TessBeginFn = void(__fastcall*)(void* tess, int unused, int primitive, int vertexCount, bool buildFaceData);
 using TessVertexFn = void(__fastcall*)(void* tess, float x, float y, float z);
@@ -163,11 +170,37 @@ void SetColor(const Frame& f, const Color& c) {
     }
 }
 
+// DIAGNÓSTICO (una vez): qué bytes del Tessellator cambian en cada paso. Sirve
+// para comprobar en esta versión dónde guarda el color y los vértices.
+bool g_diagDone = false;
+void LogDiff(const char* step, const std::uint8_t* before, const std::uint8_t* after, std::size_t size) {
+    char line[700];
+    int n = std::snprintf(line, sizeof(line), "SDK: Tessellator tras %s:", step);
+    int shown = 0;
+    for (std::size_t i = 0; i < size && shown < 40 && n < 640; ++i) {
+        if (before[i] != after[i]) {
+            n += std::snprintf(line + n, sizeof(line) - n, " +%zX:%02X>%02X", i, before[i], after[i]);
+            ++shown;
+        }
+    }
+    log::Info("{}", line);
+}
+
 void Line(const Frame& f, const Color& c, float x1, float y1, float z1, float x2, float y2, float z2) {
+    std::uint8_t s0[0x300], s1[0x300], s2[0x300], s3[0x300];
+    const bool diag = !g_diagDone && SafeCopy(f.tess, s0, sizeof(s0));
     g_begin(reinterpret_cast<void*>(f.tess), 0, kPrimitiveLineList, 1, false);
+    if (diag) SafeCopy(f.tess, s1, sizeof(s1));
     SetColor(f, c);
+    if (diag) SafeCopy(f.tess, s2, sizeof(s2));
     g_vertex(reinterpret_cast<void*>(f.tess), x1 - f.origin[0], y1 - f.origin[1], z1 - f.origin[2]);
     g_vertex(reinterpret_cast<void*>(f.tess), x2 - f.origin[0], y2 - f.origin[1], z2 - f.origin[2]);
+    if (diag && SafeCopy(f.tess, s3, sizeof(s3))) {
+        g_diagDone = true;
+        LogDiff("begin", s0, s1, sizeof(s0));
+        LogDiff("color", s1, s2, sizeof(s0));
+        LogDiff("2 vértices", s2, s3, sizeof(s0));
+    }
 }
 
 // Las 12 aristas de una caja.
@@ -230,44 +263,20 @@ void Render(const Frame& f, const RawSharedPtr& material) {
 // --- Hitboxes: recorrer todas las cajas de entidades --------------------------------
 void DrawHitboxes(const Frame& f, const HitboxSettings& s) {
     const std::uintptr_t player = sdk::player::LocalPlayer();
-    if (player == 0) {
-        return;
-    }
-    // La piscina de cajas (AABBShapeComponent) del sistema de entidades.
     std::uintptr_t registry = 0;
-    if (!SafeRead(player + offsets::kActorEnttRegistry, registry) || !LooksLikePointer(registry)) {
+    if (player == 0 || !SafeRead(player + offsets::kActorEnttRegistry, registry) || !LooksLikePointer(registry)) {
         return;
     }
-    std::uintptr_t sparse[2]{};
-    std::uintptr_t packed = 0;
-    if (!SafeRead(registry + offsets::kRegistryPoolsSparse, sparse) || !SafeRead(registry + offsets::kRegistryPoolsPacked, packed) ||
-        sparse[1] <= sparse[0]) {
-        return;
-    }
-    const std::uintptr_t buckets = (sparse[1] - sparse[0]) / 8;
-    std::uint64_t index = 0;
-    if (!SafeRead(sparse[0] + (kAabbHash & (buckets - 1)) * 8, index)) {
-        return;
-    }
-    std::uintptr_t storage = 0;
-    for (int step = 0; step < 64 && index < 100000; ++step) {
-        const std::uintptr_t node = packed + static_cast<std::uintptr_t>(index) * offsets::kPoolNodeSize;
-        std::uint32_t key = 0;
-        if (!SafeRead(node + offsets::kPoolNodeKey, key)) return;
-        if (key == kAabbHash) {
-            SafeRead(node + offsets::kPoolNodeStorage, storage);
-            break;
-        }
-        if (!SafeRead(node + offsets::kPoolNodeNext, index)) return;
-    }
-    std::uintptr_t entities[2]{};  // el vector de entidades de la piscina
+    // Las piscinas de cajas y de tipos de entidad.
+    const std::uintptr_t boxes = entity::Storage(registry, kAabbHash);
+    const std::uintptr_t types = entity::Storage(registry, kActorTypeHash);
+    std::uintptr_t entities[2]{};  // el vector de entidades de la piscina de cajas
     std::uintptr_t pages = 0;
-    if (!LooksLikePointer(storage) || !SafeRead(storage + 0x20, entities) || !SafeRead(storage + offsets::kStoragePayload, pages) ||
+    if (boxes == 0 || !SafeRead(boxes + 0x20, entities) || !SafeRead(boxes + offsets::kStoragePayload, pages) ||
         entities[1] < entities[0]) {
         return;
     }
-    // Tu propia caja (para saltearla).
-    std::uintptr_t ownAabb = 0;
+    std::uintptr_t ownAabb = 0;  // tu propia caja (para saltearla)
     SafeRead(player + offsets::kActorAabb, ownAabb);
     const std::size_t count = std::min<std::size_t>((entities[1] - entities[0]) / 4, 4096);
     const float maxDist2 = s.maxDistance * s.maxDistance;
@@ -293,16 +302,28 @@ void DrawHitboxes(const Frame& f, const HitboxSettings& s) {
         if (width <= 0.0f || height <= 0.0f || width > 8.0f || height > 8.0f) {
             continue;
         }
-        if (!s.includeItems && width < 0.4f && height < 0.4f) {
-            continue;  // ítems tirados, orbes de experiencia, flechas clavadas...
-        }
         const float cx = (box[0] + box[3]) * 0.5f - f.origin[0];
         const float cy = (box[1] + box[4]) * 0.5f - f.origin[1];
         const float cz = (box[2] + box[5]) * 0.5f - f.origin[2];
         if (cx * cx + cy * cy + cz * cz > maxDist2) {
             continue;
         }
-        Box(f, s.line, box, box + 3);
+        // ¿Qué es? (jugador, ítem/orbe o "mob": todo lo demás)
+        std::uint32_t type = 0;
+        const std::uintptr_t typeComp = entity::ComponentOf(types, entity, 4);
+        if (typeComp != 0) {
+            SafeRead(typeComp, type);
+        }
+        const bool isPlayer = (type & 0xFFFF) == kTypePlayer || comp == ownAabb;
+        const bool isItem = (type & 0xFFFF) == kTypeItem || (type & 0xFFFF) == kTypeXpOrb ||
+                            (typeComp == 0 && width < 0.4f && height < 0.4f);
+        if (isPlayer) {
+            if (s.players) Box(f, s.playerColor, box, box + 3);
+        } else if (isItem) {
+            if (s.items) Box(f, s.itemColor, box, box + 3);
+        } else if (s.mobs) {
+            Box(f, s.mobColor, box, box + 3);
+        }
     }
 }
 

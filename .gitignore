@@ -24,3 +24,7 @@ CMakeUserPresets.json
 # Archivos del sistema
 Thumbs.db
 desktop.ini
+
+# Instrucciones locales del asistente (no son parte del proyecto)
+CLAUDE.md
+.claude/

@@ -375,7 +375,7 @@ Casi todo ese costo es fijo: preparar un frame de ImGui y mandar sus comandos a 
 
 ## Fases
 
-Ver `CLAUDE.md` para la lista completa. Avance:
+Avance:
 
 - [x] 0. Entorno
 - [x] 1. Launcher + DLL mínima

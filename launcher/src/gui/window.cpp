@@ -32,6 +32,7 @@
 #include <imgui_impl_win32.h>
 
 #include <algorithm>
+#include <cwchar>
 
 #include "gui/app.h"
 
@@ -274,10 +275,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     ImGui::GetIO().IniFilename = nullptr;  // sin imgui.ini junto al launcher
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_device, g_context);
+    AppSetDevice(g_device);
     AppInit(hwnd, g_scale);
     g_ready = true;
 
-    ShowWindow(hwnd, showCommand == SW_SHOWMINIMIZED ? SW_SHOWMINIMIZED : SW_SHOWNORMAL);
+    // "--minimized": lo usa "Abrir con Windows" (arranca minimizado, sin robar el foco).
+    const bool startMinimized = std::wcsstr(GetCommandLineW(), L"--minimized") != nullptr;
+    ShowWindow(hwnd, startMinimized ? SW_SHOWMINNOACTIVE : (showCommand == SW_SHOWMINIMIZED ? SW_SHOWMINIMIZED : SW_SHOWNORMAL));
     UpdateWindow(hwnd);
 
     bool running = true;

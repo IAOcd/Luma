@@ -45,6 +45,7 @@
 #include "sdk/camera.h"
 #include "sdk/draw3d.h"
 #include "sdk/paperdoll.h"
+#include "core/stats.h"
 #include "sdk/network.h"
 #include "sdk/player.h"
 
@@ -205,6 +206,7 @@ bool Startup(HMODULE module) {
         modules::Manager::DisableUnavailable();
     }
     render::loading::Finish();
+    stats::Begin();  // una sesión más (para el launcher)
 
     const std::string menuKey = keys::Name(config::g_menuKey.load());
     notify::Push(notify::Kind::Info, std::format("{} cargado · pulsa {} para abrir el menú", kName, menuKey));
@@ -255,6 +257,7 @@ void WaitForUnload() {
         config::SaveIfDirty();  // guardado automático (solo si hubo cambios)
         render::input::PollHolds();             // toggle sprint/sneak: menús del juego y foco
         perf::benchmark::Poll();
+        stats::Poll();                          // tiempo jugado y nombre del jugador (para el launcher)
         render::icons_items::Poll();            // íconos de ítems pedidos por el HUD                // terminar pruebas (cálculos y CSV fuera del render)
         modules::performance::PollRenderThread();  // prioridad del hilo de render
         {
@@ -288,6 +291,7 @@ void Shutdown() {
     if (g_configLoaded) {
         config::SaveNow();
     }
+    stats::End();
     sdk::camera::BeginUnload();
     sdk::paperdoll::BeginUnload();  // el muñeco vuelve a su lugar
     sdk::network::BeginUnload();

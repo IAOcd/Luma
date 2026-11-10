@@ -8,8 +8,12 @@
 
 #include <windows.h>
 
+struct ID3D11Device;
+
 namespace luma::launcher::gui {
 
+// El dispositivo de Direct3D (para subir la foto de perfil a la GPU). Antes de AppInit.
+void AppSetDevice(ID3D11Device* device);
 // Una vez, con la ventana ya creada. "scale" = escala de Windows (1 = 100%).
 void AppInit(HWND hwnd, float scale);
 // La escala cambió (otra pantalla, o la cambiaste en Windows): rehacer fuentes.

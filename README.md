@@ -128,8 +128,12 @@ Sobre el CPS:
 
 - **Ventana propia:** Win32 + Direct3D 11 + Dear ImGui (`launcher/src/gui/`). Se mueve desde la barra de arriba, se agranda desde los bordes y tiene la sombra y las esquinas redondeadas de Windows 11.
 - **Temas:** oscuro y claro, sacados de los dos colores del logo. Se cambian con el botón del sol o la luna, arriba a la derecha.
-- **Idiomas:** inglés, español y portugués. Los textos están en `shared/i18n.cpp`, una línea por texto con los tres idiomas. El selector llega en la parte 2, y el menú del juego va a usar los mismos textos.
-- **Config:** `%APPDATA%\Luma\launcher.json` guarda el tema y el idioma.
+- **Idiomas:** inglés, español y portugués, se elige en *Ajustes*. Los textos están en `shared/i18n.cpp`, una línea por texto con los tres idiomas. El menú del juego va a usar los mismos textos.
+- **Config:** `%APPDATA%\Luma\launcher.json` guarda el tema, el idioma y qué hacer después de PLAY.
+- **Estadísticas:** Luma.dll anota en `stats.json` las sesiones (cada vez que se carga) y el tiempo jugado con Luma cargado. Lo guarda cada minuto y al descargar. El launcher lo muestra en "Your Stats".
+- **Tu nombre sin cuenta:** Luma.dll guarda tu nombre de jugador (en Bedrock es tu gamertag) en `profile.json` al entrar a un mundo.
+- **Cuenta de Microsoft (opcional):** *Ajustes → Cuenta*. Abre tu navegador en la página de Microsoft (OAuth 2.0 con PKCE); tu contraseña nunca pasa por Luma. Después se pide el token de Xbox Live, que trae tu gamertag y tu foto. La sesión queda en `account.dat`, cifrada con DPAPI: solo tu usuario de Windows en esta PC puede leerla. Código en `launcher/src/account.cpp`. La aplicación "Luma Launcher" está registrada en Azure; su identificador va en el código y es público por diseño.
+- **Abrir con Windows:** apagado de fábrica. Si lo activas, agrega el launcher a la clave `Run` del registro de tu usuario y arranca minimizado. Al desactivarlo, se borra.
 - **Rendimiento:** minimizado no dibuja nada.
 
 Opciones de `LumaLauncherCli.exe` (la consola):

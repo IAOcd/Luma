@@ -10,10 +10,10 @@
 //    ┌──────────┬──────────────────────────────── [tema] [_] [□] [x] ┐
 //    │  LUMA    │  ┌ cartel: bienvenida + JUGAR ──────────────────┐ │
 //    │  Inicio  │  └──────────────────────────────────────────────┘ │
-//    │  Add-ons │  ┌ Acceso rápido ─────────┐ ┌ Info del cliente ┐  │
+//    │  Add-ons │  ┌ Acceso rápido ─────────┐ ┌ Tus estadísticas ┐  │
 //    │  Skins   │  └────────────────────────┘ └──────────────────┘  │
-//    │  Ajustes │  ┌ franja de la marca ───────────────────────────┐ │
-//    │ (perfil) │  └──────────────────────────────────────────────┘ │
+//    │  Ajustes │  ┌ Últimas noticias ──────┐ ┌ Info del cliente ┐  │
+//    │ (perfil) │  └────────────────────────┘ └──────────────────┘  │
 //    └──────────┴───────────────────────────────────────────────────┘
 //
 //  ANIMACIONES: cada elemento guarda un número de 0 a 1 ("qué tan encima
@@ -22,6 +22,8 @@
 // =============================================================================
 #include "gui/app.h"
 
+#include <d3d11.h>
+#include <shellapi.h>
 #include <shlobj.h>
 
 #include <imgui.h>
@@ -41,6 +43,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "account.h"
 #include "core/version.h"
 #include "flow.h"
 #include "gui/theme.h"
@@ -72,6 +75,11 @@ constexpr const char* kIconMinimize = "M6 12h12";
 constexpr const char* kIconMaximize = "M6.5 6.5h11v11h-11z";
 constexpr const char* kIconRestore = "M8.5 9.5h9v8h-9z M6.5 14.5v-8h9";
 constexpr const char* kIconAlert = "M12 4L21 19.5H3z M12 10v4.5 M12 17v.5";
+constexpr const char* kIconClock = "M3.5 12C3.5 7.3 7.3 3.5 12 3.5S20.5 7.3 20.5 12S16.7 20.5 12 20.5S3.5 16.7 3.5 12z M12 7.5V12l3 2";
+constexpr const char* kIconSessions = "M4 6h16v12H4z M4 10h16 M8 14h3";
+constexpr const char* kIconNews = "M5 4h11l3 3v13H5z M8 9h8 M8 12.5h8 M8 16h5";
+constexpr const char* kIconFolder = "M3.5 6.5h6l2 2h9v10h-17z";
+constexpr const char* kIconUser = "M8 8C8 5.8 9.8 4 12 4S16 5.8 16 8S14.2 12 12 12S8 10.2 8 8z M4.5 20c.8-3.8 3.9-6 7.5-6s6.7 2.2 7.5 6";
 
 // --- Medidas (a 100% de escala; se multiplican por g_scale) ---------------------
 constexpr float kSidebarWidth = 232.0f;
@@ -84,6 +92,7 @@ enum class Page { Home = 0, Addons, Skins, Settings };
 
 // --- Estado ---------------------------------------------------------------------
 HWND g_hwnd = nullptr;
+ID3D11Device* g_device = nullptr;
 float g_scale = 1.0f;
 bool g_fontsDirty = false;
 Page g_page = Page::Home;
@@ -109,48 +118,100 @@ PlayFlow g_flow;
 PlayState g_lastState = PlayState::Idle;
 double g_minimizeAt = 0.0;  // cuándo minimizar después de JUGAR (0 = no)
 
-// El estado del juego lo consulta un hilo aparte cada 1,5 s (listar procesos
-// no es gratis: no lo hacemos en cada frame).
-std::mutex g_statusMutex;
-GameStatus g_status;
+// Ajustes del launcher (launcher.json)
+bool g_minimizeAfterPlay = true;
+bool g_startWithWindows = false;  // la verdad está en el registro: se lee al abrir
+
+// Lo que se consulta en un hilo aparte cada 1,5 s (listar procesos y leer
+// archivos no es gratis: no lo hacemos en cada frame).
+struct LocalData {
+    GameStatus game;
+    std::string profileName;      // del juego (profile.json, lo escribe Luma.dll)
+    long long sessions = 0;       // stats.json
+    long long playSeconds = 0;
+};
+std::mutex g_dataMutex;
+LocalData g_data;
 std::thread g_statusThread;
 std::atomic<bool> g_quit{false};
 
-// --- Config del launcher (%APPDATA%\Luma\launcher.json) ---------------------------
-fs::path ConfigPath() {
+// La foto de Xbox como textura de Direct3D.
+ID3D11ShaderResourceView* g_avatar = nullptr;
+int g_avatarVersion = 0;
+
+// --- Archivos y carpetas ----------------------------------------------------------
+fs::path DataDir() {
     PWSTR raw = nullptr;
     fs::path path;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &raw)) && raw) {
-        path = fs::path(raw) / L"Luma" / L"launcher.json";
+        path = fs::path(raw) / L"Luma";
     }
     CoTaskMemFree(raw);
     return path;
 }
 
-void LoadConfig() {
-    std::ifstream file(ConfigPath());
+nlohmann::json ReadJson(const fs::path& path) {
+    std::ifstream file(path);
     if (!file) {
-        return;  // primera vez: valores por defecto (tema oscuro, inglés)
+        return nlohmann::json::object();
     }
-    const nlohmann::json json = nlohmann::json::parse(file, nullptr, false);
-    if (json.is_discarded() || !json.is_object()) {
-        return;
-    }
+    nlohmann::json json = nlohmann::json::parse(file, nullptr, false);
+    return json.is_object() ? json : nlohmann::json::object();
+}
+
+void LoadConfig() {
+    const nlohmann::json json = ReadJson(DataDir() / L"launcher.json");
     SetTheme(json.value("theme", std::string("dark")) == "light" ? ThemeKind::Light : ThemeKind::Dark);
     i18n::SetLanguage(i18n::LanguageFromCode(json.value("language", std::string("en")).c_str()));
+    g_minimizeAfterPlay = json.value("minimizeAfterPlay", true);
 }
 
 void SaveConfig() {
-    const fs::path path = ConfigPath();
-    if (path.empty()) {
+    const fs::path dir = DataDir();
+    if (dir.empty()) {
         return;
     }
     std::error_code ec;
-    fs::create_directories(path.parent_path(), ec);
+    fs::create_directories(dir, ec);
     nlohmann::json json;
     json["theme"] = CurrentTheme() == ThemeKind::Light ? "light" : "dark";
     json["language"] = i18n::LanguageCode(i18n::CurrentLanguage());
-    std::ofstream(path) << json.dump(2);
+    json["minimizeAfterPlay"] = g_minimizeAfterPlay;
+    std::ofstream(dir / L"launcher.json") << json.dump(2);
+}
+
+void OpenFolder(const fs::path& path) {
+    std::error_code ec;
+    fs::create_directories(path, ec);
+    ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+// --- "Abrir con Windows" ---------------------------------------------------------------
+// Es la clave "Run" del registro de TU usuario (no de todo el equipo): lo que
+// está ahí se abre al iniciar sesión en Windows. Solo se toca si activas la
+// opción, y se borra al desactivarla.
+constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr const wchar_t* kRunValue = L"LumaLauncher";
+
+std::wstring StartupCommand() {
+    wchar_t exe[MAX_PATH * 2];
+    const DWORD length = GetModuleFileNameW(nullptr, exe, static_cast<DWORD>(std::size(exe)));
+    return L"\"" + std::wstring(exe, length) + L"\" --minimized";
+}
+
+bool ReadStartup() {
+    DWORD size = 0;
+    return RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRunValue, RRF_RT_REG_SZ, nullptr, nullptr, &size) == ERROR_SUCCESS;
+}
+
+void WriteStartup(bool enabled) {
+    if (enabled) {
+        const std::wstring command = StartupCommand();
+        RegSetKeyValueW(HKEY_CURRENT_USER, kRunKey, kRunValue, REG_SZ, command.c_str(),
+                        static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+    } else {
+        RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKey, kRunValue);
+    }
 }
 
 // --- Ayudas de dibujo --------------------------------------------------------------
@@ -199,6 +260,12 @@ void TextFit(ImDrawList* d, ImFont* font, ImVec2 pos, ImU32 color, const char* t
     }
 }
 
+// Texto en varias líneas (corta por palabras). Devuelve la altura usada.
+float TextWrap(ImDrawList* d, ImFont* font, ImVec2 pos, ImU32 color, const char* text, float width) {
+    d->AddText(font, font->FontSize, pos, color, text, nullptr, width);
+    return font->CalcTextSizeA(font->FontSize, FLT_MAX, width, text).y;
+}
+
 void Card(ImDrawList* d, ImVec2 min, ImVec2 max, float hover = 0.0f) {
     const Palette& p = P();
     d->AddRectFilled(min, max, C(Mix(p.card, p.cardHover, hover)), S(kRound));
@@ -218,7 +285,7 @@ void Dot(ImDrawList* d, ImVec2 center, const ImVec4& color) {
     d->AddCircleFilled(center, S(3.8f), C(color));
 }
 
-// Rueda girando (mientras JUGAR trabaja).
+// Rueda girando (mientras algo trabaja).
 void Spinner(ImDrawList* d, ImVec2 center, float radius, ImU32 color) {
     const float t = static_cast<float>(ImGui::GetTime());
     const float start = t * 6.0f;
@@ -247,8 +314,159 @@ void GoTo(Page page) {
     }
 }
 
-const char* PlayerName() {
-    return T("nav.guest");  // parte 2: el gamertag (del juego o de Microsoft)
+void SectionTitle(ImDrawList* d, ImVec2 pos, const char* text) {
+    const Palette& p = P();
+    d->AddRectFilled(ImVec2(pos.x, pos.y + S(3.0f)), ImVec2(pos.x + S(4.0f), pos.y + S(19.0f)), C(p.accent), S(2.0f));
+    Text(d, g_fonts.semibold, ImVec2(pos.x + S(14.0f), pos.y), C(p.text), text);
+}
+
+// --- Controles de Ajustes ----------------------------------------------------------
+// Botón con texto. "primary" = relleno con el acento. Devuelve si se hizo clic.
+bool Button(const char* id, ImVec2 pos, const char* label, bool primary, float* width = nullptr, bool enabled = true) {
+    const Palette& p = P();
+    const ImVec2 ts = TextSize(g_fonts.semibold, label);
+    const ImVec2 size(ts.x + S(32.0f), S(38.0f));
+    if (width != nullptr) *width = size.x;
+    float hover = 0.0f;
+    const bool clicked = Hit(id, pos, ImVec2(pos.x + size.x, pos.y + size.y), &hover, enabled);
+    const ImVec2 max(pos.x + size.x, pos.y + size.y);
+    const float a = enabled ? 1.0f : 0.45f;
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    if (primary) {
+        d->AddRectFilled(pos, max, C(p.accent, a), S(10.0f));
+        d->AddRectFilled(pos, max, C(p.onAccent, 0.08f * hover), S(10.0f));
+    } else {
+        d->AddRectFilled(pos, max, C(Mix(p.background, p.cardHover, hover), a), S(10.0f));
+        d->AddRect(pos, max, C(p.border), S(10.0f));
+    }
+    Text(d, g_fonts.semibold, ImVec2(pos.x + S(16.0f), pos.y + (size.y - ts.y) * 0.5f), C(primary ? p.onAccent : p.text, a),
+         label);
+    return clicked;
+}
+
+// Ancho que ocupa un Segmented con estas opciones.
+float SegmentedWidth(const char* const* labels, int count) {
+    float total = S(6.0f);
+    for (int i = 0; i < count; ++i) {
+        total += TextSize(g_fonts.semibold, labels[i]).x + S(28.0f);
+    }
+    return total;
+}
+
+// Varias opciones en fila, una elegida (como los botones de un control remoto).
+bool Segmented(const char* id, ImVec2 pos, const char* const* labels, int count, int* index, float* outWidth = nullptr) {
+    const Palette& p = P();
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    float widths[4]{};
+    float total = S(6.0f);
+    for (int i = 0; i < count; ++i) {
+        widths[i] = TextSize(g_fonts.semibold, labels[i]).x + S(28.0f);
+        total += widths[i];
+    }
+    const float h = S(38.0f);
+    if (outWidth != nullptr) *outWidth = total;
+    d->AddRectFilled(pos, ImVec2(pos.x + total, pos.y + h), C(p.background), S(10.0f));
+    d->AddRect(pos, ImVec2(pos.x + total, pos.y + h), C(p.border), S(10.0f));
+    bool changed = false;
+    float x = pos.x + S(3.0f);
+    for (int i = 0; i < count; ++i) {
+        char itemId[64];
+        std::snprintf(itemId, sizeof(itemId), "%s%d", id, i);
+        const ImVec2 min(x, pos.y + S(3.0f));
+        const ImVec2 max(x + widths[i], pos.y + h - S(3.0f));
+        float hover = 0.0f;
+        if (Hit(itemId, min, max, &hover) && *index != i) {
+            *index = i;
+            changed = true;
+        }
+        const float on = Anim(ImGui::GetID(itemId) + 7, *index == i, 12.0f);
+        if (on > 0.0f) d->AddRectFilled(min, max, C(p.accent, on), S(8.0f));
+        if (hover > 0.0f && on < 1.0f) d->AddRectFilled(min, max, C(p.text, 0.05f * hover * (1.0f - on)), S(8.0f));
+        const ImVec2 ts = TextSize(g_fonts.semibold, labels[i]);
+        Text(d, g_fonts.semibold, ImVec2(min.x + (widths[i] - ts.x) * 0.5f, min.y + (max.y - min.y - ts.y) * 0.5f),
+             C(Mix(p.textDim, p.onAccent, on)), labels[i]);
+        x += widths[i];
+    }
+    return changed;
+}
+
+// Interruptor de encendido/apagado.
+bool Toggle(const char* id, ImVec2 pos, bool* value) {
+    const Palette& p = P();
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const ImVec2 size(S(46.0f), S(26.0f));
+    const ImVec2 max(pos.x + size.x, pos.y + size.y);
+    float hover = 0.0f;
+    const bool clicked = Hit(id, pos, max, &hover);
+    if (clicked) {
+        *value = !*value;
+    }
+    const float on = Anim(ImGui::GetID(id) + 3, *value, 10.0f);
+    d->AddRectFilled(pos, max, C(Mix(Mix(p.background, p.cardHover, hover), p.accent, on)), size.y * 0.5f);
+    d->AddRect(pos, max, C(p.border), size.y * 0.5f);
+    const float r = size.y * 0.5f - S(4.0f);
+    const float cx = pos.x + size.y * 0.5f + (size.x - size.y) * on;
+    d->AddCircleFilled(ImVec2(cx, pos.y + size.y * 0.5f), r, C(Mix(p.textDim, p.onAccent, on)));
+    return clicked;
+}
+
+// --- Nombre y foto del jugador -----------------------------------------------------
+std::string PlayerName(const account::Info& acc, const LocalData& data) {
+    if (acc.state == account::State::SignedIn && !acc.gamertag.empty()) return acc.gamertag;
+    if (!data.profileName.empty()) return data.profileName;
+    return T("nav.guest");
+}
+
+// Sube la foto de Xbox a la GPU cuando cambia (una vez por foto, no por frame).
+void UpdateAvatar(const account::Info& acc) {
+    if (acc.pictureVersion == g_avatarVersion) {
+        return;
+    }
+    g_avatarVersion = acc.pictureVersion;
+    if (g_avatar != nullptr) {
+        g_avatar->Release();
+        g_avatar = nullptr;
+    }
+    if (acc.pictureVersion <= 0 || g_device == nullptr) {
+        return;
+    }
+    const account::Info full = account::Get(true);
+    if (full.picture.empty() || full.pictureWidth <= 0) {
+        return;
+    }
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = static_cast<UINT>(full.pictureWidth);
+    desc.Height = static_cast<UINT>(full.pictureHeight);
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA init{full.picture.data(), static_cast<UINT>(full.pictureWidth * 4), 0};
+    ID3D11Texture2D* texture = nullptr;
+    if (SUCCEEDED(g_device->CreateTexture2D(&desc, &init, &texture))) {
+        g_device->CreateShaderResourceView(texture, nullptr, &g_avatar);
+        texture->Release();
+    }
+}
+
+// Círculo con la foto (o la inicial del nombre si no hay foto).
+void Avatar(ImDrawList* d, ImVec2 center, float radius, const std::string& name) {
+    const Palette& p = P();
+    if (g_avatar != nullptr) {
+        d->AddImageRounded(reinterpret_cast<ImTextureID>(g_avatar), ImVec2(center.x - radius, center.y - radius),
+                           ImVec2(center.x + radius, center.y + radius), ImVec2(0, 0), ImVec2(1, 1), C(ImVec4(1, 1, 1, 1)),
+                           radius);
+        d->AddCircle(center, radius, C(p.border), 0, 1.0f);
+        return;
+    }
+    d->AddCircleFilled(center, radius, C(p.card));
+    d->AddCircle(center, radius, C(p.border), 0, 1.0f);
+    char initial[5] = {name.empty() ? 'P' : name[0], 0};
+    ImFont* font = radius > S(24.0f) ? g_fonts.title : g_fonts.semibold;
+    const ImVec2 is = TextSize(font, initial);
+    Text(d, font, ImVec2(center.x - is.x * 0.5f, center.y - is.y * 0.5f), C(p.text), initial);
 }
 
 // --- Barra de título -----------------------------------------------------------------
@@ -305,10 +523,21 @@ void DrawTitleBar(ImDrawList* d, ImVec2 display) {
         }
         x -= w + S(2.0f);
     }
+#ifndef NDEBUG
+    // Compilación de depuración: que se note (inyecta la Luma.dll de Debug,
+    // que abre una consola y carga más lento).
+    const char* badge = "DEBUG";
+    const ImVec2 bs = TextSize(g_fonts.tiny, badge);
+    const ImVec2 bmax(x + w - S(8.0f), y + h - S(5.0f));
+    const ImVec2 bmin(bmax.x - bs.x - S(20.0f), y + S(5.0f));
+    d->AddRectFilled(bmin, bmax, Col(p.warning, 0.18f), S(8.0f));
+    d->AddRect(bmin, bmax, Col(p.warning, 0.6f), S(8.0f));
+    Text(d, g_fonts.tiny, ImVec2(bmin.x + S(10.0f), (bmin.y + bmax.y - bs.y) * 0.5f), Col(p.warning), badge);
+#endif
 }
 
 // --- Barra lateral --------------------------------------------------------------------
-void DrawSidebar(ImDrawList* d, ImVec2 display) {
+void DrawSidebar(ImDrawList* d, ImVec2 display, const account::Info& acc, const LocalData& data) {
     const Palette& p = P();
     const float width = S(kSidebarWidth);
     d->AddRectFilled(ImVec2(0, 0), ImVec2(width, display.y), Col(p.sidebar));
@@ -361,19 +590,30 @@ void DrawSidebar(ImDrawList* d, ImVec2 display) {
         y += itemH + S(6.0f);
     }
 
-    // Perfil (abajo)
+    // Perfil (abajo): clic = ir a Ajustes (donde está la cuenta)
     const float py = display.y - S(78.0f);
     d->AddLine(ImVec2(S(18.0f), py), ImVec2(width - S(18.0f), py), Col(p.border));
+    float hover = 0.0f;
+    if (Hit("##profile", ImVec2(S(10.0f), py + S(8.0f)), ImVec2(width - S(10.0f), display.y - S(8.0f)), &hover)) {
+        GoTo(Page::Settings);
+    }
+    if (hover > 0.0f) {
+        d->AddRectFilled(ImVec2(S(10.0f), py + S(8.0f)), ImVec2(width - S(10.0f), display.y - S(8.0f)),
+                         Col(p.text, 0.05f * hover), S(11.0f));
+    }
+    const std::string name = PlayerName(acc, data);
     const ImVec2 avatar(S(40.0f), py + S(39.0f));
-    d->AddCircleFilled(avatar, S(18.0f), Col(p.card));
-    d->AddCircle(avatar, S(18.0f), Col(p.border), 0, 1.0f);
-    const char* name = PlayerName();
-    char initial[5] = {name[0], 0};
-    const ImVec2 is = TextSize(g_fonts.semibold, initial);
-    Text(d, g_fonts.semibold, ImVec2(avatar.x - is.x * 0.5f, avatar.y - is.y * 0.5f), Col(p.text), initial);
-    TextFit(d, g_fonts.semibold, ImVec2(S(68.0f), avatar.y - S(19.0f)), Col(p.text), name, width - S(84.0f));
-    TextFit(d, g_fonts.tiny, ImVec2(S(68.0f), avatar.y + S(2.0f)), Col(p.textDim), T("nav.not_signed_in"),
-            width - S(84.0f));
+    const float savedFade = g_fade;
+    g_fade = 1.0f;
+    Avatar(d, avatar, S(18.0f), name);
+    g_fade = savedFade;
+    TextFit(d, g_fonts.semibold, ImVec2(S(68.0f), avatar.y - S(19.0f)), Col(p.text), name.c_str(), width - S(84.0f));
+    const bool signedIn = acc.state == account::State::SignedIn;
+    if (signedIn) {
+        Dot(d, ImVec2(S(73.0f), avatar.y + S(10.0f)), p.success);
+    }
+    TextFit(d, g_fonts.tiny, ImVec2(S(signedIn ? 84.0f : 68.0f), avatar.y + S(2.0f)), Col(p.textDim),
+            signedIn ? T("account.signed_in") : T("nav.not_signed_in"), width - S(100.0f));
 }
 
 // --- Inicio -----------------------------------------------------------------------------
@@ -403,7 +643,7 @@ void DrawPlayStatus(ImDrawList* d, ImVec2 pos, float maxWidth, const PlaySnapsho
     }
 }
 
-void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const GameStatus& status) {
+void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, const std::string& name) {
     const Palette& p = P();
     const float rounding = S(kRound + 4.0f);
     GradientRect(d, min, max, C(p.heroTop), C(p.heroBottom), rounding);
@@ -418,9 +658,8 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const GameStatus& status) {
     icons::Draw(d, icons::kLumaLogo,
                 ImVec2(max.x - h * 1.45f + std::cos(t * 0.27f) * S(14.0f), min.y + h * 0.95f + std::sin(t * 0.33f) * S(6.0f)),
                 h * 0.9f, C(p.heroShape));
-    // Un brillo suave
+    // Un brillo suave (muchos círculos casi transparentes = sin "anillos")
     const ImVec2 glow(max.x - h * 0.75f, min.y + h * 0.35f);
-    // (muchos círculos casi transparentes = un brillo sin "anillos")
     for (int i = 24; i >= 1; --i) {
         d->AddCircleFilled(glow, h * 0.022f * i, C(p.text, 0.0045f), 48);
     }
@@ -428,7 +667,7 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const GameStatus& status) {
     d->AddRect(min, max, C(p.border), rounding, 0, 1.0f);
 
     // Píldora arriba a la derecha: el estado de Luma
-    const bool loaded = status.lumaLoaded;
+    const bool loaded = data.game.lumaLoaded;
     const char* pill = loaded ? T("home.luma_loaded") : T("home.ready");
     const ImVec2 ps = TextSize(g_fonts.tiny, pill);
     const ImVec2 pmax(max.x - S(20.0f), min.y + S(20.0f) + S(30.0f));
@@ -440,17 +679,17 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const GameStatus& status) {
 
     // Textos
     const float left = min.x + S(36.0f);
-    float y = min.y + S(34.0f);
+    float y = min.y + S(30.0f);
     Text(d, g_fonts.semibold, ImVec2(left, y), C(p.textDim), T("home.welcome"));
     y += g_fonts.semibold->FontSize + S(2.0f);
-    TextFit(d, g_fonts.hero, ImVec2(left, y), C(p.text), PlayerName(), (max.x - min.x) * 0.55f);
+    TextFit(d, g_fonts.hero, ImVec2(left, y), C(p.text), name.c_str(), (max.x - min.x) * 0.55f);
     y += g_fonts.hero->FontSize + S(4.0f);
     Text(d, g_fonts.regular, ImVec2(left, y), C(p.textDim), T("home.subtitle"));
 
     // Botón JUGAR
     const PlaySnapshot snap = g_flow.Snapshot();
     const bool busy = g_flow.Busy();
-    const ImVec2 bmin(left, max.y - S(36.0f) - S(58.0f) - S(34.0f));
+    const ImVec2 bmin(left, max.y - S(30.0f) - S(58.0f) - S(34.0f));
     const ImVec2 bmax(bmin.x + S(210.0f), bmin.y + S(58.0f));
     float hover = 0.0f;
     if (Hit("##play", bmin, bmax, &hover, !busy)) {
@@ -460,10 +699,9 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const GameStatus& status) {
     const float lift = S(2.0f) * hover * (1.0f - press);
     const ImVec2 lmin(bmin.x, bmin.y - lift);
     const ImVec2 lmax(bmax.x, bmax.y - lift);
-    // sombra suave
     d->AddRectFilled(ImVec2(lmin.x + S(2), lmin.y + S(6)), ImVec2(lmax.x - S(2), lmax.y + S(6)),
-                     C(ImVec4(0, 0, 0, 1), 0.18f + 0.10f * hover), S(14.0f));
-    const ImVec4 fill = busy ? Mix(p.accent, p.card, 0.35f) : Mix(p.accent, p.text, 0.0f);
+                     C(ImVec4(0, 0, 0, 1), 0.18f + 0.10f * hover), S(14.0f));  // sombra suave
+    const ImVec4 fill = busy ? Mix(p.accent, p.card, 0.35f) : p.accent;
     d->AddRectFilled(lmin, lmax, C(fill), S(14.0f));
     d->AddRectFilled(lmin, lmax, C(p.onAccent, 0.08f * hover), S(14.0f));
     const char* label = T("home.play");
@@ -482,12 +720,6 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const GameStatus& status) {
     DrawPlayStatus(d, ImVec2(left, bmax.y + S(12.0f)), (max.x - min.x) - S(72.0f), snap);
 }
 
-void SectionTitle(ImDrawList* d, ImVec2 pos, const char* text) {
-    const Palette& p = P();
-    d->AddRectFilled(ImVec2(pos.x, pos.y + S(3.0f)), ImVec2(pos.x + S(4.0f), pos.y + S(19.0f)), C(p.accent), S(2.0f));
-    Text(d, g_fonts.semibold, ImVec2(pos.x + S(14.0f), pos.y), C(p.text), text);
-}
-
 void DrawQuickAccess(ImDrawList* d, ImVec2 min, ImVec2 max) {
     const Palette& p = P();
     Card(d, min, max);
@@ -503,8 +735,8 @@ void DrawQuickAccess(ImDrawList* d, ImVec2 min, ImVec2 max) {
         {Page::Skins, kIconSkins, "nav.skins", "home.qa_skins"},
         {Page::Settings, icons::kSettings, "nav.settings", "home.qa_settings"},
     };
-    const float top = min.y + S(56.0f);
-    const float bottom = max.y - S(18.0f);
+    const float top = min.y + S(54.0f);
+    const float bottom = max.y - S(16.0f);
     const float gap = S(12.0f);
     const float tileW = ((max.x - min.x) - S(40.0f) - gap * 2.0f) / 3.0f;
     for (int i = 0; i < 3; ++i) {
@@ -520,27 +752,98 @@ void DrawQuickAccess(ImDrawList* d, ImVec2 min, ImVec2 max) {
         d->AddRect(tmin, tmax, C(Mix(p.border, p.accent, hover * 0.35f)), S(12.0f));
         const float h = tmax.y - tmin.y;
         const float cx = (tmin.x + tmax.x) * 0.5f;
-        const float iconY = tmin.y + h * 0.34f - S(3.0f) * hover;
-        icons::Draw(d, tiles[i].icon, ImVec2(cx, iconY), S(28.0f), C(Mix(p.textDim, p.text, hover)), S(1.8f));
+        const bool roomy = h > S(110.0f);  // ¿entra la descripción?
         const char* title = T(tiles[i].title);
         const ImVec2 ts = TextSize(g_fonts.semibold, title);
-        Text(d, g_fonts.semibold, ImVec2(cx - ts.x * 0.5f, tmin.y + h * 0.56f), C(p.text), title);
+        const float blockH = S(28.0f) + S(8.0f) + ts.y + (roomy ? S(4.0f) + g_fonts.tiny->FontSize : 0.0f);
+        const float y0 = tmin.y + (h - blockH) * 0.5f;
+        icons::Draw(d, tiles[i].icon, ImVec2(cx, y0 + S(14.0f) - S(3.0f) * hover), S(28.0f), C(Mix(p.textDim, p.text, hover)),
+                    S(1.8f));
+        Text(d, g_fonts.semibold, ImVec2(cx - ts.x * 0.5f, y0 + S(36.0f)), C(p.text), title);
         const char* sub = T(tiles[i].sub);
         const ImVec2 ss = TextSize(g_fonts.tiny, sub);
-        if (ss.x < tileW - S(12.0f)) {
-            Text(d, g_fonts.tiny, ImVec2(cx - ss.x * 0.5f, tmin.y + h * 0.56f + ts.y + S(4.0f)), C(p.textDim), sub);
+        if (roomy && ss.x < tileW - S(12.0f)) {
+            Text(d, g_fonts.tiny, ImVec2(cx - ss.x * 0.5f, y0 + S(36.0f) + ts.y + S(4.0f)), C(p.textDim), sub);
         }
     }
 }
 
-void InfoRow(ImDrawList* d, ImVec2 pos, float width, const char* label, const char* value, const ImVec4* dot) {
+void InfoRow(ImDrawList* d, ImVec2 pos, float width, const char* label, const char* value, const ImVec4* dot,
+             const char* icon = nullptr) {
     const Palette& p = P();
-    Text(d, g_fonts.regular, pos, C(p.textDim), label);
+    float x = pos.x;
+    if (icon != nullptr) {
+        icons::Draw(d, icon, ImVec2(x + S(9.0f), pos.y + g_fonts.regular->FontSize * 0.5f), S(18.0f), C(p.textDim), S(1.6f));
+        x += S(28.0f);
+    }
+    Text(d, g_fonts.regular, ImVec2(x, pos.y), C(p.textDim), label);
     const ImVec2 vs = TextSize(g_fonts.semibold, value);
     const float vx = pos.x + width - vs.x;
     Text(d, g_fonts.semibold, ImVec2(vx, pos.y), C(p.text), value);
     if (dot != nullptr) {
         Dot(d, ImVec2(vx - S(14.0f), pos.y + vs.y * 0.5f), *dot);
+    }
+}
+
+void DrawStats(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
+    const Palette& p = P();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("stats.title"));
+    const float x = min.x + S(22.0f);
+    const float w = (max.x - min.x) - S(44.0f);
+    const int hours = static_cast<int>(data.playSeconds / 3600);
+    const int minutes = static_cast<int>((data.playSeconds % 3600) / 60);
+    char playtime[48];
+    if (hours > 0) {
+        std::snprintf(playtime, sizeof(playtime), T("stats.hours"), hours, minutes);
+    } else {
+        std::snprintf(playtime, sizeof(playtime), T("stats.minutes"), minutes);
+    }
+    char sessions[24];
+    std::snprintf(sessions, sizeof(sessions), "%lld", data.sessions);
+    const float rowH = std::min(S(36.0f), ((max.y - min.y) - S(80.0f)) / 2.0f);
+    float y = min.y + S(56.0f);
+    InfoRow(d, ImVec2(x, y), w, T("stats.playtime"), playtime, nullptr, kIconClock);
+    y += rowH;
+    InfoRow(d, ImVec2(x, y), w, T("stats.sessions"), sessions, nullptr, kIconSessions);
+    if (max.y - (y + rowH) > g_fonts.tiny->FontSize + S(12.0f)) {
+        Text(d, g_fonts.tiny, ImVec2(x, max.y - S(14.0f) - g_fonts.tiny->FontSize), C(p.textDim), T("stats.hint"));
+    }
+}
+
+// Noticias: las escribimos nosotros (van dentro del launcher). Con el
+// actualizador vendrán de GitHub.
+struct NewsItem {
+    const char* titleKey;
+    const char* bodyKey;
+    const char* date;
+};
+constexpr NewsItem kNews[] = {
+    {"news.launcher_title", "news.launcher_body", "10.11.2026"},
+    {"news.world_title", "news.world_body", "10.11.2026"},
+    {"news.hud_title", "news.hud_body", "10.11.2026"},
+};
+
+void DrawNews(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("news.title"));
+    const float x = min.x + S(22.0f);
+    const float w = (max.x - min.x) - S(44.0f);
+    const float itemH = S(52.0f);
+    float y = min.y + S(54.0f);
+    for (const NewsItem& item : kNews) {
+        if (y + itemH > max.y - S(8.0f)) {
+            break;  // no entra: la ventana es chica
+        }
+        d->AddCircleFilled(ImVec2(x + S(16.0f), y + S(18.0f)), S(16.0f), C(p.background));
+        icons::Draw(d, kIconNews, ImVec2(x + S(16.0f), y + S(18.0f)), S(17.0f), C(p.textDim), S(1.5f));
+        const ImVec2 ds = TextSize(g_fonts.tiny, item.date);
+        Text(d, g_fonts.tiny, ImVec2(x + w - ds.x, y + S(2.0f)), C(p.textDim), item.date);
+        TextFit(d, g_fonts.semibold, ImVec2(x + S(44.0f), y), C(p.text), T(item.titleKey), w - S(56.0f) - ds.x);
+        TextFit(d, g_fonts.tiny, ImVec2(x + S(44.0f), y + g_fonts.semibold->FontSize + S(3.0f)), C(p.textDim),
+                T(item.bodyKey), w - S(44.0f));
+        y += itemH;
     }
 }
 
@@ -550,8 +853,8 @@ void DrawClientInfo(ImDrawList* d, ImVec2 min, ImVec2 max, const GameStatus& sta
     SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("home.client_info"));
     const float x = min.x + S(22.0f);
     const float w = (max.x - min.x) - S(44.0f);
-    const float rowH = std::min(S(36.0f), ((max.y - min.y) - S(70.0f)) / 4.0f);
-    float y = min.y + S(60.0f);
+    const float rowH = std::min(S(36.0f), ((max.y - min.y) - S(62.0f)) / 4.0f);
+    float y = min.y + S(56.0f);
     char version[32];
     std::snprintf(version, sizeof(version), "v%s", kVersion);
     InfoRow(d, ImVec2(x, y), w, T("home.luma_version"), version, nullptr);
@@ -592,22 +895,207 @@ void DrawBanner(ImDrawList* d, ImVec2 min, ImVec2 max) {
     Text(d, g_fonts.regular, ImVec2(lineX + S(22.0f), cy - ts.y * 0.5f), C(p.textDim), tagline);
 }
 
-void DrawHome(ImDrawList* d, ImVec2 min, ImVec2 max, const GameStatus& status) {
+void DrawHome(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, const std::string& name) {
     const float width = max.x - min.x;
     const float height = max.y - min.y;
     const float gap = S(kGap);
-    // Alturas: el cartel se adapta; la franja de la marca solo si hay lugar.
-    const float bannerH = height > S(600.0f) ? S(86.0f) : 0.0f;
-    const float heroH = std::clamp(height * 0.48f, S(270.0f), S(360.0f));
-    const float rowH = height - heroH - gap - (bannerH > 0 ? bannerH + gap : 0.0f);
-    DrawHero(d, min, ImVec2(max.x, min.y + heroH), status);
-    const float rowY = min.y + heroH + gap;
-    const float qaW = width * 0.58f;
-    DrawQuickAccess(d, ImVec2(min.x, rowY), ImVec2(min.x + qaW, rowY + rowH));
-    DrawClientInfo(d, ImVec2(min.x + qaW + gap, rowY), ImVec2(max.x, rowY + rowH), status);
+    // Alturas: el cartel se adapta; la franja de la marca solo si sobra lugar.
+    const float bannerH = height > S(860.0f) ? S(86.0f) : 0.0f;
+    const float heroH = std::clamp(height * 0.38f, S(236.0f), S(340.0f));
+    const float rest = height - heroH - gap - (bannerH > 0 ? bannerH + gap : 0.0f);
+    const float row1H = std::clamp(rest * 0.42f, S(140.0f), S(200.0f));
+    const float row2H = rest - row1H - gap;
+    DrawHero(d, min, ImVec2(max.x, min.y + heroH), data, name);
+    const float leftW = width * 0.58f;
+    float y = min.y + heroH + gap;
+    DrawQuickAccess(d, ImVec2(min.x, y), ImVec2(min.x + leftW, y + row1H));
+    DrawStats(d, ImVec2(min.x + leftW + gap, y), ImVec2(max.x, y + row1H), data);
+    y += row1H + gap;
+    DrawNews(d, ImVec2(min.x, y), ImVec2(min.x + leftW, y + row2H));
+    DrawClientInfo(d, ImVec2(min.x + leftW + gap, y), ImVec2(max.x, y + row2H), data.game);
     if (bannerH > 0.0f) {
         DrawBanner(d, ImVec2(min.x, max.y - bannerH), max);
     }
+}
+
+// --- Ajustes --------------------------------------------------------------------------------
+// Una fila de ajustes: título, explicación opcional debajo, y el control a la derecha.
+float SettingLabel(ImDrawList* d, ImVec2 pos, float width, const char* title, const char* hint) {
+    const Palette& p = P();
+    Text(d, g_fonts.semibold, pos, C(p.text), title);
+    float h = g_fonts.semibold->FontSize;
+    if (hint != nullptr) {
+        h += S(3.0f) + TextWrap(d, g_fonts.tiny, ImVec2(pos.x, pos.y + h + S(3.0f)), C(p.textDim), hint, width);
+    }
+    return h;
+}
+
+void DrawSettingsGeneral(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("settings.general"));
+    const float x = min.x + S(22.0f);
+    const float right = max.x - S(22.0f);
+    float y = min.y + S(62.0f);
+    const float rowGap = S(22.0f);
+
+    // Idioma (los nombres de los idiomas siempre en su propio idioma)
+    {
+        const char* labels[3] = {i18n::LanguageName(i18n::Language::English), i18n::LanguageName(i18n::Language::Spanish),
+                                 i18n::LanguageName(i18n::Language::Portuguese)};
+        int index = static_cast<int>(i18n::CurrentLanguage());
+        const float w = SegmentedWidth(labels, 3);
+        const float labelW = right - x - w - S(20.0f);
+        const float h = SettingLabel(d, ImVec2(x, y), labelW, T("settings.language"), T("settings.lang_hint"));
+        if (Segmented("##lang", ImVec2(right - w, y), labels, 3, &index)) {
+            i18n::SetLanguage(static_cast<i18n::Language>(index));
+            SaveConfig();
+        }
+        y += std::max(h, S(38.0f)) + rowGap;
+    }
+    d->AddLine(ImVec2(x, y - rowGap * 0.5f), ImVec2(right, y - rowGap * 0.5f), C(p.border));
+    // Tema
+    {
+        const char* labels[2] = {T("settings.dark"), T("settings.light")};
+        int index = CurrentTheme() == ThemeKind::Light ? 1 : 0;
+        const float w = SegmentedWidth(labels, 2);
+        SettingLabel(d, ImVec2(x, y + S(9.0f)), right - x - w, T("settings.theme"), nullptr);
+        if (Segmented("##theme", ImVec2(right - w, y), labels, 2, &index)) {
+            SetTheme(index == 1 ? ThemeKind::Light : ThemeKind::Dark);
+            SaveConfig();
+        }
+        y += S(38.0f) + rowGap;
+    }
+    d->AddLine(ImVec2(x, y - rowGap * 0.5f), ImVec2(right, y - rowGap * 0.5f), C(p.border));
+    // Después de JUGAR
+    {
+        const char* labels[2] = {T("settings.minimize"), T("settings.stay")};
+        int index = g_minimizeAfterPlay ? 0 : 1;
+        const float w = SegmentedWidth(labels, 2);
+        SettingLabel(d, ImVec2(x, y + S(9.0f)), right - x - w, T("settings.after_play"), nullptr);
+        if (Segmented("##after", ImVec2(right - w, y), labels, 2, &index)) {
+            g_minimizeAfterPlay = index == 0;
+            SaveConfig();
+        }
+        y += S(38.0f) + rowGap;
+    }
+    d->AddLine(ImVec2(x, y - rowGap * 0.5f), ImVec2(right, y - rowGap * 0.5f), C(p.border));
+    // Abrir con Windows
+    {
+        const float h = SettingLabel(d, ImVec2(x, y), right - x - S(70.0f), T("settings.startup"), T("settings.startup_hint"));
+        if (Toggle("##startup", ImVec2(right - S(46.0f), y + std::max(0.0f, (h - S(26.0f)) * 0.5f)), &g_startWithWindows)) {
+            WriteStartup(g_startWithWindows);
+            g_startWithWindows = ReadStartup();  // lo que quedó de verdad en el registro
+        }
+    }
+}
+
+void DrawSettingsFolders(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("settings.folders"));
+    struct Folder {
+        const char* id;
+        const char* key;
+        const wchar_t* sub;
+    };
+    const Folder folders[] = {
+        {"##f_logs", "settings.logs", L"logs"},
+        {"##f_config", "settings.config", L"config"},
+        {"##f_bench", "settings.benchmarks", L"benchmarks"},
+        {"##f_data", "settings.data", L""},
+    };
+    float x = min.x + S(22.0f);
+    float y = min.y + S(58.0f);
+    for (const Folder& f : folders) {
+        const float w = TextSize(g_fonts.semibold, T(f.key)).x + S(32.0f);
+        if (x + w > max.x - S(22.0f)) {
+            x = min.x + S(22.0f);
+            y += S(46.0f);
+        }
+        if (Button(f.id, ImVec2(x, y), T(f.key), false)) {
+            OpenFolder(f.sub[0] != 0 ? DataDir() / f.sub : DataDir());
+        }
+        x += w + S(10.0f);
+    }
+}
+
+void DrawSettingsAccount(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data) {
+    const Palette& p = P();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("settings.account"));
+    const float x = min.x + S(22.0f);
+    const float w = (max.x - min.x) - S(44.0f);
+    float y = min.y + S(60.0f);
+    const std::string name = PlayerName(acc, data);
+    Avatar(d, ImVec2(x + S(28.0f), y + S(28.0f)), S(28.0f), name);
+    TextFit(d, g_fonts.title, ImVec2(x + S(70.0f), y + S(4.0f)), C(p.text), name.c_str(), w - S(70.0f));
+    const bool signedIn = acc.state == account::State::SignedIn;
+    const char* status = signedIn ? T("account.signed_in") : T("nav.not_signed_in");
+    TextFit(d, g_fonts.tiny, ImVec2(x + S(70.0f), y + S(34.0f)), C(p.textDim), status, w - S(70.0f));
+    y += S(74.0f);
+
+    const bool busy = acc.state == account::State::SigningIn || acc.state == account::State::Refreshing;
+    if (busy) {
+        Spinner(d, ImVec2(x + S(8.0f), y + S(9.0f)), S(6.5f), C(p.warning));
+        TextFit(d, g_fonts.regular, ImVec2(x + S(24.0f), y), C(p.text),
+                acc.state == account::State::SigningIn ? T("account.waiting") : T("account.refreshing"), w - S(24.0f));
+        y += S(30.0f);
+        if (acc.state == account::State::SigningIn && Button("##acc_cancel", ImVec2(x, y), T("account.cancel"), false)) {
+            account::Cancel();
+        }
+        return;
+    }
+    if (acc.state == account::State::Error && !acc.errorKey.empty()) {
+        icons::Draw(d, kIconAlert, ImVec2(x + S(8.0f), y + S(9.0f)), S(16.0f), C(p.danger), S(1.6f));
+        const float h = TextWrap(d, g_fonts.regular, ImVec2(x + S(24.0f), y), C(p.danger), T(acc.errorKey.c_str()), w - S(24.0f));
+        y += h + S(4.0f);
+        if (!acc.detail.empty()) {
+            TextFit(d, g_fonts.tiny, ImVec2(x + S(24.0f), y), C(p.textDim), acc.detail.c_str(), w - S(24.0f));
+            y += g_fonts.tiny->FontSize + S(4.0f);
+        }
+        y += S(8.0f);
+    }
+    if (signedIn) {
+        if (Button("##acc_out", ImVec2(x, y), T("account.sign_out"), false)) {
+            account::SignOut();
+        }
+    } else {
+        const float h = TextWrap(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), T("account.why"), w);
+        y += h + S(12.0f);
+        if (Button("##acc_in", ImVec2(x, y), T("account.sign_in"), true)) {
+            account::SignIn();
+        }
+    }
+}
+
+void DrawSettingsAbout(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("settings.about"));
+    const float x = min.x + S(22.0f);
+    const float w = (max.x - min.x) - S(44.0f);
+    float y = min.y + S(58.0f);
+    icons::Draw(d, icons::kLumaLogo, ImVec2(x + S(18.0f), y + S(16.0f)), S(34.0f), C(p.text));
+    char version[48];
+    std::snprintf(version, sizeof(version), T("settings.version"), kVersion);
+    Text(d, g_fonts.semibold, ImVec2(x + S(50.0f), y), C(p.text), "Luma");
+    Text(d, g_fonts.tiny, ImVec2(x + S(50.0f), y + g_fonts.semibold->FontSize + S(2.0f)), C(p.textDim), version);
+    y += S(46.0f);
+    TextWrap(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), T("settings.about_text"), w);
+}
+
+void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data) {
+    // Cada tarjeta mide lo que necesita su contenido (no se estiran hasta abajo).
+    const float gap = S(kGap);
+    const float leftW = (max.x - min.x) * 0.56f;
+    const float generalH = S(330.0f);
+    const float foldersH = S(126.0f);
+    DrawSettingsGeneral(d, min, ImVec2(min.x + leftW, min.y + generalH));
+    DrawSettingsFolders(d, ImVec2(min.x, min.y + generalH + gap), ImVec2(min.x + leftW, min.y + generalH + gap + foldersH));
+    const float rightX = min.x + leftW + gap;
+    const float accountH = S(250.0f);
+    DrawSettingsAccount(d, ImVec2(rightX, min.y), ImVec2(max.x, min.y + accountH), acc, data);
+    DrawSettingsAbout(d, ImVec2(rightX, min.y + accountH + gap), ImVec2(max.x, min.y + generalH + gap + foldersH));
 }
 
 // Secciones que llegan en las próximas partes.
@@ -629,11 +1117,18 @@ void DrawComingSoon(ImDrawList* d, ImVec2 min, ImVec2 max, const char* icon, con
 }
 
 void StatusThread() {
+    const fs::path dir = DataDir();
     while (!g_quit.load()) {
-        GameStatus status = QueryGameStatus();
+        LocalData data;
+        data.game = QueryGameStatus();
+        const nlohmann::json profile = ReadJson(dir / L"profile.json");
+        data.profileName = profile.value("name", std::string());
+        const nlohmann::json stats = ReadJson(dir / L"stats.json");
+        data.sessions = stats.value("sessions", 0LL);
+        data.playSeconds = stats.value("playSeconds", 0LL);
         {
-            std::lock_guard lock(g_statusMutex);
-            g_status = std::move(status);
+            std::lock_guard lock(g_dataMutex);
+            g_data = std::move(data);
         }
         for (int i = 0; i < 15 && !g_quit.load(); ++i) {
             Sleep(100);
@@ -647,8 +1142,17 @@ void AppInit(HWND hwnd, float scale) {
     g_hwnd = hwnd;
     g_scale = scale;
     LoadConfig();
+    g_startWithWindows = ReadStartup();
+    if (g_startWithWindows) {
+        WriteStartup(true);  // por si moviste el launcher a otra carpeta: actualizar la ruta
+    }
     AppRebuildFonts();
     g_statusThread = std::thread(StatusThread);
+    account::Init();
+}
+
+void AppSetDevice(ID3D11Device* device) {
+    g_device = device;
 }
 
 void AppSetScale(float scale) {
@@ -697,16 +1201,20 @@ void AppFrame() {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     const Palette& p = P();
 
-    GameStatus status;
+    LocalData data;
     {
-        std::lock_guard lock(g_statusMutex);
-        status = g_status;
+        std::lock_guard lock(g_dataMutex);
+        data = g_data;
     }
+    const account::Info acc = account::Get();
+    UpdateAvatar(acc);
+    const std::string name = PlayerName(acc, data);
+
     // Al terminar JUGAR con éxito: minimizar (un instante después, para que
-    // se alcance a ver "Luma está funcionando").
+    // se alcance a ver "Luma está funcionando"), si así está en Ajustes.
     const PlayState state = g_flow.Snapshot().state;
     if (state != g_lastState) {
-        if (state == PlayState::Done) {
+        if (state == PlayState::Done && g_minimizeAfterPlay) {
             g_minimizeAt = ImGui::GetTime() + 1.5;
         }
         g_lastState = state;
@@ -728,7 +1236,7 @@ void AppFrame() {
     d->AddRectFilled(ImVec2(0, 0), display, Col(p.background));
 
     g_fade = 1.0f;
-    DrawSidebar(d, display);
+    DrawSidebar(d, display, acc, data);
 
     // Contenido (con un fundido al cambiar de sección)
     g_pageFade = std::min(1.0f, g_pageFade + Dt() * 5.0f);
@@ -738,10 +1246,10 @@ void AppFrame() {
     const ImVec2 cmin(S(kSidebarWidth) + S(kPad), S(kTitleBarHeight) + offset);
     const ImVec2 cmax(display.x - S(kPad), display.y - S(kPad) + offset);
     switch (g_page) {
-        case Page::Home: DrawHome(d, cmin, cmax, status); break;
+        case Page::Home: DrawHome(d, cmin, cmax, data, name); break;
         case Page::Addons: DrawComingSoon(d, cmin, cmax, kIconAddons, "nav.addons", "soon.addons"); break;
         case Page::Skins: DrawComingSoon(d, cmin, cmax, kIconSkins, "nav.skins", "soon.skins"); break;
-        case Page::Settings: DrawComingSoon(d, cmin, cmax, icons::kSettings, "nav.settings", "soon.settings"); break;
+        case Page::Settings: DrawSettings(d, cmin, cmax, acc, data); break;
     }
     g_fade = 1.0f;
     DrawTitleBar(d, display);
@@ -752,8 +1260,13 @@ void AppFrame() {
 
 void AppShutdown() {
     g_quit.store(true);
+    account::Shutdown();
     if (g_statusThread.joinable()) {
         g_statusThread.join();
+    }
+    if (g_avatar != nullptr) {
+        g_avatar->Release();
+        g_avatar = nullptr;
     }
 }
 

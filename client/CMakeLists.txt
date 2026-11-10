@@ -17,6 +17,7 @@ add_library(Luma SHARED
     core/logger.cpp
     core/luma.cpp
     core/paths.cpp
+    core/stats.cpp
     modules/module_manager.cpp
     modules/registry.cpp
     modules/hud/hud_modules.cpp

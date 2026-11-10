@@ -29,6 +29,7 @@ add_executable(LumaLauncher WIN32
     src/gui/window.cpp
     src/gui/app.cpp
     src/gui/theme.cpp
+    src/account.cpp      # iniciar sesión con Microsoft/Xbox (opcional)
     ${PROJECT_SOURCE_DIR}/client/render/icons.cpp   # el mismo dibujador de íconos del menú
     assets/launcher.rc
 )
@@ -52,7 +53,13 @@ target_link_libraries(LumaLauncher PRIVATE
     launcher_core
     imgui
     nlohmann_json::nlohmann_json
-    dwmapi    # sombra y esquinas redondeadas de Windows 11
+    dwmapi         # sombra y esquinas redondeadas de Windows 11
+    winhttp        # HTTPS con los servidores de Microsoft y Xbox
+    ws2_32         # el mini servidor en localhost que recibe el código de inicio de sesión
+    bcrypt         # números aleatorios y SHA-256 (PKCE)
+    crypt32        # DPAPI: guardar la sesión cifrada
+    windowscodecs  # WIC: decodificar la foto de perfil
+    shlwapi        # SHCreateMemStream
 )
 
 # --- La consola (pruebas) ----------------------------------------------------------

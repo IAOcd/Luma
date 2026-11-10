@@ -45,35 +45,33 @@ std::uintptr_t StackAddress(int slot) {
     return vector[0] + static_cast<std::uintptr_t>(slot) * o::kItemStackSize;
 }
 
-// Busca "Damage" en el NBT del ítem. El NBT es un std::map ordenado por
+// Busca una clave numérica (IntTag) en el NBT del ítem. El NBT es un std::map ordenado por
 // clave: es un árbol de búsqueda, así que bajamos comparando textos.
-int ReadDamage(std::uintptr_t tag) {
+bool ReadIntTag(std::uintptr_t tag, const char* wanted, int& value) {
     std::uintptr_t head = 0;
     std::uintptr_t node = 0;
     if (!LooksLikePointer(tag) || !SafeRead(tag + o::kTagMap, head) || !LooksLikePointer(head) ||
         !SafeRead(head + o::kNodeParent, node)) {
-        return 0;
+        return false;
     }
     for (int depth = 0; depth < 32 && LooksLikePointer(node); ++depth) {
         std::uint8_t isNil = 1;
         if (!SafeRead(node + o::kNodeIsNil, isNil) || isNil != 0) {
-            return 0;
+            return false;
         }
         char key[32];
         if (!SafeReadString(node + o::kNodeKey, key, sizeof(key))) {
-            return 0;
+            return false;
         }
-        const int cmp = std::strcmp("Damage", key);
+        const int cmp = std::strcmp(wanted, key);
         if (cmp == 0) {
-            int value = 0;
-            SafeRead(node + o::kNodeIntValue, value);
-            return value;
+            return SafeRead(node + o::kNodeIntValue, value);
         }
         if (!SafeRead(node + (cmp < 0 ? o::kNodeLeft : o::kNodeRight), node)) {
-            return 0;
+            return false;
         }
     }
-    return 0;
+    return false;
 }
 
 }  // namespace
@@ -103,11 +101,18 @@ bool ReadStack(std::uintptr_t stack, Item& out) {
     std::int16_t maxDamage = 0;
     SafeRead(item + o::kItemMaxDamage, maxDamage);
     out.maxDamage = maxDamage > 0 && maxDamage <= 10000 ? maxDamage : 0;
+    std::uintptr_t tag = 0;
+    SafeRead(stack + o::kStackTag, tag);
     if (out.maxDamage > 0) {
-        std::uintptr_t tag = 0;
-        SafeRead(stack + o::kStackTag, tag);
-        const int damage = ReadDamage(tag);
+        int damage = 0;
+        ReadIntTag(tag, "Damage", damage);
         out.damage = damage >= 0 && damage <= out.maxDamage ? damage : 0;
+    }
+    SafeReadString(item + o::kItemIcon, out.icon, sizeof(out.icon));
+    // Color de la armadura de cuero teñida (sin el byte de transparencia).
+    int color = 0;
+    if (ReadIntTag(tag, "customColor", color)) {
+        out.color = color & 0xFFFFFF;
     }
     return true;
 }

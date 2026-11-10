@@ -27,6 +27,8 @@ struct Item {
     int count = 0;
     int damage = 0;        // usos gastados
     int maxDamage = 0;     // 0 = no se gasta
+    char icon[48] = "";   // nombre de su ícono en el juego (vacío en bloques)
+    int color = -1;        // color de teñido (cuero, NBT "customColor"), -1 = ninguno
 };
 
 // La ranura seleccionada (0..8), o -1 si no se pudo leer.

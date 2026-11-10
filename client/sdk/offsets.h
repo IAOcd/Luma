@@ -63,6 +63,7 @@ inline constexpr std::uintptr_t kStackTag = 0x10;    // -> CompoundTag (NBT: enc
 inline constexpr std::uintptr_t kStackCount = 0x22;  // uint8: cantidad
 
 // --- Item (la "clase" del ítem: espada de diamante, flecha...) -------------------------
+inline constexpr std::uintptr_t kItemIcon = 0x68;        // std::string: nombre de su ícono ("apple_golden"); vacío en bloques
 inline constexpr std::uintptr_t kItemId = 0x128;         // std::string "minecraft:mace"
 inline constexpr std::uintptr_t kItemMaxDamage = 0x150;  // int16: durabilidad máxima (0 = no se gasta)
 

@@ -50,9 +50,10 @@ float Fraction(const inv::Item& item) {
 }
 
 // Dibuja el ícono de un ítem (o un cuadradito tenue si no hay ícono).
-void DrawItemIcon(ImDrawList* draw, const char* id, ImVec2 min, float size) {
+void DrawItemIcon(ImDrawList* draw, const char* id, ImVec2 min, float size, const char* atlas = nullptr,
+                  int color = -1) {
     const ImVec2 max(min.x + size, min.y + size);
-    if (ImTextureID texture = render::icons_items::Get(id)) {
+    if (ImTextureID texture = render::icons_items::Get(id, atlas, color)) {
         draw->AddImage(texture, min, max);
     } else {
         draw->AddRectFilled(min, max, IM_COL32(255, 255, 255, 30));
@@ -211,7 +212,7 @@ ImVec2 ArmorHud::OnRenderHud(const HudFrame& frame) {
         const float frac = Fraction(it);
         const ImU32 valueColor = colorByDurability_ && it.maxDamage > 0 ? DurabilityColor(frac) : rh::TextColor();
         const ImVec2 iconPos(vertical ? c.x : std::floor(c.x + (itemW - icon) * 0.5f), c.y);
-        DrawItemIcon(draw, it.id, iconPos, icon);
+        DrawItemIcon(draw, it.id, iconPos, icon, it.icon, it.color);
         if (vertical) {
             float x = c.x + icon + 3.0f * u;
             const float ty = c.y + (icon - m.capHeight) * 0.5f - m.capTop;
@@ -343,7 +344,7 @@ ImVec2 HeldItem::OnRenderHud(const HudFrame& frame) {
     const ImVec2 o = frame.pos;
     rh::Box(frame.draw, m, o, ImVec2(o.x + width, o.y + height));
     if (showIcon_) {
-        DrawItemIcon(frame.draw, item.id, ImVec2(o.x + pad, o.y + pad), icon);
+        DrawItemIcon(frame.draw, item.id, ImVec2(o.x + pad, o.y + pad), icon, item.icon, item.color);
     }
     rh::Text(frame.draw, m, ImVec2(o.x + pad + icon + (icon > 0 ? 4.0f * u : 0.0f), o.y + (height - m.capHeight) * 0.5f - m.capTop),
              text, rh::TextColor());

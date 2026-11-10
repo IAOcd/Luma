@@ -15,9 +15,15 @@
 //  Hay un paquete por versión del juego (vanilla_1.26.63, ...): cada uno
 //  agrega o reemplaza texturas. Usamos la versión más nueva de cada una.
 //
-//  El nombre de la textura casi siempre es el del ítem ("minecraft:diamond"
-//  -> diamond.png). Para los que no coinciden hay una tabla pequeña (ver
-//  .cpp). Si no se encuentra, no hay ícono (el módulo muestra solo texto).
+//  Qué textura usa cada ítem lo dicen las mismas tablas del juego:
+//    - Ítems: el ítem guarda el nombre de su ícono (Item+0x68, por ejemplo
+//      "apple_golden" o "helmet") y textures/item_texture.json dice qué
+//      archivo es. Si hay variantes (todos los cascos), elegimos la que
+//      coincide con el id ("leather_helmet").
+//    - Bloques: blocks.json dice qué textura usa cada cara, y
+//      textures/terrain_texture.json dónde está.
+//  Formatos: PNG (con WIC, de Windows) y TGA (lo leemos nosotros). El cuero
+//  se tiñe con su color (o el marrón de fábrica), como en el juego.
 //
 //  HILOS: Get() desde el render (con el candado); Poll() desde el hilo
 //  principal de Luma (lee y decodifica: nunca frena el render);
@@ -29,9 +35,14 @@
 
 namespace luma::render::icons_items {
 
-// La textura del ícono de "id" ("minecraft:diamond"), o 0 si todavía no
-// está (la pide y estará en unos milisegundos) o no existe.
-ImTextureID Get(const char* id);
+// La textura del ícono de un ítem, o 0 si todavía no está (la pide y estará
+// en unos milisegundos) o no existe.
+//   id    = "minecraft:leather_helmet"
+//   atlas = el nombre de ícono que guarda el propio ítem del juego ("helmet");
+//           con él se usa la misma tabla que el juego (item_texture.json).
+//           nullptr = buscar por el id.
+//   color = color de teñido (armadura de cuero), -1 = sin teñir.
+ImTextureID Get(const char* id, const char* atlas = nullptr, int color = -1);
 
 // Hilo principal: procesa los pedidos (lee del disco y decodifica).
 void Poll();

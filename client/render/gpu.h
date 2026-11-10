@@ -60,7 +60,32 @@ void DestroyBlurTargets();
 // Graba en la command list: copiar el back buffer y desenfocarlo. El back
 // buffer tiene que estar en estado PRESENT; queda en RENDER_TARGET, listo
 // para que ImGui dibuje encima. "strength" va de 0 a 1.
-void RecordBlur(ID3D12GraphicsCommandList* list, ID3D12Resource* backBuffer, float strength);
+// "before" = en qué estado está el back buffer al llamarla (PRESENT, o
+// RENDER_TARGET si antes se aplicó el post-procesado). Lo deja en RENDER_TARGET.
+void RecordBlur(ID3D12GraphicsCommandList* list, ID3D12Resource* backBuffer, float strength,
+                D3D12_RESOURCE_STATES before = D3D12_RESOURCE_STATE_PRESENT);
+
+// --- Post-procesado ("editor de fotos" del juego) ---------------------------
+// Un shader que pasa por cada píxel del frame del juego y le cambia el
+// color: brillo, contraste, saturación, etc. Trabaja sobre la misma copia
+// del frame que el desenfoque.
+struct PostParams {
+    float brightness = 0.0f;   // -1..1 (0 = igual)
+    float contrast = 1.0f;     // 0..2  (1 = igual)
+    float saturation = 1.0f;   // 0..2  (0 = blanco y negro)
+    float gamma = 1.0f;        // 0.5..2 (más = sombras más claras)
+    float temperature = 0.0f;  // -1 frío .. 1 cálido
+    float tint = 0.0f;         // -1 magenta .. 1 verde
+    float vibrance = 0.0f;     // -1..1: satura más los colores apagados
+    float vignette = 0.0f;     // 0..1: oscurece los bordes
+    float sharpen = 0.0f;      // 0..1: nitidez
+    float exposure = 0.0f;     // -2..2 (pasos de luz, como en una cámara)
+};
+// ¿Se puede usar? (el shader compiló y hay copia del frame)
+bool PostReady();
+// Aplica el efecto al back buffer (que está en PRESENT). Lo deja en RENDER_TARGET.
+void RecordPost(ID3D12GraphicsCommandList* list, ID3D12Resource* backBuffer,
+                D3D12_CPU_DESCRIPTOR_HANDLE backBufferRtv, const PostParams& params);
 
 // ¿Se va a desenfocar en este frame? Lo fija el overlay al empezar cada
 // frame. Si no, BlurTexture() devuelve 0: la textura tendría una imagen vieja

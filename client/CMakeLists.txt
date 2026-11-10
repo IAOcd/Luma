@@ -27,7 +27,9 @@ add_library(Luma SHARED
     modules/performance/process_opts.cpp
     modules/utility/mouse_tweaks.cpp
     modules/utility/toggle_keys.cpp
+    modules/visual/camera_mods.cpp
     modules/visual/crosshair.cpp
+    modules/visual/post_processing.cpp
     perf/benchmark.cpp
     perf/frame_stats.cpp
     perf/windows_info.cpp
@@ -45,9 +47,11 @@ add_library(Luma SHARED
     render/module_options.cpp
     render/notifications.cpp
     render/overlay.cpp
+    render/postfx.cpp
     render/sound.cpp
     render/theme.cpp
     sdk/mouse_grab.cpp
+    sdk/camera.cpp
     sdk/entity.cpp
     sdk/inventory.cpp
     sdk/memory.cpp

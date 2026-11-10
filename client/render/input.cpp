@@ -104,6 +104,8 @@ struct Hold {
 };
 Hold g_holds[2];
 std::atomic<bool> g_holdsSuspended{false};  // en un menú del juego o sin foco
+std::atomic<bool> g_wheelCapture{false};
+std::atomic<int> g_wheelDelta{0};  // en unidades de WHEEL_DELTA (120 = un paso)
 
 // ¿La tecla "vk" que preguntan es la sostenida? Ctrl, Shift y Alt tienen
 // además versión izquierda (VK_LCONTROL...), que el juego podría usar.
@@ -330,6 +332,10 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
     }
 
     if (!overlay::IsMenuOpen()) {
+        if (message == WM_MOUSEWHEEL && g_wheelCapture.load(std::memory_order_relaxed)) {
+            g_wheelDelta.fetch_add(GET_WHEEL_DELTA_WPARAM(wParam));
+            return 0;  // el juego no cambia de ranura mientras haces zoom
+        }
         if (HandleHoldKey(message, wParam, lParam)) {
             return 0;
         }
@@ -647,6 +653,15 @@ void ConfigureHold(HoldSlot slot, bool enabled, int vk) {
 bool IsHoldActive(HoldSlot slot) {
     const Hold& h = g_holds[static_cast<int>(slot)];
     return h.enabled.load(std::memory_order_relaxed) && h.active.load(std::memory_order_relaxed);
+}
+
+void SetWheelCapture(bool capture) {
+    g_wheelCapture.store(capture);
+    sdk::mousequeue::SetBlockWheel(capture);
+}
+
+int TakeWheelSteps() {
+    return g_wheelDelta.exchange(0) / WHEEL_DELTA;
 }
 
 void PollHolds() {

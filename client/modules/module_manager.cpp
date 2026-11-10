@@ -75,7 +75,7 @@ void Manager::RebuildActiveLists() {
 
 bool Manager::IsAvailable(const Module& module) {
     return (!module.NeedsPlayer() || sdk::player::Available()) &&
-           (!module.NeedsNetwork() || sdk::network::Available());
+           (!module.NeedsNetwork() || sdk::network::Available()) && module.SdkReady();
 }
 
 void Manager::DisableUnavailable() {
@@ -125,7 +125,7 @@ bool Manager::HandleKey(int virtualKey) {
     bool changed = false;
     for (const auto& module : modules_) {
         if (module->Keybind() == virtualKey) {
-            Toggle(*module, /*notify=*/true);
+            Toggle(*module, /*notify=*/!module->QuietKey());
             changed = true;
         }
     }
@@ -211,7 +211,7 @@ void Manager::Load(const nlohmann::json& in) {
     }
     for (const auto& module : modules_) {
         bool enabled = false;
-        int keybind = keys::kNone;
+        int keybind = module->defaultKeybind_;
         module->layout_ = module->defaultLayout_;
         module->customStyle_ = false;
         module->style_ = render::hud::GetStyle();
@@ -221,7 +221,7 @@ void Manager::Load(const nlohmann::json& in) {
             // valor por defecto si no está. Si el tipo es incorrecto lanza una
             // excepción, que atrapa config.cpp (y usa la config por defecto).
             enabled = entry.value("enabled", false);
-            keybind = entry.value("keybind", keys::kNone);
+            keybind = entry.value("keybind", module->defaultKeybind_);
             if (entry.contains("settings") && entry["settings"].is_object()) {
                 module->LoadSettings(entry["settings"]);
             }

@@ -56,6 +56,8 @@ bool Read(Snapshot& out);
 // Multiplicador de sensibilidad de la cámara (1 = sin cambio). Se aplica al
 // giro que recibe applyTurnDelta.
 void SetSensitivity(float multiplier);
+// Otro multiplicador, que usa el zoom (se multiplican entre sí).
+void SetZoomSensitivity(float multiplier);
 
 void BeginUnload();
 

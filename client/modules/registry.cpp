@@ -21,7 +21,9 @@
 #include "modules/performance/process_opts.h"
 #include "modules/utility/mouse_tweaks.h"
 #include "modules/utility/toggle_keys.h"
+#include "modules/visual/camera_mods.h"
 #include "modules/visual/crosshair.h"
+#include "modules/visual/post_processing.h"
 
 namespace luma::modules {
 
@@ -42,6 +44,11 @@ void Manager::RegisterAll() {
     modules_.push_back(std::make_unique<hud::Watermark>());
     // Visual
     modules_.push_back(std::make_unique<visual::Crosshair>());
+    modules_.push_back(std::make_unique<visual::PostProcessing>());
+    modules_.push_back(std::make_unique<visual::Fullbright>());
+    modules_.push_back(std::make_unique<visual::Freelook>());
+    modules_.push_back(std::make_unique<visual::Zoom>());
+    modules_.push_back(std::make_unique<visual::FovChanger>());
     // Utilidad
     modules_.push_back(std::make_unique<utility::ToggleKey>(render::input::HoldSlot::Sprint));
     modules_.push_back(std::make_unique<utility::ToggleKey>(render::input::HoldSlot::Sneak));

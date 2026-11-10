@@ -63,4 +63,10 @@ bool IsHoldActive(HoldSlot slot);
 // menú del juego o la ventana tiene el foco.
 void PollHolds();
 
+// Rueda del mouse "capturada" (el zoom la usa para acercar/alejar): con
+// la captura activa, la rueda no le llega al juego y sus pasos se acumulan.
+void SetWheelCapture(bool capture);
+// Pasos de rueda desde la última vez (positivo = hacia adelante).
+int TakeWheelSteps();
+
 }  // namespace luma::render::input

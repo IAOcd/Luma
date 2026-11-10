@@ -42,6 +42,7 @@
 #include "render/overlay.h"
 #include "sdk/mouse_grab.h"
 #include "sdk/mouse_queue.h"
+#include "sdk/camera.h"
 #include "sdk/network.h"
 #include "sdk/player.h"
 
@@ -195,6 +196,7 @@ bool Startup(HMODULE module) {
         // El jugador local (Fase 6): se captura al mover el mouse en un mundo.
         sdk::player::Init();
         sdk::network::Init();  // ping y detección de servidor
+        sdk::camera::Init();   // brillo, perspectiva, cámara (Fase 8)
         std::lock_guard lock(StateMutex());
         modules::Manager::DisableUnavailable();
     }
@@ -282,6 +284,7 @@ void Shutdown() {
     if (g_configLoaded) {
         config::SaveNow();
     }
+    sdk::camera::BeginUnload();
     sdk::network::BeginUnload();
     sdk::player::BeginUnload();
     sdk::mousequeue::BeginUnload();

@@ -54,6 +54,7 @@
 #include "render/loading.h"
 #include "render/menu.h"
 #include "render/notifications.h"
+#include "render/postfx.h"
 #include "render/theme.h"
 #include "sdk/mouse_grab.h"
 
@@ -454,9 +455,17 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    // Primero el post-procesado (cambia los colores del juego) y después, si
+    // el menú está abierto, el desenfoque del vidrio (sobre el frame ya
+    // procesado). El menú y el HUD de Luma se dibujan encima, sin procesar.
+    D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PRESENT;
+    if (postfx::Active() && gpu::PostReady()) {
+        gpu::RecordPost(g_r.commandList.Get(), frame.backBuffer.Get(), frame.rtv, postfx::Get());
+        state = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    }
     if (glassVisible && theme::Get().blur > 0.0f) {
-        gpu::RecordBlur(g_r.commandList.Get(), frame.backBuffer.Get(), theme::Get().blur);
-    } else {
+        gpu::RecordBlur(g_r.commandList.Get(), frame.backBuffer.Get(), theme::Get().blur, state);
+    } else if (state == D3D12_RESOURCE_STATE_PRESENT) {
         g_r.commandList->ResourceBarrier(1, &barrier);
     }
 
@@ -526,7 +535,7 @@ bool OnPresent(IDXGISwapChain* swapchain) {
     // atómicas; ImGui ni se toca. Así, con 0 módulos activos, Luma cuesta lo
     // mismo que en la Fase 2.
     if (!g_menuOpen.load(std::memory_order_relaxed) && !modules::Manager::HasHud() &&
-        !notify::HasActive() && !menu::IsAnimatingClose() && !loading::IsVisible()) {
+        !notify::HasActive() && !menu::IsAnimatingClose() && !loading::IsVisible() && !postfx::Active()) {
         return false;
     }
     // Benchmark en modo "Luma en reposo": no dibujar nada (ni HUD ni avisos)

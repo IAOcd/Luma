@@ -98,6 +98,12 @@ public:
     virtual bool NeedsPlayer() const { return false; }
     // ¿Necesita el hook de red (ping)? (sdk/network.h)
     virtual bool NeedsNetwork() const { return false; }
+    // ¿Se encontraron las firmas del juego que este módulo usa? (por ejemplo,
+    // Fullbright necesita la de getGamma). false = "no disponible".
+    virtual bool SdkReady() const { return true; }
+    // ¿Su tecla se usa mucho (zoom, freelook)? Entonces no mostramos un aviso
+    // ni sonido cada vez que se activa o desactiva con ella.
+    virtual bool QuietKey() const { return false; }
 
     // --- Lo que cada módulo puede reemplazar ----------------------------------
 
@@ -155,6 +161,11 @@ protected:
     bool localOnly_ = false;
     // Cada módulo con HUD fija su posición de fábrica en su constructor con
     // SetDefaultLayout (así "Restablecer" vuelve a ella).
+    // Tecla de fábrica (la que tiene si el perfil no guardó otra).
+    void SetDefaultKeybind(int vk) {
+        keybind_ = vk;
+        defaultKeybind_ = vk;
+    }
     void SetDefaultLayout(HudLayout layout) {
         layout_ = layout;
         defaultLayout_ = layout;
@@ -167,6 +178,7 @@ private:
     Category category_;
     bool enabled_ = false;
     int keybind_ = keys::kNone;
+    int defaultKeybind_ = keys::kNone;
     HudLayout layout_;
     HudLayout defaultLayout_;
     bool customStyle_ = false;

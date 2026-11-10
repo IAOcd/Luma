@@ -28,3 +28,7 @@ desktop.ini
 # Instrucciones locales del asistente (no son parte del proyecto)
 CLAUDE.md
 .claude/
+
+# Servidor (Cloudflare): dependencias y datos locales de prueba
+server/node_modules/
+server/.wrangler/

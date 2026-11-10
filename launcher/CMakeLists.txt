@@ -29,6 +29,8 @@ add_executable(LumaLauncher WIN32
     src/gui/window.cpp
     src/gui/app.cpp
     src/gui/theme.cpp
+    src/gui/sky.cpp      # el cielo pixelado del cartel
+    src/gui/textures.cpp # imágenes (noticias, skins) como texturas
     src/account.cpp      # iniciar sesión con Microsoft/Xbox (opcional)
     src/net.cpp          # pedidos HTTPS (WinHTTP)
     src/signature.cpp    # comprobar la firma de las actualizaciones

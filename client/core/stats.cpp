@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -79,6 +80,7 @@ void Save() {
     nlohmann::json json = ReadJson(StatsPath());
     json["sessions"] = g_sessions;
     json["playSeconds"] = g_playSeconds;
+    json["lastPlayed"] = static_cast<std::int64_t>(std::time(nullptr));  // segundos desde 1970 (hora UTC)
     WriteJson(StatsPath(), json);
 }
 

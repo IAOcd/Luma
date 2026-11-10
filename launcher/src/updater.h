@@ -40,6 +40,7 @@ enum class State {
 struct Note {
     std::string title;
     std::string body;
+    std::wstring image;  // imagen ya descargada (ruta en el disco); vacío = sin imagen
 };
 
 struct Info {

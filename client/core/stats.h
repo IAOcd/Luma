@@ -3,7 +3,7 @@
 // =============================================================================
 //  Luma anota dos archivos en %APPDATA%\Luma\ que lee el launcher:
 //
-//    stats.json   -> {"sessions": 12, "playSeconds": 45210}
+//    stats.json   -> {"sessions": 12, "playSeconds": 45210, "lastPlayed": 1794300000}
 //                    Una "sesión" = una vez que Luma se cargó en el juego. El
 //                    tiempo cuenta solo mientras Luma está cargado. Se guarda
 //                    cada minuto (si el juego se cierra de golpe, se pierde

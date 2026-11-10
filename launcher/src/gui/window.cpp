@@ -26,6 +26,7 @@
 #include <d3d11.h>
 #include <dwmapi.h>
 #include <dxgi1_2.h>
+#include <objbase.h>
 
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
@@ -236,6 +237,9 @@ void Render(HWND hwnd) {
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    // COM: lo necesita WIC (el decodificador de imágenes de Windows) para las
+    // imágenes de las noticias y las skins.
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     WNDCLASSEXW wc{sizeof(wc)};
     wc.style = CS_HREDRAW | CS_VREDRAW;

@@ -12,6 +12,7 @@
 #include <cwchar>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <thread>
 
@@ -40,6 +41,9 @@ constexpr std::uint64_t kMaxExeSize = 64ull * 1024 * 1024;
 std::mutex g_mutex;
 Info g_info;
 json g_manifest;               // el último latest.json verificado (o el guardado)
+// Las novedades ya armadas por idioma (con la ruta de su imagen, si ya se bajó).
+// Se arman cuando cambia el manifiesto o terminan de bajar imágenes, nunca por frame.
+std::map<std::string, std::vector<Note>> g_notes;
 std::atomic<bool> g_autoInstall{true};
 std::atomic<bool> g_busy{false};
 std::atomic<bool> g_cancel{false};
@@ -85,10 +89,34 @@ void SetState(State state, const char* errorKey = "", std::string detail = {}) {
     g_info.detail = std::move(detail);
 }
 
+fs::path ImagePath(const std::string& url);
+bool ImageAllowed(const std::string& url);
+
+// Arma g_notes (llamar con g_mutex tomado).
+void RebuildNotesLocked() {
+    g_notes.clear();
+    if (!g_manifest.contains("notes") || !g_manifest["notes"].is_object()) return;
+    for (const auto& [lang, list] : g_manifest["notes"].items()) {
+        if (!list.is_array()) continue;
+        std::vector<Note>& out = g_notes[lang];
+        for (const json& n : list) {
+            if (!n.is_object()) continue;
+            Note note{n.value("title", std::string()), n.value("body", std::string()), {}};
+            const std::string url = n.value("image", std::string());
+            std::error_code ec;
+            if (!url.empty() && ImageAllowed(url) && fs::exists(ImagePath(url), ec)) {
+                note.image = ImagePath(url).native();
+            }
+            out.push_back(std::move(note));
+        }
+    }
+}
+
 // Toma lo que la interfaz necesita del latest.json.
 void ApplyManifest(const json& manifest) {
     std::lock_guard lock(g_mutex);
     g_manifest = manifest;
+    RebuildNotesLocked();
     g_info.latestVersion = manifest.value("version", std::string());
     g_info.date = manifest.value("date", std::string());
     g_info.supportedMinecraft.clear();
@@ -114,6 +142,54 @@ void SaveCache(const std::string& text) {
     std::error_code ec;
     fs::create_directories(DataDir(), ec);
     std::ofstream(DataDir() / L"latest.json", std::ios::binary | std::ios::trunc) << text;
+}
+
+// --- Imágenes de las noticias (opcionales) ------------------------------------------
+//  Cada novedad puede traer "image": la URL de una imagen del repositorio. Se
+//  baja una vez a %APPDATA%/Luma/news/ y después se usa la guardada.
+constexpr const char* kAllowedImagePrefixes[] = {
+    "https://raw.githubusercontent.com/IAOcd/Luma/",
+    "https://github.com/IAOcd/Luma/",
+};
+
+bool ImageAllowed(const std::string& url) {
+    for (const char* prefix : kAllowedImagePrefixes) {
+        if (url.rfind(prefix, 0) == 0) return true;
+    }
+    return false;
+}
+
+// Nombre del archivo local de una URL (un número a partir del texto: FNV-1a).
+fs::path ImagePath(const std::string& url) {
+    std::uint64_t h = 0xCBF29CE484222325ull;
+    for (unsigned char c : url) h = (h ^ c) * 0x100000001B3ull;
+    wchar_t name[32];
+    std::swprintf(name, std::size(name), L"%016llx.img", static_cast<unsigned long long>(h));
+    return DataDir() / L"news" / name;
+}
+
+void DownloadImages(const json& manifest) {
+    if (!manifest.contains("notes") || !manifest["notes"].is_object()) return;
+    std::error_code ec;
+    fs::create_directories(DataDir() / L"news", ec);
+    for (const auto& [lang, list] : manifest["notes"].items()) {
+        if (!list.is_array()) continue;
+        for (const json& note : list) {
+            const std::string url = note.is_object() ? note.value("image", std::string()) : std::string();
+            if (url.empty() || !ImageAllowed(url)) continue;
+            const fs::path file = ImagePath(url);
+            if (fs::exists(file, ec)) continue;
+            fs::path temp = file;
+            temp += L".tmp";
+            if (net::Download(net::Widen(url), temp, nullptr, g_cancel, 4ull * 1024 * 1024) == 200) {
+                fs::rename(temp, file, ec);
+            } else {
+                fs::remove(temp, ec);
+            }
+        }
+    }
+    std::lock_guard lock(g_mutex);
+    RebuildNotesLocked();  // ahora con las imágenes que se bajaron
 }
 
 // Pasos 1 y 2: bajar latest.json y su firma, y comprobarla.
@@ -212,6 +288,7 @@ void RunCheck(bool allowInstall) {
     if (!FetchManifest(manifest)) {
         return;
     }
+    DownloadImages(manifest);
     const std::string latest = manifest.value("version", std::string());
     if (!Newer(latest, kVersion)) {
         SetState(State::UpToDate);
@@ -287,17 +364,9 @@ Info Get() {
     Info info = g_info;
     // Las novedades en el idioma actual (si falta, en inglés).
     const char* lang = i18n::LanguageCode(i18n::CurrentLanguage());
-    if (g_manifest.contains("notes") && g_manifest["notes"].is_object()) {
-        const json& all = g_manifest["notes"];
-        const json& list = all.contains(lang) ? all[lang] : (all.contains("en") ? all["en"] : json::array());
-        if (list.is_array()) {
-            for (const json& n : list) {
-                if (n.is_object()) {
-                    info.notes.push_back({n.value("title", std::string()), n.value("body", std::string())});
-                }
-            }
-        }
-    }
+    auto it = g_notes.find(lang);
+    if (it == g_notes.end()) it = g_notes.find("en");
+    if (it != g_notes.end()) info.notes = it->second;
     return info;
 }
 

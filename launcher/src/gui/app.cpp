@@ -35,6 +35,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -46,6 +47,8 @@
 #include "account.h"
 #include "core/version.h"
 #include "flow.h"
+#include "gui/sky.h"
+#include "gui/textures.h"
 #include "gui/theme.h"
 #include "i18n.h"
 #include "render/icons.h"
@@ -61,8 +64,7 @@ using i18n::T;
 
 // --- Íconos propios del launcher (cuadrícula de 24x24, como los del menú) -------
 constexpr const char* kIconHome = "M3.5 10.5L12 3.5l8.5 7 M5.5 9v11h13V9 M10 20v-6h4v6";
-constexpr const char* kIconAddons =
-    "M5 8h3.5C8 6 9 4.5 10.5 4.5S13 6 12.5 8H16v3.5c2-.5 3.5.5 3.5 2s-1.5 2.5-3.5 2V19H5z";
+constexpr const char* kIconAddons = "M12 3l8 4.5v9L12 21l-8-4.5v-9z M12 12l8-4.5 M12 12v9 M12 12L4 7.5";  // un bloque
 constexpr const char* kIconSkins =
     "M8.5 4L4 6.5l1.8 4L8 9.6V20h8V9.6l2.2.9 1.8-4L15.5 4C14.8 5.3 13.5 6 12 6S9.2 5.3 8.5 4z";
 constexpr const char* kIconPlay = "F M8 5.2V18.8L18.8 12Z";
@@ -79,6 +81,10 @@ constexpr const char* kIconAlert = "M12 4L21 19.5H3z M12 10v4.5 M12 17v.5";
 constexpr const char* kIconClock = "M3.5 12C3.5 7.3 7.3 3.5 12 3.5S20.5 7.3 20.5 12S16.7 20.5 12 20.5S3.5 16.7 3.5 12z M12 7.5V12l3 2";
 constexpr const char* kIconSessions = "M4 6h16v12H4z M4 10h16 M8 14h3";
 constexpr const char* kIconNews = "M5 4h11l3 3v13H5z M8 9h8 M8 12.5h8 M8 16h5";
+constexpr const char* kIconSliders = "M4 6.5h9 M17 6.5h3 M15 4.5v4 M4 12h3 M11 12h9 M9 10v4 M4 17.5h11 M19 17.5h1 M17 15.5v4";
+constexpr const char* kIconCalendar = "M4.5 6h15v14h-15z M4.5 10h15 M8.5 3.5v4 M15.5 3.5v4";
+constexpr const char* kIconWindows = "M4 5.5l7-1v7H4z M13 4.2l7-1v8.3h-7z M4 13h7v7l-7-1z M13 13h7v8.3l-7-1z";
+constexpr const char* kIconChevron = "M9.5 6l6 6-6 6";
 constexpr const char* kIconFolder = "M3.5 6.5h6l2 2h9v10h-17z";
 constexpr const char* kIconUser = "M8 8C8 5.8 9.8 4 12 4S16 5.8 16 8S14.2 12 12 12S8 10.2 8 8z M4.5 20c.8-3.8 3.9-6 7.5-6s6.7 2.2 7.5 6";
 
@@ -123,6 +129,7 @@ double g_minimizeAt = 0.0;  // cuándo minimizar después de JUGAR (0 = no)
 bool g_minimizeAfterPlay = true;
 bool g_startWithWindows = false;  // la verdad está en el registro: se lee al abrir
 bool g_autoUpdate = true;         // actualizarse solo al abrir
+sky::Mode g_skyMode = sky::Mode::Auto;  // el cielo del cartel: según la hora o fijo
 updater::Info g_upd;              // el estado del actualizador en este frame
 bool g_closing = false;
 
@@ -133,6 +140,7 @@ struct LocalData {
     std::string profileName;      // del juego (profile.json, lo escribe Luma.dll)
     long long sessions = 0;       // stats.json
     long long playSeconds = 0;
+    long long lastPlayed = 0;     // segundos desde 1970 (0 = nunca)
 };
 std::mutex g_dataMutex;
 LocalData g_data;
@@ -169,6 +177,7 @@ void LoadConfig() {
     i18n::SetLanguage(i18n::LanguageFromCode(json.value("language", std::string("en")).c_str()));
     g_minimizeAfterPlay = json.value("minimizeAfterPlay", true);
     g_autoUpdate = json.value("autoUpdate", true);
+    g_skyMode = static_cast<sky::Mode>(std::clamp(json.value("sky", 0), 0, 3));
 }
 
 void SaveConfig() {
@@ -183,6 +192,7 @@ void SaveConfig() {
     json["language"] = i18n::LanguageCode(i18n::CurrentLanguage());
     json["minimizeAfterPlay"] = g_minimizeAfterPlay;
     json["autoUpdate"] = g_autoUpdate;
+    json["sky"] = static_cast<int>(g_skyMode);
     std::ofstream(dir / L"launcher.json") << json.dump(2);
 }
 
@@ -531,6 +541,11 @@ void DrawTitleBar(ImDrawList* d, ImVec2 display) {
             }
         }
         x -= w + S(2.0f);
+        if (b.action == 2) {
+            // separador antes del botón de tema
+            d->AddLine(ImVec2(x + w - S(4.0f), y + S(9.0f)), ImVec2(x + w - S(4.0f), y + h - S(9.0f)), Col(p.border), 1.0f);
+            x -= S(8.0f);
+        }
     }
 #ifndef NDEBUG
     // Compilación de depuración: que se note (inyecta la Luma.dll de Debug,
@@ -570,7 +585,7 @@ void DrawSidebar(ImDrawList* d, ImVec2 display, const account::Info& acc, const 
         {Page::Home, kIconHome, "nav.home"},
         {Page::Addons, kIconAddons, "nav.addons"},
         {Page::Skins, kIconSkins, "nav.skins"},
-        {Page::Settings, icons::kSettings, "nav.settings"},
+        {Page::Settings, kIconSliders, "nav.settings"},
     };
     float y = S(170.0f);
     const float itemH = S(46.0f);
@@ -622,7 +637,8 @@ void DrawSidebar(ImDrawList* d, ImVec2 display, const account::Info& acc, const 
         Dot(d, ImVec2(S(73.0f), avatar.y + S(10.0f)), p.success);
     }
     TextFit(d, g_fonts.tiny, ImVec2(S(signedIn ? 84.0f : 68.0f), avatar.y + S(2.0f)), Col(p.textDim),
-            signedIn ? T("account.signed_in") : T("nav.not_signed_in"), width - S(100.0f));
+            signedIn ? T("account.online") : T("nav.not_signed_in"), width - S(110.0f));
+    icons::Draw(d, kIconChevron, ImVec2(width - S(24.0f), avatar.y), S(14.0f), Col(Mix(p.textDim, p.text, hover)), S(1.8f));
 }
 
 // --- Inicio -----------------------------------------------------------------------------
@@ -659,86 +675,149 @@ void DrawPlayStatus(ImDrawList* d, ImVec2 pos, float maxWidth, const PlaySnapsho
     }
 }
 
+// Texto con una sombra suave debajo (para que se lea sobre el cielo).
+void ShadowText(ImDrawList* d, ImFont* font, ImVec2 pos, ImU32 color, const char* text, float width = 0.0f) {
+    const ImVec2 o(S(1.5f), S(2.0f));
+    if (width > 0.0f) {
+        TextFit(d, font, ImVec2(pos.x + o.x, pos.y + o.y), IM_COL32(0, 0, 0, static_cast<int>(90 * g_fade)), text, width);
+        TextFit(d, font, pos, color, text, width);
+    } else {
+        Text(d, font, ImVec2(pos.x + o.x, pos.y + o.y), IM_COL32(0, 0, 0, static_cast<int>(90 * g_fade)), text);
+        Text(d, font, pos, color, text);
+    }
+}
+
+// El menú de la flechita junto a JUGAR (se dibuja al final, encima de todo).
+bool g_playMenuOpen = false;
+ImVec2 g_playMenuAnchor{0, 0};  // esquina superior izquierda de la flechita
+
+void DrawPlayMenu(ImDrawList* d) {
+    if (!g_playMenuOpen) {
+        return;
+    }
+    const Palette& p = P();
+    struct Item {
+        const char* id;
+        const char* key;
+        const char* icon;
+        int action;
+    };
+    const Item items[] = {
+        {"##pm_folder", "play.menu_folder", kIconFolder, 0},
+        {"##pm_logs", "play.menu_logs", kIconNews, 1},
+    };
+    float width = S(220.0f);
+    for (const Item& it : items) {
+        width = std::max(width, TextSize(g_fonts.semibold, T(it.key)).x + S(64.0f));
+    }
+    const float itemH = S(40.0f);
+    const float height = itemH * static_cast<float>(std::size(items)) + S(12.0f);
+    // Se abre hacia ARRIBA (encima del cartel: ahí no hay otros botones).
+    const ImVec2 min(g_playMenuAnchor.x, g_playMenuAnchor.y - height - S(8.0f));
+    const ImVec2 max(min.x + width, min.y + height);
+    d->AddRectFilled(ImVec2(min.x + S(2), min.y + S(6)), ImVec2(max.x + S(2), max.y + S(6)), Col(ImVec4(0, 0, 0, 1), 0.25f),
+                     S(12.0f));
+    d->AddRectFilled(min, max, Col(p.card), S(12.0f));
+    d->AddRect(min, max, Col(p.border), S(12.0f));
+    float y = min.y + S(6.0f);
+    bool clickedItem = false;
+    for (const Item& it : items) {
+        const ImVec2 imin(min.x + S(6.0f), y);
+        const ImVec2 imax(max.x - S(6.0f), y + itemH);
+        float hover = 0.0f;
+        if (Hit(it.id, imin, imax, &hover)) {
+            clickedItem = true;
+            OpenFolder(it.action == 0 ? DataDir() : DataDir() / L"logs");
+        }
+        d->AddRectFilled(imin, imax, Col(p.text, 0.07f * hover), S(8.0f));
+        icons::Draw(d, it.icon, ImVec2(imin.x + S(18.0f), (imin.y + imax.y) * 0.5f), S(17.0f), Col(p.textDim), S(1.5f));
+        Text(d, g_fonts.semibold, ImVec2(imin.x + S(38.0f), (imin.y + imax.y - g_fonts.semibold->FontSize) * 0.5f),
+             Col(p.text), T(it.key));
+        y += itemH;
+    }
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const bool inside = mouse.x >= min.x && mouse.x < max.x && mouse.y >= min.y && mouse.y < max.y;
+    if (clickedItem || (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !inside && !ImGui::IsAnyItemHovered())) {
+        g_playMenuOpen = false;
+    }
+}
+
+// La versión de Windows ("Windows 11" / "Windows 10"), leída una vez.
+const char* WindowsName() {
+    static char name[32] = "";
+    if (name[0] == 0) {
+        using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
+        OSVERSIONINFOW info{sizeof(info)};
+        const auto fn = reinterpret_cast<RtlGetVersionFn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
+        if (fn != nullptr && fn(&info) == 0) {
+            std::snprintf(name, sizeof(name), "Windows %d", info.dwMajorVersion >= 10 && info.dwBuildNumber >= 22000 ? 11
+                                                                   : static_cast<int>(info.dwMajorVersion));
+        } else {
+            std::snprintf(name, sizeof(name), "Windows");
+        }
+    }
+    return name;
+}
+
 void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, const std::string& name) {
     const Palette& p = P();
     const float rounding = S(kRound + 4.0f);
-    GradientRect(d, min, max, C(p.heroTop), C(p.heroBottom), rounding);
-
-    // Formas del logo, grandes y tenues, moviéndose despacio a la derecha.
-    const float t = static_cast<float>(ImGui::GetTime());
-    const float h = max.y - min.y;
-    d->PushClipRect(ImVec2(min.x + rounding * 0.4f, min.y + 1), ImVec2(max.x - rounding * 0.4f, max.y - 1), true);
-    icons::Draw(d, icons::kLumaLogo,
-                ImVec2(max.x - h * 0.55f + std::sin(t * 0.35f) * S(10.0f), min.y + h * 0.58f + std::cos(t * 0.3f) * S(8.0f)),
-                h * 1.45f, C(p.heroShape, 1.6f));
-    icons::Draw(d, icons::kLumaLogo,
-                ImVec2(max.x - h * 1.45f + std::cos(t * 0.27f) * S(14.0f), min.y + h * 0.95f + std::sin(t * 0.33f) * S(6.0f)),
-                h * 0.9f, C(p.heroShape));
-    // Un brillo suave (muchos círculos casi transparentes = sin "anillos")
-    const ImVec2 glow(max.x - h * 0.75f, min.y + h * 0.35f);
-    for (int i = 24; i >= 1; --i) {
-        d->AddCircleFilled(glow, h * 0.022f * i, C(p.text, 0.0045f), 48);
-    }
-    d->PopClipRect();
+    // El cielo pixelado (sigue la hora o el modo de Ajustes).
+    sky::Draw(d, min, max, S(5.0f), rounding, Col(p.background), g_skyMode);
+    // Sombra suave a la izquierda, detrás del texto (para que se lea aunque
+    // pase una nube o sea de día).
+    d->AddRectFilledMultiColor(ImVec2(min.x + rounding * 0.5f, min.y + 1), ImVec2(min.x + (max.x - min.x) * 0.6f, max.y - 1),
+                               C(ImVec4(0, 0, 0, 1), 0.38f), C(ImVec4(0, 0, 0, 1), 0.0f), C(ImVec4(0, 0, 0, 1), 0.0f),
+                               C(ImVec4(0, 0, 0, 1), 0.38f));
     d->AddRect(min, max, C(p.border), rounding, 0, 1.0f);
-
-    // Píldora arriba a la derecha: el estado de Luma
-    const bool loaded = data.game.lumaLoaded;
-    char pillText[96];
-    const ImVec4* pillDot = &p.textDim;
-    bool pillSpin = false;
-    if (loaded) {
-        std::snprintf(pillText, sizeof(pillText), "%s", T("home.luma_loaded"));
-        pillDot = &p.success;
-    } else if (!g_upd.updatedFrom.empty() && ImGui::GetTime() < 10.0) {
-        std::snprintf(pillText, sizeof(pillText), T("update.updated_to"), kVersion);
-        pillDot = &p.success;
-    } else {
-        switch (g_upd.state) {
-            case updater::State::Checking:
-                std::snprintf(pillText, sizeof(pillText), "%s", T("update.checking"));
-                pillSpin = true;
-                break;
-            case updater::State::UpToDate:
-                std::snprintf(pillText, sizeof(pillText), "%s", T("update.up_to_date"));
-                pillDot = &p.success;
-                break;
-            case updater::State::Available:
-                std::snprintf(pillText, sizeof(pillText), T("update.available"), g_upd.latestVersion.c_str());
-                pillDot = &p.warning;
-                break;
-            default:
-                std::snprintf(pillText, sizeof(pillText), "%s", T("home.ready"));
-                break;
-        }
-    }
-    const char* pill = pillText;
-    const ImVec2 ps = TextSize(g_fonts.tiny, pill);
-    const ImVec2 pmax(max.x - S(20.0f), min.y + S(20.0f) + S(30.0f));
-    const ImVec2 pmin(pmax.x - ps.x - S(40.0f), min.y + S(20.0f));
-    d->AddRectFilled(pmin, pmax, C(p.background, 0.55f), S(15.0f));
-    d->AddRect(pmin, pmax, C(p.border), S(15.0f));
-    if (pillSpin) {
-        Spinner(d, ImVec2(pmin.x + S(16.0f), (pmin.y + pmax.y) * 0.5f), S(5.0f), C(p.textDim));
-    } else {
-        Dot(d, ImVec2(pmin.x + S(16.0f), (pmin.y + pmax.y) * 0.5f), *pillDot);
-    }
-    Text(d, g_fonts.tiny, ImVec2(pmin.x + S(28.0f), (pmin.y + pmax.y) * 0.5f - ps.y * 0.5f), C(p.text), pill);
-
-    // Textos
+    const ImU32 white = C(ImVec4(1, 1, 1, 1));
+    const ImU32 soft = C(ImVec4(1, 1, 1, 1), 0.82f);
     const float left = min.x + S(36.0f);
-    float y = min.y + S(30.0f);
-    Text(d, g_fonts.semibold, ImVec2(left, y), C(p.textDim), T("home.welcome"));
-    y += g_fonts.semibold->FontSize + S(2.0f);
-    TextFit(d, g_fonts.hero, ImVec2(left, y), C(p.text), name.c_str(), (max.x - min.x) * 0.55f);
-    y += g_fonts.hero->FontSize + S(4.0f);
-    Text(d, g_fonts.regular, ImVec2(left, y), C(p.textDim), T("home.subtitle"));
 
-    // Botón JUGAR
+    // Píldora arriba a la izquierda: el estado (Luma cargado / actualizaciones).
+    {
+        char text[96];
+        const ImVec4* dot = &p.success;
+        bool spin = false;
+        if (data.game.lumaLoaded) {
+            std::snprintf(text, sizeof(text), "%s", T("home.luma_loaded"));
+        } else if (!g_upd.updatedFrom.empty() && ImGui::GetTime() < 10.0) {
+            std::snprintf(text, sizeof(text), T("update.updated_to"), kVersion);
+        } else if (g_upd.state == updater::State::Checking) {
+            std::snprintf(text, sizeof(text), "%s", T("update.checking"));
+            spin = true;
+        } else if (g_upd.state == updater::State::Available) {
+            std::snprintf(text, sizeof(text), T("update.available"), g_upd.latestVersion.c_str());
+            dot = &p.warning;
+        } else {
+            std::snprintf(text, sizeof(text), "%s", T("home.ready_to_play"));
+        }
+        const ImVec2 ts = TextSize(g_fonts.tiny, text);
+        const ImVec2 pmin(left, min.y + S(22.0f));
+        const ImVec2 pmax(pmin.x + ts.x + S(40.0f), pmin.y + S(30.0f));
+        d->AddRectFilled(pmin, pmax, C(ImVec4(0, 0, 0, 1), 0.35f), S(15.0f));
+        if (spin) {
+            Spinner(d, ImVec2(pmin.x + S(16.0f), (pmin.y + pmax.y) * 0.5f), S(5.0f), white);
+        } else {
+            Dot(d, ImVec2(pmin.x + S(16.0f), (pmin.y + pmax.y) * 0.5f), *dot);
+        }
+        Text(d, g_fonts.tiny, ImVec2(pmin.x + S(28.0f), (pmin.y + pmax.y - ts.y) * 0.5f), white, text);
+    }
+
+    // Bienvenida
+    float y = min.y + S(66.0f);
+    ShadowText(d, g_fonts.semibold, ImVec2(left, y), soft, T("home.welcome"));
+    y += g_fonts.semibold->FontSize + S(2.0f);
+    ShadowText(d, g_fonts.hero, ImVec2(left, y), white, name.c_str(), (max.x - min.x) * 0.5f);
+    y += g_fonts.hero->FontSize + S(4.0f);
+    ShadowText(d, g_fonts.regular, ImVec2(left, y), soft, T("home.subtitle"));
+
+    // Botón JUGAR + flechita del menú
     const PlaySnapshot snap = g_flow.Snapshot();
     const bool busy = g_flow.Busy();
-    const ImVec2 bmin(left, max.y - S(30.0f) - S(58.0f) - S(34.0f));
-    const ImVec2 bmax(bmin.x + S(210.0f), bmin.y + S(58.0f));
+    const float buttonH = S(56.0f);
+    const ImVec2 bmin(left, max.y - S(28.0f) - S(22.0f) - buttonH);
+    const ImVec2 bmax(bmin.x + S(230.0f), bmin.y + buttonH);
     float hover = 0.0f;
     if (Hit("##play", bmin, bmax, &hover, !busy)) {
         g_flow.Start(g_upd.supportedMinecraft);
@@ -748,10 +827,9 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, cons
     const ImVec2 lmin(bmin.x, bmin.y - lift);
     const ImVec2 lmax(bmax.x, bmax.y - lift);
     d->AddRectFilled(ImVec2(lmin.x + S(2), lmin.y + S(6)), ImVec2(lmax.x - S(2), lmax.y + S(6)),
-                     C(ImVec4(0, 0, 0, 1), 0.18f + 0.10f * hover), S(14.0f));  // sombra suave
-    const ImVec4 fill = busy ? Mix(p.accent, p.card, 0.35f) : p.accent;
-    d->AddRectFilled(lmin, lmax, C(fill), S(14.0f));
-    d->AddRectFilled(lmin, lmax, C(p.onAccent, 0.08f * hover), S(14.0f));
+                     C(ImVec4(0, 0, 0, 1), 0.25f + 0.10f * hover), S(12.0f));
+    d->AddRectFilled(lmin, lmax, C(busy ? Mix(p.accent, p.card, 0.35f) : p.accent), S(12.0f));
+    d->AddRectFilled(lmin, lmax, C(p.onAccent, 0.08f * hover), S(12.0f));
     const char* label = T("home.play");
     const ImVec2 ls = TextSize(g_fonts.title, label);
     const float contentW = S(22.0f) + S(14.0f) + ls.x;
@@ -764,12 +842,39 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, cons
     }
     Text(d, g_fonts.title, ImVec2(cx + S(36.0f), cy - ls.y * 0.5f), C(p.onAccent), label);
 
-    // Estado debajo del botón
-    DrawPlayStatus(d, ImVec2(left, bmax.y + S(12.0f)), (max.x - min.x) - S(72.0f), snap);
-    if (snap.state == PlayState::Unsupported && !busy) {
-        // Versión de Minecraft que esta Luma todavía no conoce: jugar igual (bajo tu responsabilidad).
-        if (Button("##play_anyway", ImVec2(bmax.x + S(16.0f), bmin.y + S(10.0f)), T("play.anyway"), false)) {
-            g_flow.Start(g_upd.supportedMinecraft, true);
+    const ImVec2 dmin(bmax.x + S(10.0f), bmin.y);
+    const ImVec2 dmax(dmin.x + buttonH, bmax.y);
+    float dropHover = 0.0f;
+    if (Hit("##play_menu", dmin, dmax, &dropHover)) {
+        g_playMenuOpen = !g_playMenuOpen;
+        g_playMenuAnchor = dmin;
+    }
+    d->AddRectFilled(dmin, dmax, C(ImVec4(0, 0, 0, 1), 0.35f + 0.15f * dropHover), S(12.0f));
+    d->AddRect(dmin, dmax, C(ImVec4(1, 1, 1, 1), 0.15f), S(12.0f));
+    icons::Draw(d, g_playMenuOpen ? "M7 14l5-5 5 5" : "M7 10l5 5 5-5", ImVec2((dmin.x + dmax.x) * 0.5f, (dmin.y + dmax.y) * 0.5f),
+                S(20.0f), white, S(2.0f));
+
+    // Debajo: qué juego y versión.
+    char info[64];
+    if (data.game.gameVersion.empty()) {
+        std::snprintf(info, sizeof(info), "Bedrock Edition  ·  %s", T("home.not_installed"));
+    } else {
+        std::snprintf(info, sizeof(info), "Bedrock Edition  ·  v%s", data.game.gameVersion.c_str());
+    }
+    ShadowText(d, g_fonts.tiny, ImVec2(left + S(4.0f), bmax.y + S(10.0f)), soft, info);
+
+    // El estado de JUGAR, a la derecha de los botones.
+    const float statusX = dmax.x + S(20.0f);
+    const float statusW = (max.x - S(30.0f)) - statusX;
+    if (snap.state != PlayState::Idle && statusW > S(120.0f)) {
+        const ImVec2 smin(statusX - S(12.0f), bmin.y - S(2.0f));
+        const ImVec2 smax(std::min(max.x - S(20.0f), statusX + statusW), bmax.y + S(2.0f));
+        d->AddRectFilled(smin, smax, C(ImVec4(0, 0, 0, 1), 0.35f), S(12.0f));
+        DrawPlayStatus(d, ImVec2(statusX, bmin.y + S(8.0f)), statusW - S(12.0f), snap);
+        if (snap.state == PlayState::Unsupported && !busy) {
+            if (Button("##play_anyway", ImVec2(statusX, bmin.y + S(26.0f)), T("play.anyway"), false)) {
+                g_flow.Start(g_upd.supportedMinecraft, true);
+            }
         }
     }
 }
@@ -787,11 +892,11 @@ void DrawQuickAccess(ImDrawList* d, ImVec2 min, ImVec2 max) {
     const Tile tiles[] = {
         {Page::Addons, kIconAddons, "nav.addons", "home.qa_addons"},
         {Page::Skins, kIconSkins, "nav.skins", "home.qa_skins"},
-        {Page::Settings, icons::kSettings, "nav.settings", "home.qa_settings"},
+        {Page::Settings, kIconSliders, "nav.settings", "home.qa_settings"},
     };
     const float top = min.y + S(54.0f);
     const float bottom = max.y - S(16.0f);
-    const float gap = S(12.0f);
+    const float gap = S(10.0f);
     const float tileW = ((max.x - min.x) - S(40.0f) - gap * 2.0f) / 3.0f;
     for (int i = 0; i < 3; ++i) {
         const ImVec2 tmin(min.x + S(20.0f) + i * (tileW + gap), top);
@@ -806,20 +911,44 @@ void DrawQuickAccess(ImDrawList* d, ImVec2 min, ImVec2 max) {
         d->AddRect(tmin, tmax, C(Mix(p.border, p.accent, hover * 0.35f)), S(12.0f));
         const float h = tmax.y - tmin.y;
         const float cx = (tmin.x + tmax.x) * 0.5f;
-        const bool roomy = h > S(110.0f);  // ¿entra la descripción?
+        const bool roomy = h > S(100.0f);
         const char* title = T(tiles[i].title);
         const ImVec2 ts = TextSize(g_fonts.semibold, title);
         const float blockH = S(28.0f) + S(8.0f) + ts.y + (roomy ? S(4.0f) + g_fonts.tiny->FontSize : 0.0f);
         const float y0 = tmin.y + (h - blockH) * 0.5f;
         icons::Draw(d, tiles[i].icon, ImVec2(cx, y0 + S(14.0f) - S(3.0f) * hover), S(28.0f), C(Mix(p.textDim, p.text, hover)),
                     S(1.8f));
-        Text(d, g_fonts.semibold, ImVec2(cx - ts.x * 0.5f, y0 + S(36.0f)), C(p.text), title);
+        TextFit(d, g_fonts.semibold, ImVec2(cx - std::min(ts.x, tileW - S(12.0f)) * 0.5f, y0 + S(36.0f)), C(p.text), title,
+                tileW - S(12.0f));
         const char* sub = T(tiles[i].sub);
         const ImVec2 ss = TextSize(g_fonts.tiny, sub);
         if (roomy && ss.x < tileW - S(12.0f)) {
             Text(d, g_fonts.tiny, ImVec2(cx - ss.x * 0.5f, y0 + S(36.0f) + ts.y + S(4.0f)), C(p.textDim), sub);
         }
     }
+}
+
+// "Tu skin": en el paso 2 se dibuja en 3D. Por ahora, una silueta.
+void DrawSkinCard(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("skin.title"));
+    const float w = max.x - min.x;
+    const float h = max.y - min.y - S(56.0f);
+    const float u = std::min(w / 14.0f, h / 22.0f);  // un "píxel" de la silueta
+    const ImVec2 o(min.x + (w - 8.0f * u) * 0.5f, min.y + S(50.0f) + (h - 20.0f * u) * 0.5f);
+    const ImU32 c = C(p.textDim, 0.25f);
+    auto block = [&](float x0, float y0, float x1, float y1) {
+        d->AddRectFilled(ImVec2(o.x + x0 * u, o.y + y0 * u), ImVec2(o.x + x1 * u, o.y + y1 * u), c, u * 0.3f);
+    };
+    block(2, 0, 6, 4);     // cabeza
+    block(2, 4, 6, 10);    // cuerpo
+    block(0, 4, 2, 10);    // brazos
+    block(6, 4, 8, 10);
+    block(2, 10, 4, 16);   // piernas
+    block(4, 10, 6, 16);
+    const char* hint = T("skin.placeholder");
+    TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(16.0f), o.y + 17.0f * u), C(p.textDim), hint, w - S(32.0f));
 }
 
 void InfoRow(ImDrawList* d, ImVec2 pos, float width, const char* label, const char* value, const ImVec4* dot,
@@ -830,7 +959,7 @@ void InfoRow(ImDrawList* d, ImVec2 pos, float width, const char* label, const ch
         icons::Draw(d, icon, ImVec2(x + S(9.0f), pos.y + g_fonts.regular->FontSize * 0.5f), S(18.0f), C(p.textDim), S(1.6f));
         x += S(28.0f);
     }
-    Text(d, g_fonts.regular, ImVec2(x, pos.y), C(p.textDim), label);
+    TextFit(d, g_fonts.regular, ImVec2(x, pos.y), C(p.textDim), label, width * 0.55f - (x - pos.x));
     const ImVec2 vs = TextSize(g_fonts.semibold, value);
     const float vx = pos.x + width - vs.x;
     Text(d, g_fonts.semibold, ImVec2(vx, pos.y), C(p.text), value);
@@ -840,7 +969,6 @@ void InfoRow(ImDrawList* d, ImVec2 pos, float width, const char* label, const ch
 }
 
 void DrawStats(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
-    const Palette& p = P();
     Card(d, min, max);
     SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("stats.title"));
     const float x = min.x + S(22.0f);
@@ -855,14 +983,31 @@ void DrawStats(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
     }
     char sessions[24];
     std::snprintf(sessions, sizeof(sessions), "%lld", data.sessions);
-    const float rowH = std::min(S(36.0f), ((max.y - min.y) - S(80.0f)) / 2.0f);
+    // Última vez que jugaste: hoy / ayer / hace N días.
+    char last[48];
+    if (data.lastPlayed <= 0) {
+        std::snprintf(last, sizeof(last), "%s", T("stats.never"));
+    } else {
+        const std::time_t now = std::time(nullptr);
+        std::tm today{};
+        std::tm then{};
+        const std::time_t lp = static_cast<std::time_t>(data.lastPlayed);
+        localtime_s(&today, &now);
+        localtime_s(&then, &lp);
+        today.tm_hour = today.tm_min = today.tm_sec = 0;
+        then.tm_hour = then.tm_min = then.tm_sec = 0;
+        const long long days = static_cast<long long>(std::difftime(std::mktime(&today), std::mktime(&then)) / 86400.0 + 0.5);
+        if (days <= 0) std::snprintf(last, sizeof(last), "%s", T("stats.today"));
+        else if (days == 1) std::snprintf(last, sizeof(last), "%s", T("stats.yesterday"));
+        else std::snprintf(last, sizeof(last), T("stats.days_ago"), static_cast<int>(days));
+    }
+    const float rowH = std::min(S(38.0f), ((max.y - min.y) - S(62.0f)) / 3.0f);
     float y = min.y + S(56.0f);
     InfoRow(d, ImVec2(x, y), w, T("stats.playtime"), playtime, nullptr, kIconClock);
     y += rowH;
     InfoRow(d, ImVec2(x, y), w, T("stats.sessions"), sessions, nullptr, kIconSessions);
-    if (max.y - (y + rowH) > g_fonts.tiny->FontSize + S(12.0f)) {
-        Text(d, g_fonts.tiny, ImVec2(x, max.y - S(14.0f) - g_fonts.tiny->FontSize), C(p.textDim), T("stats.hint"));
-    }
+    y += rowH;
+    InfoRow(d, ImVec2(x, y), w, T("stats.last_played"), last, nullptr, kIconCalendar);
 }
 
 // Noticias: las escribimos nosotros (van dentro del launcher). Con el
@@ -886,20 +1031,38 @@ void DrawNews(ImDrawList* d, ImVec2 min, ImVec2 max) {
     const float w = (max.x - min.x) - S(44.0f);
     const float itemH = S(52.0f);
     float y = min.y + S(54.0f);
-    // Si ya bajamos las notas de la última versión (de GitHub), van esas.
+    // Si ya bajamos las notas de la última versión (de GitHub), van esas. Cada
+    // una puede traer imagen (miniatura a la izquierda) o no (un ícono).
     if (!g_upd.notes.empty()) {
+        bool anyImage = false;
+        for (const updater::Note& note : g_upd.notes) anyImage |= !note.image.empty();
+        const float rowH = anyImage ? S(70.0f) : itemH;
         for (const updater::Note& note : g_upd.notes) {
-            if (y + itemH > max.y - S(8.0f)) {
+            if (y + rowH > max.y - S(8.0f)) {
                 break;
             }
-            d->AddCircleFilled(ImVec2(x + S(16.0f), y + S(18.0f)), S(16.0f), C(p.background));
-            icons::Draw(d, kIconNews, ImVec2(x + S(16.0f), y + S(18.0f)), S(17.0f), C(p.textDim), S(1.5f));
+            float textX = x + S(44.0f);
+            const textures::Texture* image = note.image.empty() ? nullptr : textures::Get(note.image);
+            if (image != nullptr) {
+                const float th = rowH - S(10.0f);
+                const float tw = th * 16.0f / 9.0f;
+                d->AddImageRounded(image->id, ImVec2(x, y), ImVec2(x + tw, y + th), ImVec2(0, 0), ImVec2(1, 1),
+                                   C(ImVec4(1, 1, 1, 1)), S(8.0f));
+                textX = x + tw + S(14.0f);
+            } else {
+                const float cy = y + (anyImage ? (rowH - S(10.0f)) * 0.5f : S(18.0f));
+                d->AddCircleFilled(ImVec2(x + S(16.0f), cy), S(16.0f), C(p.background));
+                icons::Draw(d, kIconNews, ImVec2(x + S(16.0f), cy), S(17.0f), C(p.textDim), S(1.5f));
+            }
             const ImVec2 ds = TextSize(g_fonts.tiny, g_upd.date.c_str());
             Text(d, g_fonts.tiny, ImVec2(x + w - ds.x, y + S(2.0f)), C(p.textDim), g_upd.date.c_str());
-            TextFit(d, g_fonts.semibold, ImVec2(x + S(44.0f), y), C(p.text), note.title.c_str(), w - S(56.0f) - ds.x);
-            TextFit(d, g_fonts.tiny, ImVec2(x + S(44.0f), y + g_fonts.semibold->FontSize + S(3.0f)), C(p.textDim),
-                    note.body.c_str(), w - S(44.0f));
-            y += itemH;
+            TextFit(d, g_fonts.semibold, ImVec2(textX, y), C(p.text), note.title.c_str(), x + w - textX - ds.x - S(12.0f));
+            TextFit(d, g_fonts.tiny, ImVec2(textX, y + g_fonts.semibold->FontSize + S(3.0f)), C(p.textDim),
+                    note.body.c_str(), x + w - textX);
+            if (&note != &g_upd.notes.back()) {
+                d->AddLine(ImVec2(textX, y + rowH - S(5.0f)), ImVec2(x + w, y + rowH - S(5.0f)), C(p.border));
+            }
+            y += rowH;
         }
         return;
     }
@@ -924,69 +1087,76 @@ void DrawClientInfo(ImDrawList* d, ImVec2 min, ImVec2 max, const GameStatus& sta
     SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("home.client_info"));
     const float x = min.x + S(22.0f);
     const float w = (max.x - min.x) - S(44.0f);
-    const float rowH = std::min(S(36.0f), ((max.y - min.y) - S(62.0f)) / 4.0f);
-    float y = min.y + S(56.0f);
-    char version[32];
-    std::snprintf(version, sizeof(version), "v%s", kVersion);
-    InfoRow(d, ImVec2(x, y), w, T("home.luma_version"), version, nullptr);
+    const float rowH = std::min(S(40.0f), ((max.y - min.y) - S(62.0f)) / 4.0f);
+    float y = min.y + S(58.0f);
+    // Luma Launcher: versión + estado de las actualizaciones
+    {
+        char version[32];
+        std::snprintf(version, sizeof(version), "v%s", kVersion);
+        const char* chip = !updater::OfficialBuild()                       ? T("update.dev_build")
+                           : g_upd.state == updater::State::UpToDate       ? T("update.chip_ok")
+                           : g_upd.state == updater::State::Available      ? T("update.chip_new")
+                                                                           : nullptr;
+        const ImVec4* chipColor = g_upd.state == updater::State::Available ? &p.warning
+                                  : !updater::OfficialBuild()               ? &p.textDim
+                                                                            : &p.success;
+        icons::Draw(d, icons::kLumaLogo, ImVec2(x + S(9.0f), y + g_fonts.regular->FontSize * 0.5f), S(18.0f), C(p.textDim));
+        Text(d, g_fonts.regular, ImVec2(x + S(28.0f), y), C(p.textDim), "Luma Launcher");
+        float vx = x + w;
+        if (chip != nullptr) {
+            const ImVec2 cs = TextSize(g_fonts.tiny, chip);
+            vx -= cs.x;
+            Text(d, g_fonts.tiny, ImVec2(vx, y + S(2.0f)), C(*chipColor), chip);
+            Dot(d, ImVec2(vx - S(12.0f), y + S(9.0f)), *chipColor);
+            vx -= S(28.0f);
+        }
+        const ImVec2 vs = TextSize(g_fonts.semibold, version);
+        Text(d, g_fonts.semibold, ImVec2(vx - vs.x, y), C(p.text), version);
+    }
     y += rowH;
-    InfoRow(d, ImVec2(x, y), w, T("home.game_version"),
-            status.gameVersion.empty() ? T("home.not_installed") : status.gameVersion.c_str(), nullptr);
-    y += rowH;
-    InfoRow(d, ImVec2(x, y), w, T("home.game"), status.running ? T("home.game_running") : T("home.game_closed"),
-            status.running ? &p.success : &p.textDim);
+    // Minecraft: versión + abierto/cerrado
+    {
+        icons::Draw(d, kIconAddons, ImVec2(x + S(9.0f), y + g_fonts.regular->FontSize * 0.5f), S(18.0f), C(p.textDim),
+                    S(1.6f));
+        Text(d, g_fonts.regular, ImVec2(x + S(28.0f), y), C(p.textDim), "Minecraft");
+        const char* state = status.running ? T("home.game_running") : T("home.game_closed");
+        const ImVec2 ss = TextSize(g_fonts.tiny, state);
+        float vx = x + w - ss.x;
+        Text(d, g_fonts.tiny, ImVec2(vx, y + S(2.0f)), C(status.running ? p.success : p.textDim), state);
+        Dot(d, ImVec2(vx - S(12.0f), y + S(9.0f)), status.running ? p.success : p.textDim);
+        vx -= S(28.0f);
+        const char* version = status.gameVersion.empty() ? T("home.not_installed") : status.gameVersion.c_str();
+        const ImVec2 vs = TextSize(g_fonts.semibold, version);
+        Text(d, g_fonts.semibold, ImVec2(vx - vs.x, y), C(p.text), version);
+    }
     y += rowH;
     InfoRow(d, ImVec2(x, y), w, T("home.luma"), status.lumaLoaded ? T("home.luma_loaded") : T("home.luma_unloaded"),
-            status.lumaLoaded ? &p.success : &p.textDim);
-}
-
-void DrawBanner(ImDrawList* d, ImVec2 min, ImVec2 max) {
-    const Palette& p = P();
-    const float rounding = S(kRound);
-    GradientRect(d, min, max, C(p.heroBottom), C(p.heroTop), rounding);
-    const float h = max.y - min.y;
-    d->PushClipRect(ImVec2(min.x + rounding * 0.5f, min.y + 1), ImVec2(max.x - rounding * 0.5f, max.y - 1), true);
-    const float t = static_cast<float>(ImGui::GetTime());
-    for (int i = 0; i < 4; ++i) {
-        const float fx = max.x - h * (0.9f + i * 1.25f) + std::sin(t * 0.25f + i) * S(6.0f);
-        icons::Draw(d, icons::kLumaLogo, ImVec2(fx, min.y + h * (0.75f + 0.1f * (i % 2))), h * (1.6f - i * 0.18f),
-                    C(p.heroShape));
-    }
-    d->PopClipRect();
-    d->AddRect(min, max, C(p.border), rounding);
-    const float cy = (min.y + max.y) * 0.5f;
-    icons::Draw(d, icons::kLumaLogo, ImVec2(min.x + S(48.0f), cy), S(38.0f), C(p.text));
-    const char* brand = "LUMA";
-    const ImVec2 bs = TextSize(g_fonts.title, brand);
-    Text(d, g_fonts.title, ImVec2(min.x + S(78.0f), cy - bs.y * 0.5f), C(p.text), brand);
-    const float lineX = min.x + S(78.0f) + bs.x + S(22.0f);
-    d->AddLine(ImVec2(lineX, cy - S(14.0f)), ImVec2(lineX, cy + S(14.0f)), C(p.border), 1.0f);
-    const char* tagline = T("home.banner");
-    const ImVec2 ts = TextSize(g_fonts.regular, tagline);
-    Text(d, g_fonts.regular, ImVec2(lineX + S(22.0f), cy - ts.y * 0.5f), C(p.textDim), tagline);
+            status.lumaLoaded ? &p.success : &p.textDim, icons::kLumaLogo);
+    y += rowH;
+    InfoRow(d, ImVec2(x, y), w, T("home.platform"), WindowsName(), nullptr, kIconWindows);
 }
 
 void DrawHome(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, const std::string& name) {
     const float width = max.x - min.x;
     const float height = max.y - min.y;
     const float gap = S(kGap);
-    // Alturas: el cartel se adapta; la franja de la marca solo si sobra lugar.
-    const float bannerH = height > S(860.0f) ? S(86.0f) : 0.0f;
-    const float heroH = std::clamp(height * 0.38f, S(236.0f), S(340.0f));
-    const float rest = height - heroH - gap - (bannerH > 0 ? bannerH + gap : 0.0f);
-    const float row1H = std::clamp(rest * 0.42f, S(140.0f), S(200.0f));
-    const float row2H = rest - row1H - gap;
+    const float heroH = std::clamp(height * 0.42f, S(250.0f), S(380.0f));
+    const float rest = height - heroH - gap * 2.0f;
+    const float row1H = std::clamp(rest * 0.48f, S(150.0f), S(240.0f));
+    const float row2H = rest - row1H;
     DrawHero(d, min, ImVec2(max.x, min.y + heroH), data, name);
-    const float leftW = width * 0.58f;
     float y = min.y + heroH + gap;
-    DrawQuickAccess(d, ImVec2(min.x, y), ImVec2(min.x + leftW, y + row1H));
-    DrawStats(d, ImVec2(min.x + leftW + gap, y), ImVec2(max.x, y + row1H), data);
+    // Fila 1: acceso rápido | tu skin | estadísticas
+    const float qaW = (width - gap * 2.0f) * 0.42f;
+    const float skinW = (width - gap * 2.0f) * 0.24f;
+    DrawQuickAccess(d, ImVec2(min.x, y), ImVec2(min.x + qaW, y + row1H));
+    DrawSkinCard(d, ImVec2(min.x + qaW + gap, y), ImVec2(min.x + qaW + gap + skinW, y + row1H));
+    DrawStats(d, ImVec2(min.x + qaW + gap + skinW + gap, y), ImVec2(max.x, y + row1H), data);
     y += row1H + gap;
-    DrawNews(d, ImVec2(min.x, y), ImVec2(min.x + leftW, y + row2H));
-    DrawClientInfo(d, ImVec2(min.x + leftW + gap, y), ImVec2(max.x, y + row2H), data.game);
-    if (bannerH > 0.0f) {
-        DrawBanner(d, ImVec2(min.x, max.y - bannerH), max);
-    }
+    // Fila 2: noticias | info del cliente
+    const float newsW = (width - gap) * 0.62f;
+    DrawNews(d, ImVec2(min.x, y), ImVec2(min.x + newsW, y + row2H));
+    DrawClientInfo(d, ImVec2(min.x + newsW + gap, y), ImVec2(max.x, y + row2H), data.game);
 }
 
 // --- Ajustes --------------------------------------------------------------------------------
@@ -1033,6 +1203,19 @@ void DrawSettingsGeneral(ImDrawList* d, ImVec2 min, ImVec2 max) {
         SettingLabel(d, ImVec2(x, y + S(9.0f)), right - x - w, T("settings.theme"), nullptr);
         if (Segmented("##theme", ImVec2(right - w, y), labels, 2, &index)) {
             SetTheme(index == 1 ? ThemeKind::Light : ThemeKind::Dark);
+            SaveConfig();
+        }
+        y += S(38.0f) + rowGap;
+    }
+    d->AddLine(ImVec2(x, y - rowGap * 0.5f), ImVec2(right, y - rowGap * 0.5f), C(p.border));
+    // Cielo del inicio
+    {
+        const char* labels[4] = {T("sky.auto"), T("sky.day"), T("sky.sunset"), T("sky.night")};
+        const float w = SegmentedWidth(labels, 4);
+        int index = static_cast<int>(g_skyMode);
+        SettingLabel(d, ImVec2(x, y + S(9.0f)), right - x - w, T("settings.sky"), nullptr);
+        if (Segmented("##sky", ImVec2(right - w, y), labels, 4, &index)) {
+            g_skyMode = static_cast<sky::Mode>(index);
             SaveConfig();
         }
         y += S(38.0f) + rowGap;
@@ -1208,7 +1391,7 @@ void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& ac
     // Cada tarjeta mide lo que necesita su contenido (no se estiran hasta abajo).
     const float gap = S(kGap);
     const float leftW = (max.x - min.x) * 0.56f;
-    const float generalH = S(330.0f);
+    const float generalH = S(392.0f);
     const float foldersH = S(126.0f);
     DrawSettingsGeneral(d, min, ImVec2(min.x + leftW, min.y + generalH));
     DrawSettingsFolders(d, ImVec2(min.x, min.y + generalH + gap), ImVec2(min.x + leftW, min.y + generalH + gap + foldersH));
@@ -1279,6 +1462,17 @@ void StatusThread() {
         const nlohmann::json stats = ReadJson(dir / L"stats.json");
         data.sessions = stats.value("sessions", 0LL);
         data.playSeconds = stats.value("playSeconds", 0LL);
+        data.lastPlayed = stats.value("lastPlayed", 0LL);
+        if (data.lastPlayed == 0 && data.sessions > 0) {
+            // Versiones viejas de Luma.dll no guardaban la fecha: usar la del archivo.
+            std::error_code ec;
+            const auto written = fs::last_write_time(dir / L"stats.json", ec);
+            if (!ec) {
+                data.lastPlayed = std::chrono::duration_cast<std::chrono::seconds>(
+                                      std::chrono::clock_cast<std::chrono::system_clock>(written).time_since_epoch())
+                                      .count();
+            }
+        }
         {
             std::lock_guard lock(g_dataMutex);
             g_data = std::move(data);
@@ -1307,6 +1501,7 @@ void AppInit(HWND hwnd, float scale) {
 
 void AppSetDevice(ID3D11Device* device) {
     g_device = device;
+    textures::SetDevice(device);
 }
 
 void AppSetScale(float scale) {
@@ -1412,6 +1607,11 @@ void AppFrame() {
         case Page::Settings: DrawSettings(d, cmin, cmax, acc, data); break;
     }
     g_fade = 1.0f;
+    if (g_page == Page::Home) {
+        DrawPlayMenu(d);
+    } else {
+        g_playMenuOpen = false;
+    }
     if (g_upd.state == updater::State::Downloading || g_upd.state == updater::State::Installing ||
         g_upd.state == updater::State::Restarting) {
         DrawUpdateOverlay(d, display);
@@ -1433,6 +1633,7 @@ void AppShutdown() {
         g_avatar->Release();
         g_avatar = nullptr;
     }
+    textures::ReleaseAll();
 }
 
 bool AppIsCaption(int x, int y) {

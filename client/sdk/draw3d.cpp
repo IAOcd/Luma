@@ -350,31 +350,74 @@ void DrawOutline(void* lrp, void* screenContext, void* block, void* region, cons
         // Un poco más grande que el bloque, para que no "pelee" con sus caras.
         const float lo[3] = {pos[0] - 0.002f, pos[1] - 0.002f, pos[2] - 0.002f};
         const float hi[3] = {pos[0] + 1.002f, pos[1] + 1.002f, pos[2] + 1.002f};
-        if (s.fill && g_overlayMaterial.object != nullptr) {
+        if (g_overlayMaterial.object != nullptr) {
             FilledBox(f, s.fillColor, lo, hi);
             Render(f, g_overlayMaterial);
         }
-        Box(f, s.line, lo, hi);
-        Render(f, g_boxMaterial);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         // Algo no era como esperábamos: no dibujar este frame (mejor que crashear).
     }
 }
 
+// Pinta el contorno del juego con nuestro color: el juego multiplica todo lo
+// que dibuja por el "color de pantalla" del ScreenContext (+0x30). Lo
+// cambiamos justo antes de que dibuje su contorno y lo devolvemos después.
+void TintedOriginalOutline(void* lrp, void* screenContext, void* block, void* region, const int* pos, const Color& c) {
+    std::uintptr_t colorPtr = 0;
+    float saved[4]{};
+    const bool ok = SafeRead(reinterpret_cast<std::uintptr_t>(screenContext) + kScreenContextColor, colorPtr) &&
+                    LooksLikePointer(colorPtr) && SafeRead(colorPtr, saved);
+    if (ok) {
+        const float tint[4] = {c.r, c.g, c.b, c.a};
+        std::memcpy(reinterpret_cast<void*>(colorPtr), tint, sizeof(tint));
+    }
+    g_renderOutline(lrp, screenContext, block, region, pos);
+    if (ok) {
+        std::memcpy(reinterpret_cast<void*>(colorPtr), saved, sizeof(saved));
+    }
+}
+
+void DrawHitboxesSafe(std::uintptr_t lrp, std::uintptr_t screenContext, const HitboxSettings& s, bool fromLrp);
+
+std::atomic<bool> g_loggedInsideOutline{false};
+
 void __fastcall RenderOutlineDetour(void* lrp, void* screenContext, void* block, void* region, const int* pos) {
     hooks::ActiveCallGuard guard;
     const OutlineSettings s = CopyOutline();
-    if (!g_ready.load(std::memory_order_relaxed) || !s.enabled || pos == nullptr || !EnsureMaterials()) {
+    if (!g_ready.load(std::memory_order_relaxed) || !s.enabled || pos == nullptr) {
         g_renderOutline(lrp, screenContext, block, region, pos);
-        return;
+    } else {
+        // Primero el relleno (nuestro), después la línea del juego con nuestro color.
+        if (s.fill && EnsureMaterials()) {
+            DrawOutline(lrp, screenContext, block, region, pos, s);
+        }
+        TintedOriginalOutline(lrp, screenContext, block, region, pos, s.line);
     }
-    DrawOutline(lrp, screenContext, block, region, pos, s);
+    // PRUEBA: los hitboxes también acá (en medio del dibujo del mundo), para
+    // saber si el problema es el momento en que los dibujamos.
+    const HitboxSettings h = CopyHitboxes();
+    if (g_ready.load(std::memory_order_relaxed) && h.enabled && EnsureMaterials()) {
+        if (!g_loggedInsideOutline.exchange(true)) {
+            log::Info("SDK: dibujando hitboxes dentro del contorno (prueba de momento).");
+        }
+        DrawHitboxesSafe(reinterpret_cast<std::uintptr_t>(lrp), reinterpret_cast<std::uintptr_t>(screenContext), h, true);
+    }
 }
 
-void DrawHitboxesSafe(std::uintptr_t levelRenderer, std::uintptr_t screenContext, const HitboxSettings& s) {
+// "fromLrp" = el primer número ya es el LevelRendererPlayer (dentro del
+// contorno); si no, es el LevelRenderer (después de renderLevel).
+void DrawHitboxesSafe(std::uintptr_t source, std::uintptr_t screenContext, const HitboxSettings& s, bool fromLrp) {
     __try {
         Frame f;
-        if (MakeFrame(levelRenderer, screenContext, f)) {
+        bool ok = false;
+        if (fromLrp) {
+            f.sc = screenContext;
+            ok = SafeRead(screenContext + kScreenContextTess, f.tess) && LooksLikePointer(f.tess) &&
+                 SafeRead(source + kCameraOrigin, f.origin);
+        } else {
+            ok = MakeFrame(source, screenContext, f);
+        }
+        if (ok) {
             DrawHitboxes(f, s);
             Render(f, g_boxMaterial);
         }
@@ -437,7 +480,7 @@ void OnRenderLevel(std::uintptr_t levelRenderer, std::uintptr_t screenContext) {
     if (!hitboxes.enabled || !EnsureMaterials()) {
         return;
     }
-    DrawHitboxesSafe(levelRenderer, screenContext, hitboxes);
+    DrawHitboxesSafe(levelRenderer, screenContext, hitboxes, false);
 }
 
 }  // namespace luma::sdk::draw3d

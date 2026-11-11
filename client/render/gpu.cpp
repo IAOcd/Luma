@@ -4,10 +4,12 @@
 #include "render/gpu.h"
 
 #include <d3dcompiler.h>  // D3DCompile: compilar shaders en tiempo de ejecución
+#include <dxgi1_4.h>      // the graphics card's name (AdapterName)
 #include <wrl/client.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -443,6 +445,26 @@ ImTextureID CreateTexture(const std::uint8_t* rgba, UINT width, UINT height) {
     g_textures.push_back(texture);
     g_textureSlots.push_back(slot);
     return static_cast<ImTextureID>(GpuSlot(slot).ptr);
+}
+
+std::string AdapterName() {
+    if (!g_device) return {};
+    // The card the game's device belongs to (by its LUID): on a laptop with two
+    // cards, the one really drawing.
+    const LUID luid = g_device->GetAdapterLuid();
+    ComPtr<IDXGIFactory4> factory;
+    ComPtr<IDXGIAdapter1> adapter;
+    DXGI_ADAPTER_DESC1 desc{};
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) || FAILED(factory->EnumAdapterByLuid(luid, IID_PPV_ARGS(&adapter))) ||
+        FAILED(adapter->GetDesc1(&desc))) {
+        return {};
+    }
+    char name[256];
+    WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, name, sizeof(name), nullptr, nullptr);
+    char text[300];
+    std::snprintf(text, sizeof(text), "%s (%llu MB)", name,
+                  static_cast<unsigned long long>(desc.DedicatedVideoMemory / (1024ull * 1024ull)));
+    return text;
 }
 
 bool UpdateTexture(ImTextureID id, const std::uint8_t* rgba, UINT width, UINT height) {

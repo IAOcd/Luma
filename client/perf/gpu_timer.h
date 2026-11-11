@@ -39,6 +39,7 @@ namespace luma::perf::gputimer {
 enum Source : std::uint32_t {
     kOverlay = 1u << 0,    // the performance overlay shows "GPU"
     kBenchmark = 1u << 1,  // a benchmark is recording
+    kDebugScreen = 1u << 2,  // the debug screen (F3) is open
 };
 void Want(Source source, bool want);
 

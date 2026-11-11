@@ -31,6 +31,7 @@ add_library(Luma SHARED
     modules/hud/paperdoll.cpp
     modules/hud/player_list.cpp
     modules/hud/music.cpp
+    modules/hud/debug_screen.cpp
     modules/hud/scoreboard.cpp
     modules/hud/player_hud.cpp
     modules/hud/watermark.cpp
@@ -46,6 +47,7 @@ add_library(Luma SHARED
     perf/benchmark.cpp
     perf/frame_stats.cpp
     perf/gpu_timer.cpp
+    perf/system_info.cpp
     perf/windows_info.cpp
     render/assets.cpp
     render/cinematic.cpp
@@ -102,6 +104,8 @@ target_link_libraries(Luma PRIVATE
     xaudio2                   # efectos de sonido del menú (viene con Windows 10/11)
     windowscodecs             # WIC: decodificar el PNG del logo
     d3d12                     # el desenfoque del vidrio (render/gpu.cpp)
+    dxgi                      # el nombre de la tarjeta gráfica (pantalla de depuración F3)
+    version                   # la versión de Minecraft.Windows.exe (pantalla de depuración F3)
     d3dcompiler               # compilar el shader del desenfoque
     winmm                     # timeBeginPeriod (optimización "Timer de 1 ms")
     powrprof                  # leer el plan de energía (consejos de Windows)

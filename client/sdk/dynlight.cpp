@@ -68,6 +68,11 @@ std::atomic<int> g_x{0}, g_y{0}, g_z{0};
 std::atomic<int> g_level{0};
 std::atomic<bool> g_entities{true};
 
+// The real light the debug screen asked for (see RequestLight).
+std::atomic<int> g_askX{0}, g_askY{0}, g_askZ{0};
+std::atomic<bool> g_asked{false};
+std::atomic<int> g_lightSky{-1}, g_lightBlock{-1};
+
 thread_local bool t_inBuild = false;
 thread_local bool t_inRenderLevel = false;
 
@@ -259,7 +264,32 @@ void EnterRenderLevel(std::uintptr_t levelRenderer) {
     }
     ++g_frame;
     Rebuild(levelRenderer);
+    // The debug screen's question: the game's own answer (the original
+    // function, so the dynamic light isn't added).
+    if (g_asked.exchange(false)) {
+        void* source = g_source.load(std::memory_order_relaxed);
+        if (source != nullptr && g_frame - g_sourceFrame.load(std::memory_order_relaxed) <= 3) {
+            const int pos[3] = {g_askX.load(), g_askY.load(), g_askZ.load()};
+            std::uint8_t out[2]{};
+            g_brightness(source, out, pos, 0);
+            g_lightSky.store(out[0]);
+            g_lightBlock.store(out[1]);
+        }
+    }
     t_inRenderLevel = true;
+}
+
+void RequestLight(int x, int y, int z) {
+    g_askX.store(x);
+    g_askY.store(y);
+    g_askZ.store(z);
+    g_asked.store(true);
+}
+
+bool LastLight(int& sky, int& block) {
+    sky = g_lightSky.load();
+    block = g_lightBlock.load();
+    return sky >= 0 && block >= 0;
 }
 
 void LeaveRenderLevel() {

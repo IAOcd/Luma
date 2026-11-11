@@ -25,6 +25,8 @@
 // =============================================================================
 #pragma once
 
+#include <string>
+
 #include <d3d12.h>
 #include <imgui.h>
 
@@ -53,6 +55,10 @@ ImTextureID CreateTexture(const std::uint8_t* rgba, UINT width, UINT height);
 // Replaces the picture of a texture made with CreateTexture (same size only).
 // For things that change, like the album art: no new slot each time.
 bool UpdateTexture(ImTextureID id, const std::uint8_t* rgba, UINT width, UINT height);
+
+// The name of the graphics card the game draws with, and its own memory
+// ("AMD Radeon(TM) Graphics (512 MB)"). Empty until the overlay starts.
+std::string AdapterName();
 
 // --- Desenfoque -------------------------------------------------------------------
 

@@ -48,6 +48,13 @@ void SetLightEntities(bool on);
 // Rebuilds at most this many times per second while the light moves.
 void SetMaxRebuildsPerSecond(int perSecond);
 
+// THE REAL LIGHT at a block (for the debug screen, F3): asked to the game
+// on the thread that draws the world (it's the game's own function, without
+// the dynamic light). RequestLight from any thread; the answer arrives a
+// frame later in LastLight (false while there's none yet).
+void RequestLight(int x, int y, int z);
+bool LastLight(int& sky, int& block);
+
 // From the renderLevel hook (sdk/camera.cpp), on the thread that draws the
 // world: before and after the game's renderLevel.
 void EnterRenderLevel(std::uintptr_t levelRenderer);

@@ -22,7 +22,7 @@
 
 #include <windows.h>
 #include <d3d12.h>
-#include <dxgi1_4.h>
+#include <dxgi1_5.h>  // 1_5: to read the tearing flag in the diagnostic log
 #include <wrl/client.h>  // ComPtr: libera objetos COM automáticamente
 
 #include <atomic>
@@ -69,6 +69,29 @@ ExecuteCommandListsFn g_originalExecuteCommandLists = nullptr;
 
 std::atomic<bool> g_unloading{false};
 
+// --- Diagnostics -------------------------------------------------------------------
+bool g_loggedPresent = false;
+
+// Once per session: what the game asks for, so we know where a cap comes from.
+void LogPresentOnce(IDXGISwapChain* swapchain, UINT syncInterval, UINT flags) {
+    if (g_loggedPresent) {
+        return;
+    }
+    g_loggedPresent = true;
+    Microsoft::WRL::ComPtr<IDXGISwapChain1> swapchain1;
+    DXGI_SWAP_CHAIN_DESC1 desc{};
+    if (SUCCEEDED(swapchain->QueryInterface(IID_PPV_ARGS(&swapchain1)))) {
+        swapchain1->GetDesc1(&desc);
+    }
+    BOOL fullscreen = FALSE;
+    swapchain->GetFullscreenState(&fullscreen, nullptr);
+    log::Info("Present: the game asks for SyncInterval {} (flags 0x{:X}); swapchain {}x{}, {} buffers, swap effect "
+              "{}, flags 0x{:X} (tearing {}), {}.",
+              syncInterval, flags, desc.Width, desc.Height, desc.BufferCount, static_cast<int>(desc.SwapEffect),
+              desc.Flags, (desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) ? "allowed" : "not allowed",
+              fullscreen ? "exclusive fullscreen" : "windowed/borderless");
+}
+
 // "thread_local" = cada hilo tiene su propia copia de esta variable.
 // Internamente, Present de Windows podría llamar a Present1 (o al revés).
 // Con este contador detectamos esa llamada "anidada" y no dibujamos dos veces.
@@ -104,6 +127,9 @@ void HandlePresent(IDXGISwapChain* swapchain, UINT flags) {
 HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* swapchain, UINT syncInterval, UINT flags) {
     hooks::ActiveCallGuard guard;
     ++t_presentDepth;
+    if (t_presentDepth == 1) {
+        LogPresentOnce(swapchain, syncInterval, flags);
+    }
     HandlePresent(swapchain, flags);
     const HRESULT result = g_originalPresent(swapchain, syncInterval, flags);
     --t_presentDepth;
@@ -114,6 +140,9 @@ HRESULT STDMETHODCALLTYPE Present1Detour(IDXGISwapChain1* swapchain, UINT syncIn
                                          const DXGI_PRESENT_PARAMETERS* parameters) {
     hooks::ActiveCallGuard guard;
     ++t_presentDepth;
+    if (t_presentDepth == 1) {
+        LogPresentOnce(swapchain, syncInterval, flags);
+    }
     HandlePresent(swapchain, flags);
     const HRESULT result = g_originalPresent1(swapchain, syncInterval, flags, parameters);
     --t_presentDepth;

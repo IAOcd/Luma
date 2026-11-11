@@ -32,8 +32,8 @@ namespace ui = render::ui;
 using i18n::T;
 
 PlayerList::PlayerList()
-    : Module("player_list", "Lista de jugadores",
-             "Mantén Tab para ver los jugadores con sus caras, el servidor y tu ping; con el logo de Luma en quienes lo usan.",
+    : Module("player_list", "Player list",
+             "Hold Tab to see the players with their faces, the server and your ping, with the Luma logo on those who use it.",
              Category::Hud) {}
 
 const char* PlayerList::IconSvg() const {
@@ -250,10 +250,10 @@ ImVec2 PlayerList::OnRenderHud(const HudFrame& frame) {
 
 bool PlayerList::DrawSettings() {
     bool changed = false;
-    changed |= ui::Toggle("Servidor y ping arriba", &showServer_);
-    changed |= ui::Toggle("Caras de las skins", &showFaces_);
-    changed |= ui::Toggle("Usuarios de Luma primero", &lumaFirst_);
-    changed |= ui::Slider("Tamaño", &size_, 0.5f, 1.5f, "%.2fx");
+    changed |= ui::Toggle("Server and ping on top", &showServer_);
+    changed |= ui::Toggle("Skin faces", &showFaces_);
+    changed |= ui::Toggle("Luma users first", &lumaFirst_);
+    changed |= ui::Slider("Size", &size_, 0.5f, 1.5f, "%.2fx");
     ui::Hint("Se abre manteniendo Tab. El logo de Luma aparece en quienes usan Luma e iniciaron sesión con Microsoft "
              "en el launcher. El ping de los demás no se puede ver: Bedrock no lo manda.");
     return changed;

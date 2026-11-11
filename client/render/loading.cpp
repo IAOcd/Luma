@@ -68,7 +68,7 @@ void SetStep(const char* text, float progress) {
 
 void Finish() {
     std::lock_guard lock(g_mutex);
-    g_step = "Listo";
+    g_step = "Done";
     g_targetProgress = 1.0f;
     g_finishing = true;
     g_finishRequestedAt = perf::Now();

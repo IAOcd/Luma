@@ -52,7 +52,7 @@ bool ValidSize(int n) {
 }  // namespace
 
 Crosshair::Crosshair()
-    : Module("crosshair", "Mira personalizada",
+    : Module("crosshair", "Custom crosshair",
              "Tu propia mira en el centro: una forma o una que pintas píxel por píxel, con colores o rainbow. Esconde la "
              "mira del juego.",
              Category::Visual) {
@@ -236,7 +236,7 @@ bool Crosshair::DrawEditor() {
     const float fs = ImGui::GetFontSize();
     ImGui::SetNextWindowSize(ImVec2(fs * 46.0f, fs * 33.0f), ImGuiCond_Appearing);
     bool open = true;
-    if (!ImGui::BeginPopupModal(Tr("Editor de mira"), &open, ImGuiWindowFlags_NoSavedSettings)) {
+    if (!ImGui::BeginPopupModal(Tr("Crosshair editor"), &open, ImGuiWindowFlags_NoSavedSettings)) {
         return false;
     }
     const int n = gridSize_;
@@ -295,7 +295,7 @@ bool Crosshair::DrawEditor() {
     // --- Herramientas (a la derecha) ---
     ImGui::SameLine(0.0f, fs);
     ImGui::BeginGroup();
-    ImGui::TextUnformatted(Tr("Color del pincel"));
+    ImGui::TextUnformatted(Tr("Brush color"));
     for (int i = 0; i < static_cast<int>(std::size(kPalette)); ++i) {
         if (i % 4 != 0) ImGui::SameLine(0.0f, fs * 0.3f);
         ImGui::PushID(i);
@@ -309,25 +309,25 @@ bool Crosshair::DrawEditor() {
     ImGui::Dummy(ImVec2(0, fs * 0.3f));
     ImGui::ColorEdit4("##brush", brush_, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs);
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", Tr("(otro color)"));
+    ImGui::TextDisabled("%s", Tr("(another color)"));
     ImGui::Dummy(ImVec2(0, fs * 0.5f));
-    ImGui::Checkbox(Tr("Espejo izquierda / derecha"), &mirrorX_);
-    ImGui::Checkbox(Tr("Espejo arriba / abajo"), &mirrorY_);
+    ImGui::Checkbox(Tr("Mirror left / right"), &mirrorX_);
+    ImGui::Checkbox(Tr("Mirror top / bottom"), &mirrorY_);
     ImGui::Dummy(ImVec2(0, fs * 0.5f));
-    ImGui::TextDisabled("%s", Tr("Clic izquierdo: pintar · Clic derecho: borrar"));
+    ImGui::TextDisabled("%s", Tr("Left click: paint · Right click: erase"));
     ImGui::Dummy(ImVec2(0, fs * 0.5f));
-    if (ImGui::Button(Tr("Limpiar"))) {
+    if (ImGui::Button(Tr("Clear"))) {
         std::fill(pixels_.begin(), pixels_.end(), 0u);
         changed = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button(Tr("Empezar desde la forma"))) {
+    if (ImGui::Button(Tr("Start from the shape"))) {
         ShapeToPixels();
         changed = true;
     }
     // vista previa a tamaño real
     ImGui::Dummy(ImVec2(0, fs * 0.5f));
-    ImGui::TextUnformatted(Tr("Así se ve:"));
+    ImGui::TextUnformatted(Tr("This is how it looks:"));
     const ImVec2 pv = ImGui::GetCursorScreenPos();
     const float pvSide = fs * 6.0f;
     d->AddRectFilled(pv, ImVec2(pv.x + pvSide, pv.y + pvSide), IM_COL32(110, 150, 90, 255), 4.0f);  // "pasto"
@@ -335,7 +335,7 @@ bool Crosshair::DrawEditor() {
     DrawPainted(d, ImVec2(std::floor(pv.x + pvSide * 0.5f), std::floor(pv.y + pvSide * 0.5f)), render::hud::Measure(1.0f).px);
     ImGui::Dummy(ImVec2(pvSide, pvSide));
     ImGui::Dummy(ImVec2(0, fs * 0.5f));
-    if (ImGui::Button(Tr("Listo"), ImVec2(fs * 8.0f, 0))) ImGui::CloseCurrentPopup();
+    if (ImGui::Button(Tr("Done"), ImVec2(fs * 8.0f, 0))) ImGui::CloseCurrentPopup();
     ImGui::EndGroup();
     ImGui::EndPopup();
     if (changed) RebuildRuns();
@@ -345,34 +345,34 @@ bool Crosshair::DrawEditor() {
 bool Crosshair::DrawSettings() {
     namespace ui = render::ui;
     bool changed = false;
-    if (ui::Toggle("Esconder la mira del juego", &hideGame_)) {
+    if (ui::Toggle("Hide the game's crosshair", &hideGame_)) {
         if (IsEnabled()) sdk::gamecrosshair::SetHidden(hideGame_);
         changed = true;
     }
-    if (!sdk::gamecrosshair::Available()) ui::Hint("No se encontró la mira del juego en esta versión: queda visible debajo.");
-    changed |= ui::Choice("Tipo", &mode_, {"Forma", "Pintada"});
+    if (!sdk::gamecrosshair::Available()) ui::Hint("The game's crosshair wasn't found in this version: it stays visible underneath.");
+    changed |= ui::Choice("Type", &mode_, {"Shape", "Painted"});
     if (mode_ == 0) {
-        changed |= ui::Choice("Forma", &style_, {"Cruz", "Cruz con punto", "Punto", "Círculo"});
-        changed |= ui::Slider("Largo", &length_, 1.0f, 15.0f, "%.0f");
-        changed |= ui::Slider("Grosor", &thickness_, 0.5f, 4.0f, "%.1f");
-        changed |= ui::Slider("Separación", &gap_, 0.0f, 10.0f, "%.0f");
+        changed |= ui::Choice("Shape", &style_, {"Cross", "Cross with dot", "Dot", "Circle"});
+        changed |= ui::Slider("Length", &length_, 1.0f, 15.0f, "%.0f");
+        changed |= ui::Slider("Thickness", &thickness_, 0.5f, 4.0f, "%.1f");
+        changed |= ui::Slider("Spacing", &gap_, 0.0f, 10.0f, "%.0f");
         changed |= ui::ColorAlpha("Color", color_);
-        changed |= ui::Toggle("Contorno", &outline_, "(se ve sobre fondos claros)");
+        changed |= ui::Toggle("Outline", &outline_, "(visible on light backgrounds)");
     } else {
         int sizeIndex = gridSize_ == 8 ? 0 : gridSize_ == 16 ? 1 : gridSize_ == 32 ? 2 : 3;
-        if (ui::Choice("Cuadrícula", &sizeIndex, {"8x8", "16x16", "32x32", "64x64"})) {
+        if (ui::Choice("Grid", &sizeIndex, {"8x8", "16x16", "32x32", "64x64"})) {
             static const int kSizes[] = {8, 16, 32, 64};
             Resize(kSizes[sizeIndex]);
             changed = true;
         }
-        changed |= ui::Slider("Tamaño del píxel", &pixelScale_, 0.25f, 3.0f, "%.2f");
-        if (ui::Button("Pintar mi mira", "Editor")) ImGui::OpenPopup(Tr("Editor de mira"));
+        changed |= ui::Slider("Pixel size", &pixelScale_, 0.25f, 3.0f, "%.2f");
+        if (ui::Button("Paint my crosshair", "Editor")) ImGui::OpenPopup(Tr("Crosshair editor"));
         changed |= DrawEditor();
     }
     ui::Section("Color");
-    changed |= ui::Choice("Modo de color", &colorMode_, {"Original", "Rainbow", "Rainbow en onda"});
-    if (colorMode_ != 0) changed |= ui::Slider("Velocidad del rainbow", &rainbowSpeed_, 0.05f, 2.0f, "%.2f");
-    changed |= ui::Toggle("Esconder en los menús", &hideInMenus_);
+    changed |= ui::Choice("Color mode", &colorMode_, {"Original", "Rainbow", "Rainbow wave"});
+    if (colorMode_ != 0) changed |= ui::Slider("Rainbow speed", &rainbowSpeed_, 0.05f, 2.0f, "%.2f");
+    changed |= ui::Toggle("Hide in menus", &hideInMenus_);
     return changed;
 }
 

@@ -22,7 +22,7 @@ namespace rh = render::hud;
 namespace ui = render::ui;
 
 Watermark::Watermark()
-    : Module("watermark", "Marca de agua", "Muestra el logo y el nombre de Luma en pantalla.", Category::Hud) {
+    : Module("watermark", "Watermark", "Shows Luma's logo and name on screen.", Category::Hud) {
     // Abajo a la derecha (ancla en su esquina inferior derecha).
     HudLayout l;
     l.x = 0.996f;
@@ -80,9 +80,9 @@ ImVec2 Watermark::OnRenderHud(const HudFrame& frame) {
 bool Watermark::DrawSettings() {
     bool changed = false;
     changed |= ui::Toggle("Logo", &showLogo_);
-    changed |= ui::Toggle("Nombre", &showName_);
-    changed |= ui::Toggle("Versión", &showVersion_);
-    changed |= ui::Toggle("Caja de fondo", &box_);
+    changed |= ui::Toggle("Name", &showName_);
+    changed |= ui::Toggle("Version", &showVersion_);
+    changed |= ui::Toggle("Background box", &box_);
     return changed;
 }
 

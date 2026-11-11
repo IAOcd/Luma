@@ -78,7 +78,7 @@ ImVec2 ColoredTextBox(const HudFrame& frame, const char* text, ImU32 color) {
 // =============================================================================
 
 FpsCounter::FpsCounter()
-    : Module("fps", "FPS", "Muestra los cuadros por segundo del juego.", Category::Hud) {
+    : Module("fps", "FPS", "Shows the game's frames per second.", Category::Hud) {
     SetDefaultLayout(Column(0.130f));
 }
 
@@ -117,10 +117,10 @@ ImVec2 FpsCounter::OnRenderHud(const HudFrame& frame) {
 
 bool FpsCounter::DrawSettings() {
     bool changed = false;
-    changed |= ui::Choice("Formato", &format_, {"60 FPS", "FPS: 60", "60"});
-    changed |= ui::Toggle("Mostrar el frametime", &showMs_, "(ms por cuadro)");
-    changed |= ui::Toggle("Color según los FPS", &colorize_, "(verde, amarillo, rojo)");
-    changed |= ui::Choice("Actualizar", &rate_, {"Rápido", "Normal", "Lento"});
+    changed |= ui::Choice("Format", &format_, {"60 FPS", "FPS: 60", "60"});
+    changed |= ui::Toggle("Show frametime", &showMs_, "(ms por cuadro)");
+    changed |= ui::Toggle("Color by FPS", &colorize_, "(green, yellow, red)");
+    changed |= ui::Choice("Refresh", &rate_, {"Rápido", "Normal", "Slow"});
     return changed;
 }
 
@@ -143,7 +143,7 @@ void FpsCounter::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 CpsCounter::CpsCounter()
-    : Module("cps", "CPS", "Clics por segundo del mouse (izquierdo y derecho).", Category::Hud) {
+    : Module("cps", "CPS", "Mouse clicks per second (left and right).", Category::Hud) {
     SetDefaultLayout(Column(0.166f));
 }
 
@@ -174,8 +174,8 @@ ImVec2 CpsCounter::OnRenderHud(const HudFrame& frame) {
 
 bool CpsCounter::DrawSettings() {
     bool changed = false;
-    changed |= ui::Choice("Formato", &format_, {"3 CPS", "CPS: 3"});
-    changed |= ui::Toggle("También el clic derecho", &showRight_, "(izq. | der.)");
+    changed |= ui::Choice("Format", &format_, {"3 CPS", "CPS: 3"});
+    changed |= ui::Toggle("Right click too", &showRight_, "(left | right)");
     return changed;
 }
 
@@ -194,7 +194,7 @@ void CpsCounter::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 Keystrokes::Keystrokes()
-    : Module("keystrokes", "Keystrokes", "Muestra en pantalla las teclas WASD, el espacio y los clics que apretas.",
+    : Module("keystrokes", "Keystrokes", "Shows the WASD keys, space and mouse clicks you press.",
              Category::Hud) {
     SetDefaultLayout(Column(0.007f));
 }
@@ -254,8 +254,8 @@ ImVec2 Keystrokes::OnRenderHud(const HudFrame& frame) {
         const float height = std::floor(key * 0.83f);
         char left[16];
         char right[16];
-        std::snprintf(left, sizeof(left), "%s", mouseLabels_ == 1 ? Tr("Izq.") : "LMB");
-        std::snprintf(right, sizeof(right), "%s", mouseLabels_ == 1 ? Tr("Der.") : "RMB");
+        std::snprintf(left, sizeof(left), "%s", mouseLabels_ == 1 ? Tr("Left") : "LMB");
+        std::snprintf(right, sizeof(right), "%s", mouseLabels_ == 1 ? Tr("Right") : "RMB");
         if (showCps_) {
             const int l = clicks::PerSecond(clicks::Button::Left);
             const int r = clicks::PerSecond(clicks::Button::Right);
@@ -284,16 +284,16 @@ ImVec2 Keystrokes::OnRenderHud(const HudFrame& frame) {
 
 bool Keystrokes::DrawSettings() {
     bool changed = false;
-    ui::Section("Qué mostrar");
-    changed |= ui::Toggle("Botones del mouse", &showMouse_);
-    changed |= ui::Toggle("Barra espaciadora", &showSpace_);
-    changed |= ui::Toggle("CPS al hacer clic", &showCps_, "(en los botones)");
-    changed |= ui::Choice("Botones", &mouseLabels_, {"LMB / RMB", "Izq. / Der."});
-    ui::Section("Forma");
-    changed |= ui::SliderInt("Tamaño de las teclas", &keySize_, 12, 26, "%d");
-    changed |= ui::SliderInt("Separación", &gap_, 0, 6, "%d");
-    changed |= ui::Choice("Animación", &animation_, {"Instantánea", "Rápida", "Suave"});
-    ui::Hint("El color de una tecla apretada se cambia en Estilo (\"Color al apretar\").");
+    ui::Section("What to show");
+    changed |= ui::Toggle("Mouse buttons", &showMouse_);
+    changed |= ui::Toggle("Space bar", &showSpace_);
+    changed |= ui::Toggle("CPS when clicking", &showCps_, "(on the buttons)");
+    changed |= ui::Choice("Buttons", &mouseLabels_, {"LMB / RMB", "Left / Right"});
+    ui::Section("Shape");
+    changed |= ui::SliderInt("Key size", &keySize_, 12, 26, "%d");
+    changed |= ui::SliderInt("Spacing", &gap_, 0, 6, "%d");
+    changed |= ui::Choice("Animation", &animation_, {"Instant", "Rápida", "Smooth"});
+    ui::Hint("The color of a pressed key is set in Style (\"Pressed color\").");
     return changed;
 }
 
@@ -321,7 +321,7 @@ void Keystrokes::LoadSettings(const nlohmann::json& in) {
 //  Reloj
 // =============================================================================
 
-Clock::Clock() : Module("clock", "Reloj", "Muestra la hora (y si quieres, la fecha) de tu PC.", Category::Hud) {
+Clock::Clock() : Module("clock", "Clock", "Shows your PC's time (and the date, if you want).", Category::Hud) {
     SetDefaultLayout(Column(0.202f));
 }
 
@@ -359,9 +359,9 @@ ImVec2 Clock::OnRenderHud(const HudFrame& frame) {
 
 bool Clock::DrawSettings() {
     bool changed = false;
-    changed |= ui::Choice("Formato", &format_, {"24 horas", "12 horas"});
-    changed |= ui::Toggle("Segundos", &seconds_);
-    changed |= ui::Choice("Fecha", &date_, {"Sin fecha", "09/11", "09/11/2026"});
+    changed |= ui::Choice("Format", &format_, {"24 hours", "12 hours"});
+    changed |= ui::Toggle("Seconds", &seconds_);
+    changed |= ui::Choice("Date", &date_, {"No date", "09/11", "09/11/2026"});
     return changed;
 }
 

@@ -46,7 +46,7 @@ float Heading(float yaw) {
 }
 
 const char* FacingName(float heading) {
-    static const char* const kNames[] = {"Norte (-Z)", "Este (+X)", "Sur (+Z)", "Oeste (-X)"};
+    static const char* const kNames[] = {"North (-Z)", "East (+X)", "South (+Z)", "West (-X)"};
     return kNames[static_cast<int>(std::floor((heading + 45.0f) / 90.0f)) % 4];
 }
 
@@ -84,7 +84,7 @@ ImVec2 LinesBox(ImDrawList* draw, const rh::Metrics& m, ImVec2 pos, const char* 
 // =============================================================================
 
 Coordinates::Coordinates()
-    : Module("coordinates", "Coordenadas", "Muestra tu posición (X, Y, Z) y hacia dónde miras.", Category::Hud) {
+    : Module("coordinates", "Coordinates", "Shows your position (X, Y, Z) and where you're facing.", Category::Hud) {
     SetDefaultLayout(ColumnRight(0.14f));
 }
 
@@ -142,14 +142,14 @@ ImVec2 Coordinates::OnRenderHud(const HudFrame& frame) {
 bool Coordinates::DrawSettings() {
     bool changed = false;
     int layout = oneLine_ ? 1 : 0;
-    if (ui::Choice("Diseño", &layout, {"Tres líneas", "Una línea"})) {
+    if (ui::Choice("Layout", &layout, {"Three lines", "One line"})) {
         oneLine_ = layout == 1;
         changed = true;
     }
-    changed |= ui::Toggle("Decimales", &decimals_);
-    changed |= ui::Toggle("Hacia dónde miras", &showFacing_);
-    changed |= ui::Toggle("Coordenadas del Nether", &showNether_, "(÷ 8)");
-    if (ui::Toggle("Ocultar las del juego", &hideVanilla_, "(las de \"Mostrar coordenadas\")")) {
+    changed |= ui::Toggle("Decimals", &decimals_);
+    changed |= ui::Toggle("Facing", &showFacing_);
+    changed |= ui::Toggle("Nether coordinates", &showNether_, "(÷ 8)");
+    if (ui::Toggle("Hide the game's coordinates", &hideVanilla_, "(the \"Show coordinates\" ones)")) {
         sdk::hudui::SetHideCoords(hideVanilla_ && IsEnabled());
         changed = true;
     }
@@ -177,7 +177,7 @@ void Coordinates::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 Compass::Compass()
-    : Module("compass", "Brújula", "Una brújula arriba de la pantalla con los puntos cardinales.", Category::Hud) {
+    : Module("compass", "Compass", "A compass at the top of the screen with the cardinal points.", Category::Hud) {
     HudLayout l;
     l.x = 0.5f;
     l.y = 0.01f;
@@ -213,7 +213,7 @@ ImVec2 Compass::OnRenderHud(const HudFrame& frame) {
     const float centerX = o.x + width * 0.5f;
     const float bandTop = o.y;
     const float bandH = rh::LineBoxHeight(m);
-    static const char* const kPoints[] = {"N", "NE", "E", "SE", "S", "SO", "O", "NO"};
+    static const char* const kPoints[] = {"N", "NE", "E", "SE", "S", "SW", "O", "NW"};
     draw->PushClipRect(o, ImVec2(o.x + width, o.y + height), true);
     for (int i = 0; i < 8; ++i) {
         float delta = static_cast<float>(i) * 45.0f - heading;
@@ -255,8 +255,8 @@ ImVec2 Compass::OnRenderHud(const HudFrame& frame) {
 
 bool Compass::DrawSettings() {
     bool changed = false;
-    changed |= ui::Toggle("Grados", &showDegrees_);
-    changed |= ui::SliderInt("Ancho", &width_, 80, 240, "%d");
+    changed |= ui::Toggle("Degrees", &showDegrees_);
+    changed |= ui::SliderInt("Width", &width_, 80, 240, "%d");
     return changed;
 }
 
@@ -275,7 +275,7 @@ void Compass::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 SpeedDisplay::SpeedDisplay()
-    : Module("speed", "Velocidad", "Tu velocidad en bloques por segundo.", Category::Hud) {
+    : Module("speed", "Speed", "Your speed in blocks per second.", Category::Hud) {
     SetDefaultLayout(ColumnRight(0.30f));
 }
 
@@ -321,9 +321,9 @@ ImVec2 SpeedDisplay::OnRenderHud(const HudFrame& frame) {
 
 bool SpeedDisplay::DrawSettings() {
     bool changed = false;
-    changed |= ui::Choice("Unidad", &unit_, {"m/s", "km/h"});
-    changed |= ui::Toggle("Incluir la vertical", &vertical_, "(caer y saltar)");
-    ui::Hint("1 bloque = 1 metro.");
+    changed |= ui::Choice("Unit", &unit_, {"m/s", "km/h"});
+    changed |= ui::Toggle("Include vertical", &vertical_, "(falling and jumping)");
+    ui::Hint("1 block = 1 meter.");
     return changed;
 }
 
@@ -342,7 +342,7 @@ void SpeedDisplay::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 PingDisplay::PingDisplay()
-    : Module("ping", "Ping", "Tu ping al servidor (ms). En un mundo local no hay ping.", Category::Hud) {
+    : Module("ping", "Ping", "Your ping to the server (ms). Local worlds have no ping.", Category::Hud) {
     SetDefaultLayout(ColumnRight(0.38f));
 }
 
@@ -356,7 +356,7 @@ ImVec2 PingDisplay::OnRenderHud(const HudFrame& frame) {
     if (ping >= 0) {
         std::snprintf(text, sizeof(text), "%d ms", ping);
     } else if (showInLocal_ || frame.editing) {
-        std::snprintf(text, sizeof(text), "%s", frame.editing && !showInLocal_ ? "42 ms" : Tr("Mundo local"));
+        std::snprintf(text, sizeof(text), "%s", frame.editing && !showInLocal_ ? "42 ms" : Tr("Local world"));
     } else {
         return ImVec2(0, 0);
     }
@@ -375,8 +375,8 @@ ImVec2 PingDisplay::OnRenderHud(const HudFrame& frame) {
 
 bool PingDisplay::DrawSettings() {
     bool changed = false;
-    changed |= ui::Toggle("Color según el ping", &colorize_, "(verde, amarillo, rojo)");
-    changed |= ui::Toggle("\"Mundo local\" sin servidor", &showInLocal_);
+    changed |= ui::Toggle("Color by ping", &colorize_, "(green, yellow, red)");
+    changed |= ui::Toggle("\"Local world\" without a server", &showInLocal_);
     return changed;
 }
 

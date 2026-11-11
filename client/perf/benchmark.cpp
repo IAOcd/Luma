@@ -196,7 +196,7 @@ void Finish() {
     {
         std::lock_guard lock(g_mutex);
         r.label = g_label;
-        r.optimizations = g_optimizations.empty() ? "ninguna" : g_optimizations;
+        r.optimizations = g_optimizations.empty() ? "none" : g_optimizations;
         r.mode = g_mode == Mode::Resting ? "en reposo" : "con HUD";
     }
     r.date = NowText("%Y-%m-%d %H:%M:%S");

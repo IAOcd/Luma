@@ -30,7 +30,7 @@ struct KeyOption {
     const char* name;
 };
 constexpr KeyOption kKeys[] = {
-    {VK_CONTROL, "Ctrl"}, {VK_SHIFT, "Shift"}, {VK_MENU, "Alt"}, {VK_CAPITAL, "Bloq Mayús"},
+    {VK_CONTROL, "Ctrl"}, {VK_SHIFT, "Shift"}, {VK_MENU, "Alt"}, {VK_CAPITAL, "Caps Lock"},
     {'C', "C"},           {'R', "R"},          {'X', "X"},       {'Z', "Z"},
 };
 constexpr int kKeyCount = static_cast<int>(sizeof(kKeys) / sizeof(kKeys[0]));
@@ -87,7 +87,7 @@ ImVec2 ToggleKey::OnRenderHud(const HudFrame& frame) {
     if (!active && !frame.editing) {
         return ImVec2(0, 0);
     }
-    const char* text = label_[0] != 0 ? label_ : IsSprint(slot_) ? Tr("[Corriendo (alternado)]") : Tr("[Agachado (alternado)]");
+    const char* text = label_[0] != 0 ? label_ : IsSprint(slot_) ? Tr("[Sprinting (toggled)]") : Tr("[Sneaking (toggled)]");
     const rh::Metrics m = rh::Measure(frame.scale);
     const ImVec2 size = rh::TextSize(m, text);
     // Sin caja: solo texto con sombra (como el aviso de otros clients).
@@ -98,20 +98,20 @@ ImVec2 ToggleKey::OnRenderHud(const HudFrame& frame) {
 bool ToggleKey::DrawSettings() {
     namespace ui = render::ui;
     bool changed = false;
-    if (ui::Choice(IsSprint(slot_) ? "Tecla de correr" : "Tecla de agacharse", &keyIndex_,
-                   {"Ctrl", "Shift", "Alt", "Bloq Mayús", "C", "R", "X", "Z"})) {
+    if (ui::Choice(IsSprint(slot_) ? "Sprint key" : "Sneak key", &keyIndex_,
+                   {"Ctrl", "Shift", "Alt", "Caps Lock", "C", "R", "X", "Z"})) {
         changed = true;
         if (IsEnabled()) {
             render::input::ConfigureHold(slot_, true, GameKey());
         }
     }
-    ui::Hint("Tiene que ser la misma tecla que usas en el juego (Opciones > Controles).");
-    if (ui::Toggle("Texto en el HUD", &showText_)) {
+    ui::Hint("It has to be the same key you use in the game (Settings > Controls).");
+    if (ui::Toggle("Text on the HUD", &showText_)) {
         changed = true;
         Manager::RefreshActive();  // agrega o quita el módulo de la lista de dibujo
     }
     if (showText_) {
-        changed |= ui::Text("Texto", label_, sizeof(label_), IsSprint(slot_) ? "[Corriendo (alternado)]" : "[Agachado (alternado)]");
+        changed |= ui::Text("Text", label_, sizeof(label_), IsSprint(slot_) ? "[Sprinting (toggled)]" : "[Sneaking (toggled)]");
     }
     return changed;
 }

@@ -504,7 +504,7 @@ void RowLabel(const char* label, const char* hint = nullptr) {
 
 void KeybindButton(const char* id, int key, bool capturing, CaptureTarget target, Module* module) {
     const theme::Palette& p = theme::P();
-    const std::string label = capturing ? std::string(Tr("Pulsa una tecla...")) : keys::Name(key);
+    const std::string label = capturing ? std::string(Tr("Press a key...")) : keys::Name(key);
     ImGui::PushID(id);
     const ImVec2 size(Fs() * 9.0f, ImGui::GetFrameHeight());
     const ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -531,7 +531,7 @@ void KeybindButton(const char* id, int key, bool capturing, CaptureTarget target
     CenteredText(draw, ImGui::GetFont(), ImVec2(pos.x + size.y * 0.6f, pos.y), max,
                  Col(capturing ? p.onAccentText : p.text), label.c_str());
     if (hovered) {
-        ImGui::SetTooltip("%s", Tr("Clic: cambiar la tecla. Clic derecho: quitarla.\nMientras espera: Esc cancela, Retroceso la quita."));
+        ImGui::SetTooltip("%s", Tr("Click: change the key. Right click: remove it.\nWhile waiting: Esc cancels, Backspace removes it."));
     }
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && target == CaptureTarget::Module && module != nullptr) {
         module->SetKeybind(keys::kNone);
@@ -556,7 +556,7 @@ void SearchField(float width) {
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));
     ImGui::SetNextItemWidth(width - height * 1.3f);
-    ImGui::InputTextWithHint("##search", Tr("Buscar módulos..."), g_search, sizeof(g_search));
+    ImGui::InputTextWithHint("##search", Tr("Search modules..."), g_search, sizeof(g_search));
     ImGui::PopStyleColor(3);
     ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + height));
 }
@@ -597,8 +597,8 @@ float KeyChip(ImDrawList* draw, ImVec2 rightTop, int key, float alpha) {
 
 // El texto de estado bajo el nombre: encendido / apagado / no disponible / qué hace un clic.
 const char* ModuleStatus(const Module& module, bool hovered) {
-    if (!Manager::IsAvailable(module)) return Tr("No disponible en esta versión");
-    if (hovered) return module.IsEnabled() ? Tr("Clic: apagar") : Tr("Clic: encender");
+    if (!Manager::IsAvailable(module)) return Tr("Not available in this version");
+    if (hovered) return module.IsEnabled() ? Tr("Click: turn off") : Tr("Click: turn on");
     return module.IsEnabled() ? Tr("Encendido") : Tr("Apagado");
 }
 
@@ -695,9 +695,9 @@ void ModuleCard(Module& module, float width, float height, int index) {
     }
 
     if (overGear) {
-        ImGui::SetTooltip("%s", Tr("Opciones y tecla"));
+        ImGui::SetTooltip("%s", Tr("Options and key"));
     } else if (hovered && !overToggle) {
-        ImGui::SetTooltip(Tr("%s\n\n%s"), module.DisplayDescription(), Tr("Clic: encender o apagar · Engranaje o clic derecho: opciones"));
+        ImGui::SetTooltip(Tr("%s\n\n%s"), module.DisplayDescription(), Tr("Click: turn on or off · Gear or right click: options"));
     }
     if (clicked && !overGear) {
         Manager::SetEnabled(module, !module.IsEnabled(), /*notify=*/false);
@@ -774,14 +774,14 @@ void ModuleRow(Module& module, float width, int index) {
     const float textY = cMin.y + (height - blockH) * 0.5f;
     draw->PushClipRect(cMin, ImVec2(right - fs * 0.6f, cMax.y), true);
     draw->AddText(medium, medium->FontSize, ImVec2(textX, textY), Col(p.text, alpha), module.DisplayName());
-    const char* second = !Manager::IsAvailable(module) ? Tr("No disponible en esta versión") : module.DisplayDescription();
+    const char* second = !Manager::IsAvailable(module) ? Tr("Not available in this version") : module.DisplayDescription();
     draw->AddText(ImVec2(textX, textY + medium->FontSize + fs * 0.05f), Col(p.textDim, alpha), second);
     draw->PopClipRect();
 
     if (overGear) {
-        ImGui::SetTooltip("%s", Tr("Opciones y tecla"));
+        ImGui::SetTooltip("%s", Tr("Options and key"));
     } else if (hovered && !overToggle) {
-        ImGui::SetTooltip("%s", Tr("Clic: encender o apagar · Engranaje o clic derecho: opciones"));
+        ImGui::SetTooltip("%s", Tr("Click: turn on or off · Gear or right click: options"));
     }
     if (clicked) {
         Manager::SetEnabled(module, !module.IsEnabled(), /*notify=*/false);
@@ -890,11 +890,11 @@ void DrawModulesPage() {
     // Encabezado: título a la izquierda; búsqueda, vista y HUD a la derecha.
     const float headerY = ImGui::GetCursorPosY();
     const float contentRight = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-    const char* title = g_categoryFilter == Category::Count ? Tr("Módulos") : modules::CategoryName(g_categoryFilter);
-    PageHeader(title, g_categoryFilter == Category::Count ? "Todo lo que Luma puede hacer." : "Módulos de esta categoría.");
+    const char* title = g_categoryFilter == Category::Count ? Tr("Modules") : modules::CategoryName(g_categoryFilter);
+    PageHeader(title, g_categoryFilter == Category::Count ? "Everything Luma can do." : "Modules in this category.");
     const float afterHeader = ImGui::GetCursorPosY();
     const float buttonH = ImGui::GetFrameHeight() * 1.05f;
-    const char* hudLabel = Tr("Editar HUD");
+    const char* hudLabel = Tr("Edit HUD");
     const float hudWidth = ImGui::CalcTextSize(hudLabel).x + fs * 3.2f;
     const float searchWidth = std::clamp(ImGui::GetContentRegionAvail().x * 0.3f, fs * 9.0f, fs * 16.0f);
     const float rightWidth = searchWidth + fs * 0.5f + buttonH * 2.0f + fs * 0.3f + fs * 0.5f + hudWidth;
@@ -904,23 +904,23 @@ void DrawModulesPage() {
     x += searchWidth + fs * 0.5f;
     ImGui::SetCursorPos(ImVec2(x, headerY + fs * 0.2f));
     int& view = theme::Get().moduleView;
-    if (IconToggle("##viewgrid", icons::kAll, view == 0, "Bloques") && view != 0) {
+    if (IconToggle("##viewgrid", icons::kAll, view == 0, "Blocks") && view != 0) {
         view = 0;
         g_pageChangedAt = perf::Now();
         config::MarkDirty();
     }
     ImGui::SameLine(0.0f, fs * 0.3f);
-    if (IconToggle("##viewlist", icons::kList, view == 1, "Lista (apilados)") && view != 1) {
+    if (IconToggle("##viewlist", icons::kList, view == 1, "List (stacked)") && view != 1) {
         view = 1;
         g_pageChangedAt = perf::Now();
         config::MarkDirty();
     }
     ImGui::SameLine(0.0f, fs * 0.5f);
-    if (GlassButton("Editar HUD", icons::kMove, ImVec2(hudWidth, buttonH), true)) {
+    if (GlassButton("Edit HUD", icons::kMove, ImVec2(hudWidth, buttonH), true)) {
         hudeditor::Begin();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", Tr("Mover y escalar los elementos del HUD activos."));
+        ImGui::SetTooltip("%s", Tr("Move and scale the active HUD elements."));
     }
     ImGui::SetCursorPosY(std::max(afterHeader, headerY + buttonH + fs * 0.2f) + fs * 0.3f);
 
@@ -950,8 +950,8 @@ void DrawModulesPage() {
         const ImVec2 avail = ImGui::GetContentRegionAvail();
         const ImVec2 center(ImGui::GetCursorScreenPos().x + avail.x * 0.5f, ImGui::GetCursorScreenPos().y + fs * 5.0f);
         icons::Draw(draw, searching ? icons::kSearch : CategoryIcon(g_categoryFilter), center, fs * 3.5f, Col(p.textDim), fs * 0.16f);
-        const char* line1 = searching ? Tr("Ningún módulo coincide") : Tr("Todavía no hay módulos aquí");
-        const char* line2 = searching ? Tr("Prueba con otra palabra.") : Tr("Llegan en las próximas versiones.");
+        const char* line1 = searching ? Tr("No module matches") : Tr("No modules here yet");
+        const char* line2 = searching ? Tr("Try another word.") : Tr("Coming in the next versions.");
         ImFont* medium = theme::GetFonts().medium;
         CenteredText(draw, medium, ImVec2(center.x - avail.x * 0.5f, center.y + fs * 2.6f),
                      ImVec2(center.x + avail.x * 0.5f, center.y + fs * 4.0f), Col(p.text), line1);
@@ -1024,82 +1024,82 @@ void DrawModuleDetail(Module& module) {
         config::MarkDirty();
     }
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(Tr("Tecla"));
+    ImGui::TextUnformatted(Tr("Key"));
     ImGui::SameLine(fs * 9.5f);
     const bool capturing = g_capture == CaptureTarget::Module && g_captureModule == &module;
     KeybindButton("##detail_key", module.Keybind(), capturing, CaptureTarget::Module, &module);
 
-    ui::Section("Opciones");
+    ui::Section("Options");
     if (module.HasSettings() || module.IsHudElement()) {
         if (moduleoptions::Draw(module)) {
             config::MarkDirty();
         }
         if (module.IsHudElement()) {
             ImGui::Dummy(ImVec2(0, fs * 0.3f));
-            if (GlassButton("Abrir el editor de HUD", icons::kMove, ImVec2(0, 0))) {
+            if (GlassButton("Open the HUD editor", icons::kMove, ImVec2(0, 0))) {
                 hudeditor::Begin();
             }
         }
     } else {
-        ImGui::TextDisabled("%s", Tr("Este módulo no tiene opciones."));
+        ImGui::TextDisabled("%s", Tr("This module has no options."));
     }
 }
 
 void DrawThemePage() {
-    PageHeader("Apariencia", "El aspecto de Luma: colores, vidrio, forma y sonido.");
+    PageHeader("Appearance", "How Luma looks: colors, glass, shape and sound.");
     theme::Settings& t = theme::Get();
     bool changed = false;
 
-    SectionHeader(icons::kTheme, "Estilo");
+    SectionHeader(icons::kTheme, "Style");
     BeginGroupCard("style");
-    RowLabel("Vidrio");
-    static const char* const kStyles[] = {"Oscuro", "Claro"};
+    RowLabel("Glass");
+    static const char* const kStyles[] = {"Dark", "Claro"};
     int style = t.style == theme::Style::Light ? 1 : 0;
     if (Segmented("style", kStyles, 2, &style)) {
         t.style = style == 1 ? theme::Style::Light : theme::Style::Dark;
         changed = true;
     }
-    RowLabel("Vista de módulos");
-    static const char* const kViews[] = {"Bloques", "Lista"};
+    RowLabel("Module view");
+    static const char* const kViews[] = {"Blocks", "List"};
     if (Segmented("moduleview", kViews, 2, &t.moduleView)) {
         changed = true;
     }
-    RowLabel("Color de Luma", "(el marfil del logo)");
+    RowLabel("Luma color", "(the logo's ivory)");
     if (Toggle("##accentAuto", &t.accentAuto, ImGui::GetFrameHeight() * 0.95f)) {
         changed = true;
     }
     if (!t.accentAuto) {
-        RowLabel("Color de acento");
+        RowLabel("Accent color");
         changed |= ImGui::ColorEdit3("##accent", t.accent, ImGuiColorEditFlags_NoInputs);
     }
     EndGroupCard();
 
-    SectionHeader(icons::kVisual, "Vidrio");
+    SectionHeader(icons::kVisual, "Glass");
     BeginGroupCard("glass");
-    RowLabel("Desenfoque");
+    RowLabel("Blur");
     changed |= ImGui::SliderFloat("##blur", &t.blur, 0.0f, 1.0f, "%.2f");
-    RowLabel("Opacidad del vidrio");
+    RowLabel("Glass opacity");
     changed |= ImGui::SliderFloat("##opacity", &t.glassOpacity, 0.1f, 0.95f, "%.2f");
-    RowLabel("Oscurecer el juego");
+    RowLabel("Dim the game");
     changed |= ImGui::SliderFloat("##dim", &t.backgroundDim, 0.0f, 0.8f, "%.2f");
-    RowLabel("Esquinas");
+    RowLabel("Corners");
     changed |= ImGui::SliderFloat("##rounding", &t.rounding, 0.0f, 28.0f, "%.0f px");
-    RowLabel("Tamaño de letra");
+    RowLabel("Font size");
     ImGui::SliderFloat("##font", &t.fontSize, 13.0f, 28.0f, "%.0f px");
     if (ImGui::IsItemDeactivatedAfterEdit()) {  // se regenera al soltar (cuesta unos ms)
         theme::RequestFontRebuild();
         changed = true;
     }
-    RowLabel("Animaciones");
+    RowLabel("Animations");
     changed |= Toggle("##anim", &t.animations, ImGui::GetFrameHeight() * 0.95f);
     EndGroupCard();
 
-    SectionHeader(icons::kHud, "HUD en pantalla");
+    SectionHeader(icons::kHud, "On-screen HUD");
     BeginGroupCard("hud");
     {
         render::hud::Style& h = render::hud::GetStyle();
         bool hudChanged = false;
-        RowLabel("Letra");
+        RowLabel("Font");
         static const char* const kFonts[] = {"Pixel", "Luma"};
         int font = static_cast<int>(h.font);
         if (Segmented("hudfont", kFonts, 2, &font)) {
@@ -1108,35 +1108,35 @@ void DrawThemePage() {
         }
         if (h.font == render::hud::FontChoice::Pixel) {
             ImGui::SameLine();
-            ImGui::TextDisabled("%s", render::hud::PixelFontAvailable() ? Tr("(la del juego)") : Tr("(no se encontró: se usa Luma)"));
+            ImGui::TextDisabled("%s", render::hud::PixelFontAvailable() ? Tr("(the game's)") : Tr("(not found: using Luma)"));
         }
-        RowLabel("Fondo de las cajas");
+        RowLabel("Box background");
         hudChanged |= ImGui::SliderFloat("##hudbg", &h.background, 0.0f, 1.0f, "%.2f");
-        RowLabel("Color de las cajas");
+        RowLabel("Box color");
         hudChanged |= ImGui::ColorEdit3("##hudbgcolor", h.backgroundColor, ImGuiColorEditFlags_NoInputs);
-        RowLabel("Sombra del texto");
+        RowLabel("Text shadow");
         hudChanged |= Toggle("##hudshadow", &h.textShadow, ImGui::GetFrameHeight() * 0.95f);
-        RowLabel("Esquinas");
+        RowLabel("Corners");
         hudChanged |= ImGui::SliderFloat("##hudround", &h.rounding, 0.0f, 6.0f, "%.0f");
-        RowLabel("Borde");
+        RowLabel("Border");
         hudChanged |= Toggle("##hudborder", &h.border, ImGui::GetFrameHeight() * 0.95f);
-        RowLabel("Color del texto");
+        RowLabel("Text color");
         hudChanged |= ImGui::ColorEdit3("##hudtext", h.text, ImGuiColorEditFlags_NoInputs);
-        RowLabel("Rainbow", "(todo el HUD cambia de color)");
+        RowLabel("Rainbow", "(the whole HUD changes color)");
         hudChanged |= Toggle("##hudrainbow", &h.rainbow, ImGui::GetFrameHeight() * 0.95f);
         if (h.rainbow) {
-            RowLabel("Velocidad del rainbow");
+            RowLabel("Rainbow speed");
             hudChanged |= ImGui::SliderFloat("##hudrainbowspeed", &h.rainbowSpeed, 0.05f, 2.0f, "%.2f");
         }
-        RowLabel("Esconder en los menús", "(pausa, inventario, chat)");
+        RowLabel("Hide in menus", "(pause, inventory, chat)");
         hudChanged |= Toggle("##hudhide", &h.hideInGameMenus, ImGui::GetFrameHeight() * 0.95f);
-        RowLabel("Tecla apretada", "(keystrokes)");
+        RowLabel("Pressed key", "(keystrokes)");
         hudChanged |= ImGui::ColorEdit3("##hudpressed", h.pressed, ImGuiColorEditFlags_NoInputs);
-        RowLabel("Posiciones");
-        if (GlassButton("Abrir el editor de HUD", icons::kMove, ImVec2(0, 0))) {
+        RowLabel("Positions");
+        if (GlassButton("Open the HUD editor", icons::kMove, ImVec2(0, 0))) {
             hudeditor::Begin();
         }
-        if (GlassButton("Estilo de fábrica", nullptr, ImVec2(0, 0))) {
+        if (GlassButton("Default style", nullptr, ImVec2(0, 0))) {
             h = render::hud::Style{};
             hudChanged = true;
         }
@@ -1146,31 +1146,31 @@ void DrawThemePage() {
     }
     EndGroupCard();
 
-    SectionHeader(icons::kSparkle, "Sonido");
+    SectionHeader(icons::kSparkle, "Sound");
     BeginGroupCard("sound");
-    RowLabel("Efectos de sonido");
+    RowLabel("Sound effects");
     if (Toggle("##sounds", &t.sounds, ImGui::GetFrameHeight() * 0.95f)) {
         changed = true;
     }
     ImGui::BeginDisabled(!t.sounds);
-    RowLabel("Volumen");
+    RowLabel("Volume");
     ImGui::SliderFloat("##volume", &t.soundVolume, 0.0f, 1.0f, "%.2f");
     if (ImGui::IsItemDeactivatedAfterEdit()) {
         sound::SetVolume(t.soundVolume);
         sound::Play(sound::Effect::ToggleOn);
         changed = true;
     }
-    RowLabel("Probar");
-    if (GlassButton("Abrir", nullptr, ImVec2(0, 0))) sound::Play(sound::Effect::Open);
+    RowLabel("Try");
+    if (GlassButton("Open", nullptr, ImVec2(0, 0))) sound::Play(sound::Effect::Open);
     ImGui::SameLine();
-    if (GlassButton("Encender", nullptr, ImVec2(0, 0))) sound::Play(sound::Effect::ToggleOn);
+    if (GlassButton("Turn on", nullptr, ImVec2(0, 0))) sound::Play(sound::Effect::ToggleOn);
     ImGui::SameLine();
-    if (GlassButton("Apagar", nullptr, ImVec2(0, 0))) sound::Play(sound::Effect::ToggleOff);
+    if (GlassButton("Turn off", nullptr, ImVec2(0, 0))) sound::Play(sound::Effect::ToggleOff);
     ImGui::EndDisabled();
     EndGroupCard();
 
     ImGui::Dummy(ImVec2(0, Fs() * 0.4f));
-    if (GlassButton("Restablecer tema", nullptr, ImVec2(0, 0))) {
+    if (GlassButton("Reset appearance", nullptr, ImVec2(0, 0))) {
         const float oldFont = t.fontSize;
         t = theme::Settings{};
         if (t.fontSize != oldFont) {
@@ -1189,14 +1189,14 @@ void DrawProfilesPage() {
     if (g_profilesDirty) {
         RefreshProfiles();
     }
-    PageHeader("Perfiles", "Un perfil guarda TODA la configuración: módulos, opciones, teclas y tema.");
+    PageHeader("Profiles", "A profile saves ALL the settings: modules, options, keys and appearance.");
     const theme::Palette& p = theme::P();
     const float fs = Fs();
     const std::string active = config::ActiveProfile();
     std::string toLoad;
     std::string toDelete;
 
-    SectionHeader(icons::kProfiles, "Tus perfiles", static_cast<int>(g_profiles.size()));
+    SectionHeader(icons::kProfiles, "Your profiles", static_cast<int>(g_profiles.size()));
     for (const std::string& name : g_profiles) {
         ImGui::PushID(name.c_str());
         const ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -1217,10 +1217,10 @@ void DrawProfilesPage() {
         if (isActive) {
             const ImVec2 ns = medium->CalcTextSizeA(medium->FontSize, FLT_MAX, 0.0f, name.c_str());
             draw->AddText(ImVec2(c.x + circle * 0.5f + fs * 1.3f + ns.x, pos.y + (height - fs) * 0.5f),
-                          Col(p.textDim), Tr("activo"));
+                          Col(p.textDim), Tr("active"));
         } else {
             ImGui::SetCursorScreenPos(ImVec2(max.x - fs * 11.0f, pos.y + (height - ImGui::GetFrameHeight() * 1.1f) * 0.5f));
-            if (GlassButton("Cargar", nullptr, ImVec2(fs * 5.0f, 0))) toLoad = name;
+            if (GlassButton("Load", nullptr, ImVec2(fs * 5.0f, 0))) toLoad = name;
             ImGui::SameLine(0.0f, fs * 0.4f);
             if (GlassButton("Borrar", icons::kClose, ImVec2(fs * 5.2f, 0))) toDelete = name;
         }
@@ -1236,38 +1236,38 @@ void DrawProfilesPage() {
         g_profilesDirty = true;
     }
 
-    SectionHeader(icons::kSparkle, "Nuevo perfil");
+    SectionHeader(icons::kSparkle, "New profile");
     BeginGroupCard("new");
     ImGui::SetNextItemWidth(fs * 14.0f);
-    ImGui::InputTextWithHint("##newprofile", Tr("Nombre"), g_newProfile, sizeof(g_newProfile));
+    ImGui::InputTextWithHint("##newprofile", Tr("Name"), g_newProfile, sizeof(g_newProfile));
     ImGui::SameLine();
     const bool valid = config::IsValidProfileName(g_newProfile);
     ImGui::BeginDisabled(!valid);
-    if (GlassButton("Crear (copia del actual)", nullptr, ImVec2(0, ImGui::GetFrameHeight()), true) &&
+    if (GlassButton("Create (copy of current)", nullptr, ImVec2(0, ImGui::GetFrameHeight()), true) &&
         config::CreateProfile(g_newProfile)) {
         g_newProfile[0] = '\0';
         g_profilesDirty = true;
     }
     ImGui::EndDisabled();
     if (!valid && g_newProfile[0] != '\0') {
-        ImGui::TextDisabled("%s", Tr("Solo letras, números, espacios, '-' y '_' (máx. 32)."));
+        ImGui::TextDisabled("%s", Tr("Only letters, numbers, spaces, '-' and '_' (max 32)."));
     }
     EndGroupCard();
 
-    SectionHeader(icons::kClose, "Peligro");
+    SectionHeader(icons::kClose, "Danger zone");
     BeginGroupCard("danger");
-    if (GlassButton("Restablecer este perfil...", nullptr, ImVec2(0, 0))) {
+    if (GlassButton("Reset this profile...", nullptr, ImVec2(0, 0))) {
         ImGui::OpenPopup("##confirm_reset");
     }
     if (ImGui::BeginPopup("##confirm_reset")) {
-        ImGui::Text(Tr("¿Volver todo el perfil \"%s\" a los valores de fábrica?"), active.c_str());
-        if (GlassButton("Sí, restablecer", nullptr, ImVec2(0, 0), true)) {
+        ImGui::Text(Tr("Reset the whole \"%s\" profile to defaults?"), active.c_str());
+        if (GlassButton("Yes, reset", nullptr, ImVec2(0, 0), true)) {
             config::ResetActiveProfile();
             theme::Apply();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (GlassButton("Cancelar", nullptr, ImVec2(0, 0))) {
+        if (GlassButton("Cancel", nullptr, ImVec2(0, 0))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1308,11 +1308,11 @@ void DrawSettingsPage() {
     ImGui::PopTextWrapPos();
     EndGroupCard();
 
-    SectionHeader(icons::kKey, "Teclas de Luma");
+    SectionHeader(icons::kKey, "Luma keys");
     BeginGroupCard("keys");
-    RowLabel("Abrir / cerrar el menú");
+    RowLabel("Open / close the menu");
     KeybindButton("##menukey", config::g_menuKey.load(), g_capture == CaptureTarget::MenuKey, CaptureTarget::MenuKey, nullptr);
-    RowLabel("Descargar Luma");
+    RowLabel("Unload Luma");
     KeybindButton("##unloadkey", config::g_unloadKey.load(), g_capture == CaptureTarget::UnloadKey,
                   CaptureTarget::UnloadKey, nullptr);
     ImGui::PushTextWrapPos(0.0f);
@@ -1321,13 +1321,13 @@ void DrawSettingsPage() {
     ImGui::PopTextWrapPos();
     EndGroupCard();
 
-    SectionHeader(icons::kAll, "Archivos");
+    SectionHeader(icons::kAll, "Files");
     BeginGroupCard("files");
-    if (GlassButton("Abrir la carpeta de Luma", nullptr, ImVec2(0, 0))) {
+    if (GlassButton("Open the Luma folder", nullptr, ImVec2(0, 0))) {
         ShellExecuteW(nullptr, L"open", paths::DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", Tr("Config, perfiles y logs."));
+    ImGui::TextDisabled("%s", Tr("Config, profiles and logs."));
     EndGroupCard();
 }
 
@@ -1353,7 +1353,7 @@ const char* StatusText(perf::windows::Status s) {
     switch (s) {
         case perf::windows::Status::On:  return Tr("Activado");
         case perf::windows::Status::Off: return Tr("Desactivado");
-        default:                          return Tr("No disponible");
+        default:                          return Tr("Not available");
     }
 }
 
@@ -1374,7 +1374,7 @@ void TipRow(const char* title, const char* status, bool good, const char* text, 
     ImGui::TextColored(theme::WithAlpha(color, ImGui::GetStyle().Alpha), "%s", status);
     if (settingsUri != nullptr) {
         ImGui::SameLine();
-        if (GlassButton("Abrir en Windows", nullptr, ImVec2(0, 0))) {
+        if (GlassButton("Open in Windows", nullptr, ImVec2(0, 0))) {
             ShellExecuteW(nullptr, L"open", settingsUri, nullptr, nullptr, SW_SHOWNORMAL);
         }
     }
@@ -1388,40 +1388,40 @@ void TipRow(const char* title, const char* status, bool good, const char* text, 
 }
 
 void DrawBenchmarkPage() {
-    PageHeader("Benchmark", "Mide FPS de forma comparable y prueba si las optimizaciones sirven.");
+    PageHeader("Benchmark", "Measures FPS in a comparable way and tests whether optimizations help.");
     const float fs = Fs();
     const perf::benchmark::State state = perf::benchmark::GetState();
     const bool idle = state == perf::benchmark::State::Idle;
 
-    SectionHeader(icons::kChart, "Nueva prueba");
+    SectionHeader(icons::kChart, "New test");
     BeginGroupCard("bench");
     ImGui::BeginDisabled(!idle);
-    RowLabel("Nombre");
-    ImGui::InputTextWithHint("##benchlabel", Tr("Por ejemplo: sin optimizaciones"), g_benchLabel, sizeof(g_benchLabel));
-    RowLabel("Duración");
+    RowLabel("Name");
+    ImGui::InputTextWithHint("##benchlabel", Tr("For example: no optimizations"), g_benchLabel, sizeof(g_benchLabel));
+    RowLabel("Duration");
     ImGui::SliderInt("##benchsecs", &g_benchSeconds, 10, 300, "%d s");
-    RowLabel("Modo");
-    static const char* const kModes[] = {"Con mi HUD", "Luma en reposo"};
+    RowLabel("Mode");
+    static const char* const kModes[] = {"With my HUD", "Luma idle"};
     Segmented("benchmode", kModes, 2, &g_benchMode);
-    RowLabel("Optimizaciones");
+    RowLabel("Optimizations");
     const std::string optimizations = ActiveOptimizations();
-    ImGui::TextUnformatted(optimizations.empty() ? Tr("ninguna") : optimizations.c_str());
+    ImGui::TextUnformatted(optimizations.empty() ? Tr("none") : optimizations.c_str());
     ImGui::EndDisabled();
 
     if (idle) {
-        if (GlassButton("Empezar (el menú se cierra)", icons::kChart, ImVec2(0, 0), true)) {
+        if (GlassButton("Start (the menu closes)", icons::kChart, ImVec2(0, 0), true)) {
             const auto mode = g_benchMode == 1 ? perf::benchmark::Mode::Resting : perf::benchmark::Mode::WithHud;
             if (perf::benchmark::Start(g_benchSeconds, 5.0, g_benchLabel, mode, optimizations)) {
-                notify::Push(notify::Kind::Info, Tr("Benchmark en 5 s: no abras el menú y no te muevas"));
+                notify::Push(notify::Kind::Info, Tr("Benchmark in 5 s: don't open the menu or move"));
                 // Cerrar el menú desde el hilo de la ventana (ver input.h).
                 render::input::RequestMenuToggle();
             }
         }
     } else {
-        const char* what = state == perf::benchmark::State::Countdown ? "Empieza en" : "Grabando: faltan";
+        const char* what = state == perf::benchmark::State::Countdown ? "Starts in" : "Recording: left";
         ImGui::Text(Tr("%s %.0f s"), what, perf::benchmark::SecondsLeft());
         ImGui::SameLine();
-        if (GlassButton("Cancelar", icons::kClose, ImVec2(0, 0))) {
+        if (GlassButton("Cancel", icons::kClose, ImVec2(0, 0))) {
             perf::benchmark::Cancel("cancelado desde el menú");
         }
     }
@@ -1433,16 +1433,16 @@ void DrawBenchmarkPage() {
     EndGroupCard();
 
     const std::vector<perf::benchmark::Result> results = perf::benchmark::Results();
-    SectionHeader(icons::kDiagnostics, "Resultados de esta sesión", static_cast<int>(results.size()));
+    SectionHeader(icons::kDiagnostics, "Results from this session", static_cast<int>(results.size()));
     if (results.empty()) {
-        ImGui::TextDisabled("%s", Tr("Todavía no hiciste ninguna prueba."));
+        ImGui::TextDisabled("%s", Tr("You haven't run any test yet."));
     } else {
         constexpr ImGuiTableFlags kTable = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
                                            ImGuiTableFlags_BordersInnerH;
         if (ImGui::BeginTable("##results", 7, kTable)) {
-            ImGui::TableSetupColumn(Tr("Nombre"), ImGuiTableColumnFlags_WidthStretch, 2.2f);
-            ImGui::TableSetupColumn(Tr("Modo"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
-            ImGui::TableSetupColumn(Tr("Optimizaciones"), ImGuiTableColumnFlags_WidthStretch, 2.4f);
+            ImGui::TableSetupColumn(Tr("Name"), ImGuiTableColumnFlags_WidthStretch, 2.2f);
+            ImGui::TableSetupColumn(Tr("Mode"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
+            ImGui::TableSetupColumn(Tr("Optimizations"), ImGuiTableColumnFlags_WidthStretch, 2.4f);
             ImGui::TableSetupColumn(Tr("FPS"), ImGuiTableColumnFlags_WidthStretch, 0.8f);
             ImGui::TableSetupColumn(Tr("1% low"), ImGuiTableColumnFlags_WidthStretch, 0.9f);
             ImGui::TableSetupColumn(Tr("Frametime"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
@@ -1461,14 +1461,14 @@ void DrawBenchmarkPage() {
             ImGui::EndTable();
         }
     }
-    if (GlassButton("Abrir la carpeta de benchmarks", nullptr, ImVec2(0, 0))) {
+    if (GlassButton("Open the benchmarks folder", nullptr, ImVec2(0, 0))) {
         std::error_code ec;
         const std::filesystem::path dir = paths::DataDir() / L"benchmarks";
         std::filesystem::create_directories(dir, ec);
         ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", Tr("resumen.csv = una fila por prueba; un .csv por prueba con cada frame."));
+    ImGui::TextDisabled("%s", Tr("resumen.csv = one row per test; one .csv per test with every frame."));
 
     // --- Consejos de Windows ---------------------------------------------------
     if (g_windowsInfoDirty) {
@@ -1477,42 +1477,42 @@ void DrawBenchmarkPage() {
     }
     const perf::windows::Info& w = g_windowsInfo;
     using perf::windows::Status;
-    SectionHeader(icons::kSettings, "Consejos de Windows");
+    SectionHeader(icons::kSettings, "Windows tips");
     BeginGroupCard("windows");
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextUnformatted(Tr("Luma solo te muestra cómo están estas opciones: nunca las cambia por su cuenta. "
                            "Prueba cada una con el benchmark."));
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, fs * 0.3f));
-    TipRow("Modo de juego", StatusText(w.gameMode), w.gameMode == Status::On,
+    TipRow("Game Mode", StatusText(w.gameMode), w.gameMode == Status::On,
            "Windows le da prioridad al juego y evita instalar actualizaciones mientras juegas. Recomendado: "
            "activado. (Configuración > Juegos > Modo de juego.)",
            L"ms-settings:gaming-gamemode");
-    TipRow("Programación de GPU acelerada por hardware", StatusText(w.gpuScheduling), w.gpuScheduling == Status::On,
+    TipRow("Hardware-accelerated GPU scheduling", StatusText(w.gpuScheduling), w.gpuScheduling == Status::On,
            "La tarjeta gráfica organiza su propio trabajo: puede bajar la latencia. Con GPUs y drivers recientes, "
            "suele convenir activado (pide reiniciar). (Configuración > Pantalla > Gráficos > Cambiar la "
            "configuración predeterminada de gráficos.)",
            L"ms-settings:display-advancedgraphics");
-    TipRow("Optimizaciones para juegos en ventana", StatusText(w.windowedOptimizations),
+    TipRow("Optimizations for windowed games", StatusText(w.windowedOptimizations),
            w.windowedOptimizations == Status::On,
            "Minecraft Bedrock juega en ventana: esta opción le da casi la misma latencia que la pantalla completa. "
            "(Mismo lugar que la anterior.)",
            L"ms-settings:display-advancedgraphics");
-    const std::string plan = TrFormat("Plan actual: {}", w.powerPlan.empty() ? std::string(Tr("desconocido")) : w.powerPlan);
-    TipRow("Plan de energía", plan.c_str(), w.powerPlanIsHighPerformance,
+    const std::string plan = TrFormat("Current plan: {}", w.powerPlan.empty() ? std::string(Tr("unknown")) : w.powerPlan);
+    TipRow("Power plan", plan.c_str(), w.powerPlanIsHighPerformance,
            "En portátiles, \"Equilibrado\" puede bajar la frecuencia de la CPU. \"Alto rendimiento\" (o el modo de "
            "energía \"Mejor rendimiento\" en Windows 11) la mantiene alta. Enchufa el cargador para jugar.",
            L"ms-settings:powersleep");
-    const std::string gpu = TrFormat("Ahora: {}", std::string(Tr(w.gpuPreference.c_str())));
-    TipRow("GPU para Minecraft", gpu.c_str(), w.gpuPreference == "Alto rendimiento",
+    const std::string gpu = TrFormat("Now: {}", std::string(Tr(w.gpuPreference.c_str())));
+    TipRow("GPU for Minecraft", gpu.c_str(), w.gpuPreference == "High performance",
            "En portátiles con dos GPU (integrada + dedicada), elige \"Alto rendimiento\" para Minecraft en "
            "Configuración > Pantalla > Gráficos. Si tu PC tiene una sola GPU, no hace falta.",
            L"ms-settings:display-advancedgraphics");
-    if (GlassButton("Volver a leer", nullptr, ImVec2(0, 0))) {
+    if (GlassButton("Read again", nullptr, ImVec2(0, 0))) {
         g_windowsInfoDirty = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", Tr("Nada de \"limpiadores de RAM\" ni trucos de registro: no tienen evidencia."));
+    ImGui::TextDisabled("%s", Tr("No \"RAM cleaners\" or registry tricks: there's no evidence they work."));
     EndGroupCard();
 }
 
@@ -1570,14 +1570,14 @@ void StatTile(const char* label, const char* value, float width) {
 }
 
 void DrawDiagnosticsPage(const RenderInfo& info) {
-    PageHeader("Diagnóstico", "Rendimiento del juego y costo de Luma.");
+    PageHeader("Diagnostics", "Game performance and Luma's cost.");
     const perf::History& history = perf::GetHistory();
     const HistoryStats stats = ComputeStats(history);
     const float fps = stats.averageMs > 0.0f ? 1000.0f / stats.averageMs : 0.0f;
     const float low1 = stats.percentile99Ms > 0.0f ? 1000.0f / stats.percentile99Ms : 0.0f;
     const perf::Summary summary = perf::LastSummary();
 
-    SectionHeader(icons::kDiagnostics, "Ahora");
+    SectionHeader(icons::kDiagnostics, "Now");
     const float gap = Fs() * 0.8f;
     const float tile = (ImGui::GetContentRegionAvail().x - gap * 3.0f) / 4.0f;
     char buffer[32];
@@ -1595,7 +1595,7 @@ void DrawDiagnosticsPage(const RenderInfo& info) {
     } else {
         std::snprintf(buffer, sizeof(buffer), "...");
     }
-    StatTile("Costo de Luma (menú cerrado)", buffer, tile);
+    StatTile("Luma's cost (menu closed)", buffer, tile);
 
     SectionHeader(icons::kChart, "Frametime");
     BeginGroupCard("graph");
@@ -1605,33 +1605,33 @@ void DrawDiagnosticsPage(const RenderInfo& info) {
     ImGui::PlotLines("##frametime", history.frameMs.data(), static_cast<int>(history.count), offset, nullptr, 0.0f,
                      scaleMax, ImVec2(ImGui::GetContentRegionAvail().x - Fs() * 1.8f, Fs() * 6.0f));
     ImGui::PopStyleColor();
-    ImGui::TextDisabled(Tr("Últimos %zu frames · máx %.2f ms · más abajo = mejor, picos = tirones"), history.count, stats.maxMs);
+    ImGui::TextDisabled(Tr("Last %zu frames · max %.2f ms · lower = better, spikes = stutters"), history.count, stats.maxMs);
     EndGroupCard();
 
-    SectionHeader(icons::kPerformance, "Costo de Luma");
+    SectionHeader(icons::kPerformance, "Luma's cost");
     BeginGroupCard("cost");
     if (summary.valid && summary.closedFrames > 0) {
-        ImGui::Text(Tr("Menú cerrado (últimos %.0f s): %.4f ms promedio, %.4f ms máximo"), summary.seconds,
+        ImGui::Text(Tr("Menu closed (last %.0f s): %.4f ms average, %.4f ms max"), summary.seconds,
                     summary.averageCostUs / 1000.0, summary.maxCostUs / 1000.0);
     } else {
-        ImGui::TextDisabled("%s", Tr("Menú cerrado: deja el menú cerrado 30 s y vuelve a abrirlo."));
+        ImGui::TextDisabled("%s", Tr("Menu closed: keep the menu closed for 30 s and open it again."));
     }
-    ImGui::Text(Tr("Menú abierto (ahora, con el vidrio): %.3f ms promedio, %.3f ms máximo"),
+    ImGui::Text(Tr("Menu open (now, with the glass): %.3f ms average, %.3f ms max"),
                 stats.openCostAvgUs / 1000.0f, stats.openCostMaxUs / 1000.0f);
     ImGui::TextDisabled(Tr("DirectX 12 · %u x %u · %s · %u buffers"), info.width, info.height, info.formatName, info.bufferCount);
     EndGroupCard();
 
     // Estado del SDK: qué datos del juego encontró Luma en esta versión.
-    SectionHeader(icons::kWorld, "Datos del juego (SDK)");
+    SectionHeader(icons::kWorld, "Game data (SDK)");
     BeginGroupCard("sdk");
-    RowLabel("Jugador local");
-    ImGui::TextUnformatted(!sdk::player::Available() ? Tr("No disponible")
-                           : sdk::player::LocalPlayer() != 0 ? "Encontrado"
-                                                             : "Mueve el mouse dentro de un mundo");
-    RowLabel("Red (ping)");
-    ImGui::TextUnformatted(sdk::network::Available() ? Tr("Disponible") : Tr("No disponible"));
-    RowLabel("Dónde estás");
-    ImGui::TextUnformatted(sdk::network::OnServer() ? Tr("En un servidor") : Tr("Mundo local (o menú)"));
+    RowLabel("Local player");
+    ImGui::TextUnformatted(!sdk::player::Available() ? Tr("Not available")
+                           : sdk::player::LocalPlayer() != 0 ? "Found"
+                                                             : "Move the mouse inside a world");
+    RowLabel("Network (ping)");
+    ImGui::TextUnformatted(sdk::network::Available() ? Tr("Available") : Tr("Not available"));
+    RowLabel("Where you are");
+    ImGui::TextUnformatted(sdk::network::OnServer() ? Tr("On a server") : Tr("Local world (or menu)"));
     EndGroupCard();
 }
 
@@ -2052,7 +2052,7 @@ void Sidebar() {
             OnNavigate();
         }
     };
-    category("Todos", icons::kAll, Category::Count);
+    category("All", icons::kAll, Category::Count);
     for (int i = 0; i < static_cast<int>(Category::Count); ++i) {
         const auto c = static_cast<Category>(i);
         if (CountModules(c) > 0) category(modules::CategoryName(c), CategoryIcon(c), c);
@@ -2069,11 +2069,11 @@ void Sidebar() {
         }
     };
     page(i18n::T("closet.title"), icons::kProfiles, Page::Closet);
-    page("Apariencia", icons::kTheme, Page::Theme);
-    page("Perfiles", icons::kProfiles, Page::Profiles);
-    page("Ajustes", icons::kSettings, Page::Settings);
+    page("Appearance", icons::kTheme, Page::Theme);
+    page("Profiles", icons::kProfiles, Page::Profiles);
+    page("Settings", icons::kSettings, Page::Settings);
     page("Benchmark", icons::kChart, Page::Benchmark);
-    page("Diagnóstico", icons::kDiagnostics, Page::Diagnostics);
+    page("Diagnostics", icons::kDiagnostics, Page::Diagnostics);
 
     // La marca de la elegida: un fondo cálido tenue y una rayita del acento
     // que se desliza hasta ella.
@@ -2105,7 +2105,7 @@ void Sidebar() {
             g_radial = true;
             OnNavigate();
         }
-        const std::string profile = TrFormat("Perfil: {}", config::ActiveProfile());
+        const std::string profile = TrFormat("Profile: {}", config::ActiveProfile());
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + fs * 0.7f);
         ImGui::TextDisabled("%s", profile.c_str());
     }
@@ -2176,7 +2176,7 @@ void OnKeyCaptured(int vk) {
             return;
     }
     if (!clear && vk == config::g_menuKey.load() && target == CaptureTarget::Module) {
-        notify::Push(notify::Kind::Warning, Tr("Esa tecla también abre el menú"));
+        notify::Push(notify::Kind::Warning, Tr("That key also opens the menu"));
     }
     sound::Play(sound::Effect::ToggleOn);
     config::MarkDirty();

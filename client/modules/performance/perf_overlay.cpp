@@ -28,8 +28,8 @@ constexpr std::size_t kGraphFrames = 240;  // máximo de frames que muestra el g
 }  // namespace
 
 PerfOverlay::PerfOverlay()
-    : Module("perf_overlay", "Overlay de rendimiento",
-             "Muestra FPS, frametime, el costo de Luma por frame y un gráfico de los últimos frames.",
+    : Module("perf_overlay", "Performance overlay",
+             "Shows FPS, frametime, Luma's cost per frame and a graph of the latest frames.",
              Category::Performance) {
     // Arriba a la derecha.
     HudLayout l;
@@ -109,13 +109,13 @@ ImVec2 PerfOverlay::OnRenderHud(const HudFrame& frame) {
 
 bool PerfOverlay::DrawSettings() {
     bool changed = false;
-    changed |= ui::Toggle("Costo de Luma", &showLumaCost_, "(ms por frame)");
-    changed |= ui::Toggle("Gráfico de frametime", &showGraph_);
+    changed |= ui::Toggle("Luma's cost", &showLumaCost_, "(ms por frame)");
+    changed |= ui::Toggle("Frametime graph", &showGraph_);
     if (showGraph_) {
-        changed |= ui::SliderInt("Alto del gráfico", &graphHeight_, 10, 50, "%d");
-        changed |= ui::SliderInt("Frames en el gráfico", &graphFrames_, 30, 240, "%d");
+        changed |= ui::SliderInt("Graph height", &graphHeight_, 10, 50, "%d");
+        changed |= ui::SliderInt("Frames in the graph", &graphFrames_, 30, 240, "%d");
     }
-    ui::Hint("Con un elemento del HUD activo, Luma dibuja cada frame y su costo sube un poco.");
+    ui::Hint("With a HUD element on, Luma draws every frame and its cost goes up a little.");
     return changed;
 }
 

@@ -25,7 +25,7 @@ namespace ui = render::ui;
 // =============================================================================
 
 Fullbright::Fullbright()
-    : Module("fullbright", "Fullbright", "Ves todo iluminado aunque sea de noche o estés en una cueva.",
+    : Module("fullbright", "Fullbright", "See everything lit up, even at night or in a cave.",
              Category::Visual) {}
 
 const char* Fullbright::IconSvg() const {
@@ -46,11 +46,11 @@ void Fullbright::OnDisable() {
 }
 
 bool Fullbright::DrawSettings() {
-    const bool changed = ui::Slider("Brillo", &gamma_, 1.0f, 25.0f, "%.0f");
+    const bool changed = ui::Slider("Brightness", &gamma_, 1.0f, 25.0f, "%.0f");
     if (changed && IsEnabled()) {
         sdk::camera::SetGammaOverride(gamma_);
     }
-    ui::Hint("El brillo máximo del juego es 1. Con 10 o más, las cuevas se ven como de día.");
+    ui::Hint("The game's maximum brightness is 1. At 10 or more, caves look like daytime.");
     return changed;
 }
 
@@ -70,7 +70,7 @@ void Fullbright::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 Freelook::Freelook()
-    : Module("freelook", "Freelook", "Mira alrededor en tercera persona sin girar al jugador. Asígnale una tecla.",
+    : Module("freelook", "Freelook", "Look around in third person without turning your player. Give it a key.",
              Category::Visual) {}
 
 const char* Freelook::IconSvg() const {
@@ -104,17 +104,17 @@ void Freelook::OnTick() {
 
 bool Freelook::DrawSettings() {
     bool changed = false;
-    changed |= ui::Choice("Tecla", &mode_, {"Mantener", "Alternar"});
+    changed |= ui::Choice("Key", &mode_, {"Hold", "Toggle"});
     int index = view_ - 1;
-    if (ui::Choice("Cámara", &index, {"Detrás", "Delante"})) {
+    if (ui::Choice("Camera", &index, {"Behind", "In front"})) {
         view_ = index + 1;
         changed = true;
         if (IsEnabled()) {
             sdk::camera::SetPerspectiveOverride(view_);
         }
     }
-    ui::Hint(mode_ == 0 ? "Mantén apretada su tecla para mirar alrededor (asígnale una en General)."
-                        : "Pulsa su tecla para activarlo y otra vez para desactivarlo.");
+    ui::Hint(mode_ == 0 ? "Hold its key to look around (set one in General)."
+                        : "Press its key to turn it on and again to turn it off.");
     return changed;
 }
 
@@ -228,58 +228,58 @@ void Zoom::OnTick() {
 
 bool Zoom::DrawSettings() {
     bool changed = false;
-    ui::Section("Estilo");
+    ui::Section("Style");
     int style = style_;
-    if (ui::Choice("Estilo", &style, {"Normal", "Cine", "Catalejo"})) {
+    if (ui::Choice("Style", &style, {"Normal", "Cinema", "Spyglass"})) {
         ApplyStyle(style);
         changed = true;
     }
-    changed |= ui::Choice("Tecla", &mode_, {"Mantener", "Alternar"});
+    changed |= ui::Choice("Key", &mode_, {"Hold", "Toggle"});
 
-    ui::Section("Acercamiento");
-    changed |= ui::Slider("Aumento", &factor_, 1.5f, 15.0f, "%.1fx");
-    changed |= ui::Toggle("Rueda para acercar", &wheel_, "(mientras haces zoom)");
+    ui::Section("Zoom in");
+    changed |= ui::Slider("Magnification", &factor_, 1.5f, 15.0f, "%.1fx");
+    changed |= ui::Toggle("Wheel to zoom", &wheel_, "(while zooming)");
     if (wheel_) {
-        changed |= ui::Toggle("Recordar el aumento", &keepWheel_, "(el de la rueda)");
+        changed |= ui::Toggle("Remember magnification", &keepWheel_, "(the wheel one)");
     }
-    changed |= ui::Toggle("Animación suave", &smooth_);
+    changed |= ui::Toggle("Smooth animation", &smooth_);
     if (smooth_) {
-        changed |= ui::Slider("Velocidad", &smoothSpeed_, 2.0f, 30.0f, "%.0f");
+        changed |= ui::Slider("Speed", &smoothSpeed_, 2.0f, 30.0f, "%.0f");
     }
 
-    ui::Section("Sensibilidad");
-    changed |= ui::Toggle("Sigue al zoom", &followSensitivity_, "(más zoom, cámara más lenta)");
+    ui::Section("Sensitivity");
+    changed |= ui::Toggle("Follows zoom", &followSensitivity_, "(more zoom, slower camera)");
     if (followSensitivity_) {
         float percent = followStrength_ * 100.0f;
-        if (ui::Slider("Cuánto", &percent, 0.0f, 100.0f, "%.0f%%")) {
+        if (ui::Slider("How much", &percent, 0.0f, 100.0f, "%.0f%%")) {
             followStrength_ = percent / 100.0f;
             changed = true;
         }
     }
 
-    ui::Section("Efectos");
-    changed |= ui::Toggle("Barras de cine", &bars_);
+    ui::Section("Effects");
+    changed |= ui::Toggle("Cinema bars", &bars_);
     if (bars_) {
         float percent = barsHeight_ * 100.0f;
-        if (ui::Slider("Alto de las barras", &percent, 3.0f, 25.0f, "%.0f%%")) {
+        if (ui::Slider("Bar height", &percent, 3.0f, 25.0f, "%.0f%%")) {
             barsHeight_ = percent / 100.0f;
             changed = true;
         }
     }
-    changed |= ui::Toggle("Círculo de catalejo", &spyglass_);
-    changed |= ui::Toggle("Ocultar el HUD de Luma", &hideHud_);
+    changed |= ui::Toggle("Spyglass circle", &spyglass_);
+    changed |= ui::Toggle("Hide Luma's HUD", &hideHud_);
     if (sdk::camera::HideHandAvailable()) {
-        changed |= ui::Toggle("Ocultar la mano", &hideHand_);
+        changed |= ui::Toggle("Hide hand", &hideHand_);
     }
-    changed |= ui::Toggle("Ocultar la interfaz del juego", &hideGameUi_, "(pulsa F1 por ti)");
+    changed |= ui::Toggle("Hide the game UI", &hideGameUi_, "(presses F1 for you)");
     if (hideGameUi_) {
-        ui::Hint("Luma pulsa F1 al empezar y al terminar el zoom. Si tú pulsas F1 mientras tanto, se invierte.");
+        ui::Hint("Luma presses F1 when the zoom starts and ends. If you press F1 in between, it flips.");
     }
 
-    ui::Section("Sonido");
-    changed |= ui::Toggle("Sonidos", &sounds_, "(al acercar y alejar)");
+    ui::Section("Sound");
+    changed |= ui::Toggle("Sounds", &sounds_, "(zooming in and out)");
     if (sounds_) {
-        changed |= ui::Toggle("Clic de la rueda", &wheelSounds_);
+        changed |= ui::Toggle("Wheel click", &wheelSounds_);
     }
 
     if (changed) {
@@ -345,7 +345,7 @@ void Zoom::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 FovChanger::FovChanger()
-    : Module("fov_changer", "FOV personalizado", "Elige tu campo de visión, también fuera del rango del juego.",
+    : Module("fov_changer", "Custom FOV", "Pick your field of view, even outside the game's range.",
              Category::Visual) {}
 
 const char* FovChanger::IconSvg() const {
@@ -365,11 +365,11 @@ void FovChanger::OnDisable() {
 }
 
 bool FovChanger::DrawSettings() {
-    const bool changed = ui::Slider("Campo de visión", &degrees_, 30.0f, 150.0f, "%.0f°");
+    const bool changed = ui::Slider("Field of view", &degrees_, 30.0f, 150.0f, "%.0f°");
     if (changed && IsEnabled()) {
         sdk::camera::SetFovOverride(degrees_);
     }
-    ui::Hint("Vertical, en grados. Reemplaza el del juego (también el efecto de correr).");
+    ui::Hint("Vertical, in degrees. Replaces the game's (also the sprint effect).");
     return changed;
 }
 

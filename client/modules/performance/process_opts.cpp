@@ -74,7 +74,7 @@ int g_threadOriginal = THREAD_PRIORITY_NORMAL;
 // =============================================================================
 
 ProcessPriority::ProcessPriority()
-    : Module("opt_priority", "Prioridad del proceso",
+    : Module("opt_priority", "Process priority",
              "Windows le da a Minecraft la CPU antes que a otros programas. \"Por encima de lo normal\" es "
              "seguro; \"Alta\" puede hacer que otros programas (Discord, el navegador) vayan lentos.",
              Category::Performance) {}
@@ -103,7 +103,7 @@ void ProcessPriority::OnDisable() {
 }
 
 bool ProcessPriority::DrawSettings() {
-    const bool changed = render::ui::Choice("Nivel", &level_, {"Sobre lo normal", "Alta"});
+    const bool changed = render::ui::Choice("Level", &level_, {"Above normal", "High"});
     if (changed && IsEnabled()) {
         Apply();
     }
@@ -123,7 +123,7 @@ void ProcessPriority::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 TimerResolution::TimerResolution()
-    : Module("opt_timer", "Timer de 1 ms",
+    : Module("opt_timer", "1 ms timer",
              "Sube la precisión del reloj de Windows a 1 ms para Minecraft: los frames pueden salir más parejos "
              "(sobre todo con límite de FPS). Usa un poco más de batería.",
              Category::Performance) {}
@@ -151,7 +151,7 @@ void TimerResolution::OnDisable() {
 // =============================================================================
 
 NoEcoQos::NoEcoQos()
-    : Module("opt_ecoqos", "Sin modo eficiencia",
+    : Module("opt_ecoqos", "No efficiency mode",
              "Impide que Windows 11 ponga a Minecraft en \"modo eficiencia\" (EcoQoS: núcleos lentos y menos "
              "frecuencia), algo que hace sobre todo con ventanas en segundo plano.",
              Category::Performance) {}
@@ -175,8 +175,8 @@ void NoEcoQos::OnDisable() {
 // =============================================================================
 
 RenderThreadPriority::RenderThreadPriority()
-    : Module("opt_render_thread", "Prioridad del hilo de render",
-             "Sube la prioridad solo del hilo que dibuja los frames (no de todo el juego).",
+    : Module("opt_render_thread", "Render thread priority",
+             "Raises the priority of only the thread that draws the frames (not the whole game).",
              Category::Performance) {}
 
 const char* RenderThreadPriority::IconSvg() const {
@@ -194,13 +194,13 @@ void RenderThreadPriority::OnDisable() {
 }
 
 bool RenderThreadPriority::DrawSettings() {
-    const bool changed = render::ui::Choice("Nivel", &level_, {"Sobre lo normal", "La más alta"});
+    const bool changed = render::ui::Choice("Level", &level_, {"Above normal", "Highest"});
     if (changed && IsEnabled()) {
         g_threadDesired.store(level_);
         PollRenderThread();
     }
     if (perf::RenderThreadId() == 0) {
-        render::ui::Hint("Todavía no se vio el hilo de render.");
+        render::ui::Hint("The render thread hasn't been seen yet.");
     }
     return changed;
 }

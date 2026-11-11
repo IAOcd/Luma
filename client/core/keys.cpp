@@ -12,7 +12,7 @@ namespace luma::keys {
 
 std::string Name(int vk) {
     if (vk == kNone) {
-        return Tr("Ninguna");
+        return Tr("None");
     }
     // Letras y números: su código coincide con el carácter ASCII.
     if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) {
@@ -27,38 +27,38 @@ std::string Name(int vk) {
     switch (vk) {
         case VK_INSERT:   return "Insert";
         case VK_DELETE:   return Tr("Supr");
-        case VK_HOME:     return Tr("Inicio");
-        case VK_END:      return Tr("Fin");
-        case VK_PRIOR:    return Tr("RePág");
-        case VK_NEXT:     return Tr("AvPág");
-        case VK_UP:       return Tr("Flecha arriba");
-        case VK_DOWN:     return Tr("Flecha abajo");
-        case VK_LEFT:     return Tr("Flecha izquierda");
-        case VK_RIGHT:    return Tr("Flecha derecha");
-        case VK_SPACE:    return Tr("Espacio");
+        case VK_HOME:     return Tr("Home");
+        case VK_END:      return Tr("End");
+        case VK_PRIOR:    return Tr("Page Up");
+        case VK_NEXT:     return Tr("Page Down");
+        case VK_UP:       return Tr("Up arrow");
+        case VK_DOWN:     return Tr("Down arrow");
+        case VK_LEFT:     return Tr("Left arrow");
+        case VK_RIGHT:    return Tr("Right arrow");
+        case VK_SPACE:    return Tr("Space");
         case VK_TAB:      return "Tab";
         case VK_RETURN:   return "Enter";
-        case VK_BACK:     return Tr("Retroceso");
+        case VK_BACK:     return Tr("Backspace");
         case VK_SHIFT:    return "Shift";
         case VK_CONTROL:  return "Ctrl";
         case VK_MENU:     return "Alt";
-        case VK_CAPITAL:  return Tr("Bloq Mayús");
-        case VK_PAUSE:    return Tr("Pausa");
-        case VK_SCROLL:   return Tr("Bloq Despl");
+        case VK_CAPITAL:  return Tr("Caps Lock");
+        case VK_PAUSE:    return Tr("Pause");
+        case VK_SCROLL:   return Tr("Scroll Lock");
         case VK_MULTIPLY: return "Num *";
         case VK_ADD:      return "Num +";
         case VK_SUBTRACT: return "Num -";
         case VK_DECIMAL:  return "Num .";
         case VK_DIVIDE:   return "Num /";
-        case VK_OEM_3:    return Tr("Tecla ` / ñ");
-        case VK_OEM_MINUS: return Tr("Tecla -");
-        case VK_OEM_PLUS: return Tr("Tecla +");
-        case VK_OEM_COMMA: return Tr("Tecla ,");
-        case VK_OEM_PERIOD: return Tr("Tecla .");
+        case VK_OEM_3:    return Tr("` key");
+        case VK_OEM_MINUS: return Tr("- key");
+        case VK_OEM_PLUS: return Tr("+ key");
+        case VK_OEM_COMMA: return Tr(", key");
+        case VK_OEM_PERIOD: return Tr(". key");
         case VK_XBUTTON1: return "Mouse 4";
         case VK_XBUTTON2: return "Mouse 5";
-        case VK_MBUTTON:  return Tr("Clic central");
-        default:          return TrFormat("Tecla 0x{:02X}", vk);
+        case VK_MBUTTON:  return Tr("Middle click");
+        default:          return TrFormat("Key 0x{:02X}", vk);
     }
 }
 

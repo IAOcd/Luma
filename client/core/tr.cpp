@@ -1,5 +1,5 @@
 // =============================================================================
-//  tr.cpp - Tabla de traducciones por texto (ver tr.h)
+//  tr.cpp - Translation table looked up by text (see tr.h)
 // =============================================================================
 #include "core/tr.h"
 
@@ -22,13 +22,19 @@ constexpr Entry kTable[] = {
 #include "core/tr_table.inc"
 };
 
-// Se arma una sola vez (C++ garantiza que una "static" local se inicializa
-// una vez aunque la llamen varios hilos a la vez) y después solo se lee.
+// Built only once (C++ guarantees a local "static" is initialized once, even
+// if several threads call this at the same time) and only read afterwards.
+// Every row is indexed by its English text AND by its Spanish text, so the
+// code can pass either one. emplace() never overwrites, so if two rows share
+// the same English text, the first one wins.
 const std::unordered_map<std::string_view, const Entry*>& Index() {
     static const std::unordered_map<std::string_view, const Entry*> index = [] {
         std::unordered_map<std::string_view, const Entry*> m;
-        m.reserve(sizeof(kTable) / sizeof(kTable[0]));
-        for (const Entry& e : kTable) m.emplace(e.es, &e);
+        m.reserve(2 * sizeof(kTable) / sizeof(kTable[0]));
+        for (const Entry& e : kTable) {
+            m.emplace(e.en, &e);
+            m.emplace(e.es, &e);
+        }
         return m;
     }();
     return index;
@@ -36,15 +42,18 @@ const std::unordered_map<std::string_view, const Entry*>& Index() {
 
 }  // namespace
 
-const char* Tr(const char* spanish) {
-    if (spanish == nullptr) return "";
-    const i18n::Language language = i18n::CurrentLanguage();
-    if (language == i18n::Language::Spanish) return spanish;
+const char* Tr(const char* text) {
+    if (text == nullptr) return "";
     const auto& index = Index();
-    const auto it = index.find(spanish);
-    if (it == index.end()) return spanish;
-    const char* text = language == i18n::Language::Portuguese ? it->second->pt : it->second->en;
-    return text != nullptr && text[0] != '\0' ? text : spanish;
+    const auto it = index.find(text);
+    if (it == index.end()) return text;  // not in the table: show it as written
+    const char* translated = nullptr;
+    switch (i18n::CurrentLanguage()) {
+        case i18n::Language::Spanish: translated = it->second->es; break;
+        case i18n::Language::Portuguese: translated = it->second->pt; break;
+        default: translated = it->second->en; break;
+    }
+    return translated != nullptr && translated[0] != '\0' ? translated : text;
 }
 
 }  // namespace luma

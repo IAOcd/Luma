@@ -39,19 +39,19 @@ PostParams Make(float exposure, float brightness, float contrast, float saturati
 }
 const Preset kPresets[] = {
     {"Neutral", Make(0, 0, 1.0f, 1.0f, 0, 1.0f, 0, 0, 0, 0)},
-    {"Vívido", Make(0, 0.02f, 1.12f, 1.25f, 0.35f, 1.0f, 0.05f, 0, 0.15f, 0.25f)},
-    {"Cálido", Make(0, 0.03f, 1.05f, 1.08f, 0.1f, 1.05f, 0.6f, 0.05f, 0.2f, 0)},
-    {"Frío", Make(0, 0, 1.08f, 0.95f, 0.1f, 1.0f, -0.6f, 0, 0.15f, 0)},
-    {"Cine", Make(-0.1f, -0.02f, 1.2f, 0.85f, 0, 0.95f, 0.15f, -0.05f, 0.45f, 0.15f)},
+    {"Vivid", Make(0, 0.02f, 1.12f, 1.25f, 0.35f, 1.0f, 0.05f, 0, 0.15f, 0.25f)},
+    {"Warm", Make(0, 0.03f, 1.05f, 1.08f, 0.1f, 1.05f, 0.6f, 0.05f, 0.2f, 0)},
+    {"Cold", Make(0, 0, 1.08f, 0.95f, 0.1f, 1.0f, -0.6f, 0, 0.15f, 0)},
+    {"Cinema", Make(-0.1f, -0.02f, 1.2f, 0.85f, 0, 0.95f, 0.15f, -0.05f, 0.45f, 0.15f)},
     {"Pastel", Make(0.15f, 0.08f, 0.85f, 0.8f, 0.2f, 1.15f, 0.1f, 0.05f, 0, 0)},
-    {"Blanco y negro", Make(0, 0, 1.15f, 0.0f, 0, 1.0f, 0, 0, 0.3f, 0.2f)},
-    {"Más claro", Make(0.35f, 0.05f, 1.0f, 1.0f, 0, 1.25f, 0, 0, 0, 0)},
+    {"Black and white", Make(0, 0, 1.15f, 0.0f, 0, 1.0f, 0, 0, 0.3f, 0.2f)},
+    {"Brighter", Make(0.35f, 0.05f, 1.0f, 1.0f, 0, 1.25f, 0, 0, 0, 0)},
 };
 
 }  // namespace
 
 PostProcessing::PostProcessing()
-    : Module("post_processing", "Post-procesado",
+    : Module("post_processing", "Post-processing",
              "Cambia cómo se ve el juego, como un editor de fotos: brillo, contraste, saturación, temperatura, "
              "viñeta y nitidez, con estilos listos.",
              Category::Visual) {}
@@ -75,34 +75,34 @@ void PostProcessing::OnDisable() {
 
 bool PostProcessing::DrawSettings() {
     bool changed = false;
-    ui::Section("Estilo");
+    ui::Section("Style");
     int preset = preset_;
-    if (ui::Choice("Empezar desde", &preset,
-                   {"Neutral", "Vívido", "Cálido", "Frío", "Cine", "Pastel", "Blanco y negro", "Más claro"})) {
+    if (ui::Choice("Start from", &preset,
+                   {"Neutral", "Vivid", "Warm", "Cold", "Cinema", "Pastel", "Black and white", "Brighter"})) {
         preset_ = preset;
         params_ = kPresets[preset].params;
         changed = true;
     }
     PostParams& p = params_;
     ui::Section("Luz");
-    changed |= ui::Slider("Exposición", &p.exposure, -2.0f, 2.0f, "%+.2f");
-    changed |= ui::Slider("Brillo", &p.brightness, -1.0f, 1.0f, "%+.2f");
-    changed |= ui::Slider("Contraste", &p.contrast, 0.0f, 2.0f, "%.2f");
+    changed |= ui::Slider("Exposure", &p.exposure, -2.0f, 2.0f, "%+.2f");
+    changed |= ui::Slider("Brightness", &p.brightness, -1.0f, 1.0f, "%+.2f");
+    changed |= ui::Slider("Contrast", &p.contrast, 0.0f, 2.0f, "%.2f");
     changed |= ui::Slider("Gamma", &p.gamma, 0.5f, 2.0f, "%.2f");
     ui::Section("Color");
-    changed |= ui::Slider("Saturación", &p.saturation, 0.0f, 2.0f, "%.2f");
-    changed |= ui::Slider("Intensidad", &p.vibrance, -1.0f, 1.0f, "%+.2f");
-    changed |= ui::Slider("Temperatura", &p.temperature, -1.0f, 1.0f, "%+.2f");
-    changed |= ui::Slider("Tinte", &p.tint, -1.0f, 1.0f, "%+.2f");
-    ui::Section("Efectos");
-    changed |= ui::Slider("Viñeta", &p.vignette, 0.0f, 1.0f, "%.2f");
-    changed |= ui::Slider("Nitidez", &p.sharpen, 0.0f, 1.0f, "%.2f");
-    if (ui::Button("Volver a neutral", "Restablecer")) {
+    changed |= ui::Slider("Saturation", &p.saturation, 0.0f, 2.0f, "%.2f");
+    changed |= ui::Slider("Intensity", &p.vibrance, -1.0f, 1.0f, "%+.2f");
+    changed |= ui::Slider("Temperature", &p.temperature, -1.0f, 1.0f, "%+.2f");
+    changed |= ui::Slider("Tint", &p.tint, -1.0f, 1.0f, "%+.2f");
+    ui::Section("Effects");
+    changed |= ui::Slider("Vignette", &p.vignette, 0.0f, 1.0f, "%.2f");
+    changed |= ui::Slider("Sharpness", &p.sharpen, 0.0f, 1.0f, "%.2f");
+    if (ui::Button("Back to neutral", "Reset")) {
         p = PostParams{};
         preset_ = 0;
         changed = true;
     }
-    ui::Hint("También cambia la interfaz del juego (barra, chat). El menú y el HUD de Luma no.");
+    ui::Hint("It also changes the game's UI (hotbar, chat). Luma's menu and HUD don't change.");
     if (changed) {
         Push();
     }

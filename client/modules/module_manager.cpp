@@ -30,9 +30,9 @@ const char* CategoryName(Category category) {
     switch (category) {
         case Category::Hud:         return "HUD";
         case Category::Visual:      return "Visual";
-        case Category::Utility:     return Tr("Utilidad");
-        case Category::World:       return Tr("Mundo");
-        case Category::Performance: return Tr("Rendimiento");
+        case Category::Utility:     return Tr("Utility");
+        case Category::World:       return Tr("World");
+        case Category::Performance: return Tr("Performance");
         case Category::Count:       break;
     }
     return "?";
@@ -93,14 +93,14 @@ void Manager::SetEnabled(Module& module, bool enabled, bool notify) {
         return;
     }
     if (enabled && module.IsLocalOnly() && sdk::network::OnServer()) {
-        notify::Push(notify::Kind::Warning, TrFormat("{}: solo funciona en mundos locales", module.DisplayName()));
+        notify::Push(notify::Kind::Warning, TrFormat("{}: only works in local worlds", module.DisplayName()));
         return;
     }
     if (enabled && !IsAvailable(module)) {
         // Con la config de arranque (notify = false) se permite: las firmas
         // todavía no se buscaron. DisableUnavailable lo corrige después.
         if (notify || sdk::player::Initialized()) {
-            notify::Push(notify::Kind::Warning, TrFormat("{}: no disponible en esta versión del juego", module.DisplayName()));
+            notify::Push(notify::Kind::Warning, TrFormat("{}: not available in this game version", module.DisplayName()));
             return;
         }
     }
@@ -115,7 +115,7 @@ void Manager::SetEnabled(Module& module, bool enabled, bool notify) {
     if (notify) {
         sound::Play(enabled ? sound::Effect::ToggleOn : sound::Effect::ToggleOff);
         notify::Push(enabled ? notify::Kind::Success : notify::Kind::Info,
-                     TrFormat(enabled ? "{} activado" : "{} desactivado", module.DisplayName()));
+                     TrFormat(enabled ? "{} on" : "{} off", module.DisplayName()));
     }
 }
 
@@ -171,7 +171,7 @@ void Manager::Tick() {
         for (const auto& module : modules_) {
             if (module->IsEnabled() && module->IsLocalOnly()) {
                 SetEnabled(*module, false, false);
-                notify::Push(notify::Kind::Warning, TrFormat("{} desactivado: estás en un servidor", module->DisplayName()));
+                notify::Push(notify::Kind::Warning, TrFormat("{} turned off: you're on a server", module->DisplayName()));
             }
         }
     }

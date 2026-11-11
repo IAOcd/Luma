@@ -37,8 +37,8 @@ void LoadColor(const nlohmann::json& in, const char* key, float* c) {
 // =============================================================================
 
 BlockOutline::BlockOutline()
-    : Module("block_outline", "Contorno de bloque",
-             "Cambia el contorno del bloque que miras: su color y un relleno opcional.", Category::Visual) {}
+    : Module("block_outline", "Block outline",
+             "Changes the outline of the block you look at: its color and an optional fill.", Category::Visual) {}
 
 const char* BlockOutline::IconSvg() const {
     return "M12 3l8 4.5v9L12 21l-8-4.5v-9z M12 12l8-4.5 M12 12v9 M12 12L4 7.5";
@@ -69,17 +69,17 @@ void BlockOutline::OnDisable() {
 
 bool BlockOutline::DrawSettings() {
     bool changed = false;
-    changed |= ui::ColorAlpha("Color de la línea", line_);
-    changed |= ui::Toggle("Rainbow", &rainbow_, "(va cambiando de color)");
-    changed |= ui::Toggle("Relleno", &fill_);
+    changed |= ui::ColorAlpha("Line color", line_);
+    changed |= ui::Toggle("Rainbow", &rainbow_, "(keeps changing color)");
+    changed |= ui::Toggle("Fill", &fill_);
     if (fill_) {
-        changed |= ui::ColorAlpha("Color del relleno", fillColor_);
+        changed |= ui::ColorAlpha("Fill color", fillColor_);
         // No sabemos con certeza qué "material" del juego dibuja mejor una cara
         // de color liso: si con uno no se ve, prueba otro.
-        changed |= ui::Choice("Método de relleno", &fillMaterial_, {"A", "B", "C", "D"});
-        ui::Hint("Si el relleno no se ve o parpadea, prueba otro método.");
+        changed |= ui::Choice("Fill method", &fillMaterial_, {"A", "B", "C", "D"});
+        ui::Hint("If the fill doesn't show or flickers, try another method.");
     }
-    ui::Hint("Se dibuja dentro del mundo: las paredes lo tapan, igual que el contorno del juego.");
+    ui::Hint("Drawn inside the world: walls cover it, like the game's outline.");
     if (changed) {
         Push();
     }
@@ -109,7 +109,7 @@ void BlockOutline::LoadSettings(const nlohmann::json& in) {
 
 Hitboxes::Hitboxes()
     : Module("hitboxes", "Hitboxes",
-             "Muestra la caja de golpe de las entidades cercanas, como el F3+B de Java. Las paredes la tapan.",
+             "Shows the hitbox of nearby entities, like Java's F3+B. Walls cover them.",
              Category::Visual) {}
 
 const char* Hitboxes::IconSvg() const {
@@ -147,24 +147,24 @@ void Hitboxes::OnDisable() {
 
 bool Hitboxes::DrawSettings() {
     bool changed = false;
-    changed |= ui::Toggle("Rainbow", &rainbow_, "(todas las cajas van cambiando de color)");
-    ui::Section("Jugadores");
-    changed |= ui::Toggle("Mostrar jugadores", &players_);
+    changed |= ui::Toggle("Rainbow", &rainbow_, "(all boxes keep changing color)");
+    ui::Section("Players");
+    changed |= ui::Toggle("Show players", &players_);
     if (players_) {
-        changed |= ui::ColorAlpha("Color de jugadores", playerColor_);
-        changed |= ui::Toggle("Tu propia caja", &showSelf_, "(en tercera persona)");
+        changed |= ui::ColorAlpha("Player color", playerColor_);
+        changed |= ui::Toggle("Your own box", &showSelf_, "(in third person)");
     }
-    ui::Section("Entidades");
-    changed |= ui::Toggle("Mostrar mobs", &mobs_, "(animales, monstruos...)");
+    ui::Section("Entities");
+    changed |= ui::Toggle("Show mobs", &mobs_, "(animals, monsters...)");
     if (mobs_) {
-        changed |= ui::ColorAlpha("Color de mobs", mobColor_);
+        changed |= ui::ColorAlpha("Mob color", mobColor_);
     }
-    changed |= ui::Toggle("Mostrar ítems y orbes", &items_);
+    changed |= ui::Toggle("Show items and orbs", &items_);
     if (items_) {
-        changed |= ui::ColorAlpha("Color de ítems", itemColor_);
+        changed |= ui::ColorAlpha("Item color", itemColor_);
     }
-    ui::Section("Alcance");
-    changed |= ui::Slider("Distancia", &maxDistance_, 8.0f, 96.0f, "%.0f bloques");
+    ui::Section("Range");
+    changed |= ui::Slider("Distance", &maxDistance_, 8.0f, 96.0f, "%.0f blocks");
     if (changed) {
         Push();
     }
@@ -212,8 +212,8 @@ void Hitboxes::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 ChunkBorders::ChunkBorders()
-    : Module("chunk_borders", "Bordes de chunk",
-             "Muestra los bordes de los chunks (columnas de 16x16 bloques), como el F3+G de Java.", Category::Visual) {}
+    : Module("chunk_borders", "Chunk borders",
+             "Shows chunk borders (16x16 block columns), like Java's F3+G.", Category::Visual) {}
 
 const char* ChunkBorders::IconSvg() const {
     return "M4 4h16v16H4z M12 4v16 M4 12h16";
@@ -245,15 +245,15 @@ void ChunkBorders::OnDisable() {
 
 bool ChunkBorders::DrawSettings() {
     bool changed = false;
-    changed |= ui::Toggle("Rainbow", &rainbow_, "(las líneas van cambiando de color)");
-    changed |= ui::ColorAlpha("Paredes del chunk", inner_);
-    changed |= ui::ColorAlpha("Esquinas del chunk", corner_);
-    changed |= ui::Toggle("Esquinas de los vecinos", &neighbors_);
+    changed |= ui::Toggle("Rainbow", &rainbow_, "(the lines keep changing color)");
+    changed |= ui::ColorAlpha("Chunk walls", inner_);
+    changed |= ui::ColorAlpha("Chunk corners", corner_);
+    changed |= ui::Toggle("Neighbor corners", &neighbors_);
     if (neighbors_) {
-        changed |= ui::ColorAlpha("Color de los vecinos", neighbor_);
+        changed |= ui::ColorAlpha("Neighbor color", neighbor_);
     }
-    changed |= ui::SliderInt("Altura", &range_, 8, 64, "%d bloques");
-    ui::Hint("Se dibujan dentro del mundo: las paredes los tapan.");
+    changed |= ui::SliderInt("Height", &range_, 8, 64, "%d blocks");
+    ui::Hint("Drawn inside the world: walls cover them.");
     if (changed) {
         Push();
     }

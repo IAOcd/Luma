@@ -107,7 +107,7 @@ constexpr const char* kPickerItems[] = {
 // =============================================================================
 
 ArmorHud::ArmorHud()
-    : Module("armor_hud", "Armadura", "Tu armadura (y lo que tienes en las manos) con su ícono y su durabilidad.",
+    : Module("armor_hud", "Armor", "Your armor (and what you hold) with its icon and durability.",
              Category::Hud) {
     HudLayout l;
     l.x = 0.004f;
@@ -246,15 +246,15 @@ ImVec2 ArmorHud::OnRenderHud(const HudFrame& frame) {
 
 bool ArmorHud::DrawSettings() {
     bool changed = false;
-    ui::Section("Diseño");
-    changed |= ui::Choice("Orientación", &orientation_, {"Vertical", "Horizontal"});
-    changed |= ui::Choice("Mostrar", &value_, {"Usos", "Porcentaje", "Barra", "Solo íconos"});
-    changed |= ui::Choice("Cajas", &boxes_, {"Sin caja", "Una por pieza", "Una para todo"});
-    changed |= ui::Toggle("Nombres de las piezas", &showNames_);
-    ui::Section("Contenido");
-    changed |= ui::Toggle("Lo que tienes en las manos", &showHeld_);
-    changed |= ui::Toggle("Color según la durabilidad", &colorByDurability_, "(verde a rojo)");
-    changed |= ui::Toggle("Sin hueco para piezas vacías", &hideEmpty_);
+    ui::Section("Layout");
+    changed |= ui::Choice("Orientation", &orientation_, {"Vertical", "Horizontal"});
+    changed |= ui::Choice("Show", &value_, {"Uses", "Percent", "Bar", "Icons only"});
+    changed |= ui::Choice("Boxes", &boxes_, {"No box", "One per piece", "One for all"});
+    changed |= ui::Toggle("Piece names", &showNames_);
+    ui::Section("Content");
+    changed |= ui::Toggle("What you hold", &showHeld_);
+    changed |= ui::Toggle("Color by durability", &colorByDurability_, "(green to red)");
+    changed |= ui::Toggle("No gap for empty slots", &hideEmpty_);
     if (changed) {
         lastRead_ = 0;
     }
@@ -286,7 +286,7 @@ void ArmorHud::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 HeldItem::HeldItem()
-    : Module("held_item", "Ítem en la mano", "Nombre, cantidad y durabilidad del ítem que tienes seleccionado.",
+    : Module("held_item", "Held item", "Name, count and durability of the item you have selected.",
              Category::Hud) {
     HudLayout l;
     l.x = 0.5f;
@@ -363,10 +363,10 @@ ImVec2 HeldItem::OnRenderHud(const HudFrame& frame) {
 
 bool HeldItem::DrawSettings() {
     bool changed = false;
-    changed |= ui::Toggle("Ícono", &showIcon_);
-    changed |= ui::Toggle("Nombre", &showName_);
-    changed |= ui::Choice("Durabilidad", &value_, {"Usos / máx.", "Porcentaje", "Solo usos"});
-    changed |= ui::Toggle("Barra de durabilidad", &showBar_);
+    changed |= ui::Toggle("Icon", &showIcon_);
+    changed |= ui::Toggle("Name", &showName_);
+    changed |= ui::Choice("Durability", &value_, {"Uses / max", "Percent", "Uses only"});
+    changed |= ui::Toggle("Durability bar", &showBar_);
     return changed;
 }
 
@@ -389,8 +389,8 @@ void HeldItem::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 ItemCounter::ItemCounter()
-    : Module("item_counter", "Contador de ítems",
-             "Cuenta los ítems que elijas en todo el inventario, cada uno en su caja con su ícono.", Category::Hud) {
+    : Module("item_counter", "Item counter",
+             "Counts the items you pick across your whole inventory, each in its own box with its icon.", Category::Hud) {
     HudLayout l;
     l.x = 0.004f;
     l.y = 0.25f;
@@ -490,7 +490,7 @@ bool ItemCounter::DrawSettings() {
     const ImVec4 accent = theme::Accent(1.0f);
 
     // --- Selector: una cuadrícula de íconos. Clic = agregar o quitar. ------------
-    ui::Section("Elige los ítems");
+    ui::Section("Pick the items");
     const float cell = fs * 2.6f;
     const float avail = ImGui::GetContentRegionAvail().x;
     const int perRow = std::max(1, static_cast<int>(avail / (cell + fs * 0.35f)));
@@ -525,14 +525,14 @@ bool ItemCounter::DrawSettings() {
         if (hovered) {
             char name[64];
             inv::PrettyName(id, name, sizeof(name));
-            ImGui::SetTooltip("%s%s", name, selected ? "  (clic para quitar)" : "  (clic para agregar)");
+            ImGui::SetTooltip("%s%s", name, selected ? "  (click to remove)" : "  (click to add)");
         }
         ImGui::PopID();
         ++n;
     }
 
     // --- Los elegidos, en orden (con flechas para reordenar) ---------------------
-    ui::Section("En pantalla (en este orden)");
+    ui::Section("On screen (in this order)");
     int remove = -1;
     int moveUp = -1;
     for (int i = 0; i < static_cast<int>(tracked_.size()); ++i) {
@@ -546,11 +546,11 @@ bool ItemCounter::DrawSettings() {
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(name);
         ImGui::SameLine(avail - fs * 6.5f);
-        if (i > 0 && ImGui::SmallButton("Subir")) {
+        if (i > 0 && ImGui::SmallButton("Move up")) {
             moveUp = i;
         }
         ImGui::SameLine(avail - fs * 3.2f);
-        if (ImGui::SmallButton("Quitar")) {
+        if (ImGui::SmallButton("Remove")) {
             remove = i;
         }
         ImGui::PopID();
@@ -564,11 +564,11 @@ bool ItemCounter::DrawSettings() {
         changed = true;
     }
     if (tracked_.empty()) {
-        ui::Hint("Ninguno: elige alguno arriba.");
+        ui::Hint("None yet: pick some above.");
     }
     if (static_cast<int>(tracked_.size()) < kMaxTracked) {
-        ui::Text("Otro ítem", custom_, sizeof(custom_), "su id: minecraft:...");
-        if (ui::Button("Agregar", " ") && custom_[0] != 0) {
+        ui::Text("Other item", custom_, sizeof(custom_), "its id: minecraft:...");
+        if (ui::Button("Add", " ") && custom_[0] != 0) {
             std::string id = custom_;
             if (id.find(':') == std::string::npos) {
                 id = "minecraft:" + id;
@@ -579,12 +579,12 @@ bool ItemCounter::DrawSettings() {
         }
     }
 
-    ui::Section("Diseño");
-    changed |= ui::Choice("Orientación", &orientation_, {"Vertical", "Horizontal"});
-    changed |= ui::Choice("Números", &numberFormat_, {"1.000.000", "1M", "1000000"});
-    changed |= ui::Toggle("Mostrar el nombre", &showNames_);
-    changed |= ui::Toggle("Cajas del mismo ancho", &sameWidth_);
-    changed |= ui::Toggle("Esconder los que tienes en 0", &hideZero_);
+    ui::Section("Layout");
+    changed |= ui::Choice("Orientation", &orientation_, {"Vertical", "Horizontal"});
+    changed |= ui::Choice("Numbers", &numberFormat_, {"1.000.000", "1M", "1000000"});
+    changed |= ui::Toggle("Show the name", &showNames_);
+    changed |= ui::Toggle("Same width boxes", &sameWidth_);
+    changed |= ui::Toggle("Hide the ones at 0", &hideZero_);
     if (changed) {
         lastRead_ = 0;
     }
@@ -621,8 +621,8 @@ void ItemCounter::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 
 DurabilityWarning::DurabilityWarning()
-    : Module("durability_warning", "Aviso de durabilidad baja",
-             "Te avisa con un mensaje y un sonido cuando un ítem o una pieza de armadura está por romperse.",
+    : Module("durability_warning", "Low durability warning",
+             "Warns you with a message and a sound when an item or armor piece is about to break.",
              Category::Utility) {}
 
 const char* DurabilityWarning::IconSvg() const {
@@ -650,7 +650,7 @@ void DurabilityWarning::OnTick() {
             // Avisar una vez por ítem (no cada 50 ms).
             char name[64];
             inv::PrettyName(item.id, name, sizeof(name));
-            notify::Push(notify::Kind::Warning, TrFormat("{}: durabilidad baja ({} usos, {}%)", name, left, percent));
+            notify::Push(notify::Kind::Warning, TrFormat("{}: low durability ({} uses, {}%)", name, left, percent));
             if (sound_) {
                 sound::Play(sound::Effect::ToggleOff);
             }
@@ -663,9 +663,9 @@ void DurabilityWarning::OnTick() {
 
 bool DurabilityWarning::DrawSettings() {
     bool changed = false;
-    changed |= ui::SliderInt("Avisar debajo de", &threshold_, 1, 50, "%d%%");
-    changed |= ui::Toggle("También la armadura", &armorToo_);
-    changed |= ui::Toggle("Con sonido", &sound_);
+    changed |= ui::SliderInt("Warn below", &threshold_, 1, 50, "%d%%");
+    changed |= ui::Toggle("Armor too", &armorToo_);
+    changed |= ui::Toggle("With sound", &sound_);
     return changed;
 }
 

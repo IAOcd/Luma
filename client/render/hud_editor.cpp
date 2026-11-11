@@ -164,17 +164,17 @@ void DrawToolbar(ImVec2 display) {
     if (ImGui::Begin("##hud_editor_toolbar", nullptr, kFlags)) {
         glass::Panel(ImGui::GetWindowDrawList(), g_toolbarMin, g_toolbarMax, theme::Get().rounding, 1.0f);
         ImGui::PushFont(theme::GetFonts().medium);
-        ImGui::TextUnformatted(Tr("Editor de HUD"));
+        ImGui::TextUnformatted(Tr("HUD editor"));
         ImGui::PopFont();
-        ImGui::TextDisabled("%s", Tr("Arrastra para mover · esquinas o rueda: tamaño · clic derecho: opciones · Shift: sin imanes"));
+        ImGui::TextDisabled("%s", Tr("Drag to move · corners or wheel: size · right click: options · Shift: no snapping"));
 
         const float buttonsWidth = fs * 15.5f;
         ImGui::SetCursorPos(ImVec2(size.x - buttonsWidth - fs * 0.9f, (size.y - ImGui::GetFrameHeight()) * 0.5f));
-        if (ImGui::Checkbox(Tr("Imanes"), &g_snapping)) {
+        if (ImGui::Checkbox(Tr("Snapping"), &g_snapping)) {
             sound::Play(sound::Effect::Click);
         }
         ImGui::SameLine();
-        if (ImGui::Button(Tr("Restablecer"))) {
+        if (ImGui::Button(Tr("Reset"))) {
             for (Module* m : Manager::ActiveHud()) {
                 Manager::ResetLayout(*m);
             }
@@ -185,7 +185,7 @@ void DrawToolbar(ImVec2 display) {
         ImGui::PushStyleColor(ImGuiCol_Button, theme::Accent(1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::Accent(0.85f));
         ImGui::PushStyleColor(ImGuiCol_Text, theme::P().onAccentText);
-        if (ImGui::Button(Tr("  Listo  "))) {
+        if (ImGui::Button(Tr("  Done  "))) {
             End();
         }
         ImGui::PopStyleColor(3);
@@ -431,7 +431,7 @@ void Draw() {
         draw->AddLine(ImVec2(0, g_guideY), ImVec2(display.x, g_guideY), Col(accent, 0.8f), 1.5f);
     }
     if (count == 0) {
-        const char* text = Tr("No hay elementos del HUD activos. Activa alguno (FPS, Keystrokes...) en el menú.");
+        const char* text = Tr("No HUD elements are on. Turn some on (FPS, Keystrokes...) in the menu.");
         const ImVec2 ts = ImGui::CalcTextSize(text);
         draw->AddText(ImVec2((display.x - ts.x) * 0.5f, display.y * 0.5f - ts.y), IM_COL32(255, 255, 255, 220), text);
     }

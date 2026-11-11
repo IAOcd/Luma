@@ -20,8 +20,8 @@ constexpr float kDollWidth = 15.0f;
 constexpr float kDollHeight = 30.0f;
 
 MovablePaperdoll::MovablePaperdoll()
-    : Module("paperdoll", "Muñeco movible",
-             "Mueve y agranda el muñeco de tu personaje que muestra el juego al correr, agacharte o volar.",
+    : Module("paperdoll", "Movable paper doll",
+             "Moves and resizes the character doll the game shows when you sprint, sneak or fly.",
              Category::Hud) {
     HudLayout l;
     l.x = 0.02f;
@@ -93,7 +93,7 @@ ImVec2 MovablePaperdoll::OnRenderHud(const HudFrame& frame) {
         rect(2, 10, 4, 16);   // pierna
         rect(4, 10, 6, 16);   // pierna
         if (!sdk::paperdoll::Found()) {
-            d->AddText(ImVec2(p.x, p.y + size.y + 2.0f), IM_COL32(255, 255, 255, 160), "(corre para verlo)");
+            d->AddText(ImVec2(p.x, p.y + size.y + 2.0f), IM_COL32(255, 255, 255, 160), "(sprint to see it)");
         }
     }
     return size;
@@ -101,7 +101,7 @@ ImVec2 MovablePaperdoll::OnRenderHud(const HudFrame& frame) {
 
 bool MovablePaperdoll::DrawSettings() {
     bool changed = false;
-    changed |= ui::Toggle("Siempre visible", &alwaysShow_, "(sin tener que correr ni agacharte)");
+    changed |= ui::Toggle("Always visible", &alwaysShow_, "(without sprinting or sneaking)");
     ui::Hint("El muñeco lo dibuja el juego: Luma solo lo mueve y cambia su tamaño. Muévelo y agrándalo desde el "
              "editor de HUD.");
     if (changed) {

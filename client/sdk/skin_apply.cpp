@@ -223,7 +223,7 @@ void OnUiFrame() {
     g_pending.store(false);
     const std::uintptr_t player = sdk::player::LocalPlayer();
     if (player == 0) {
-        notify::Push(notify::Kind::Warning, Tr("Skin al instante: entra a un mundo primero"));
+        notify::Push(notify::Kind::Warning, Tr("Instant skin: join a world first"));
         return;
     }
     // 1. Lo que necesitamos del jugador: su skin actual, su PacketSender y su UUID.
@@ -249,7 +249,7 @@ void OnUiFrame() {
     }
     std::lock_guard lock(g_mutex);
     if (g_width != w || g_height != h || g_pixels.size() != static_cast<std::size_t>(w) * h * 4) {
-        notify::Push(notify::Kind::Warning, Tr("Skin al instante: esa skin tiene otro tamaño que la actual"));
+        notify::Push(notify::Kind::Warning, Tr("Instant skin: that skin is a different size from the current one"));
         log::Info("Skin al instante: tamaños distintos (actual {}x{}, nueva {}x{}).", w, h, g_width, g_height);
         return;
     }
@@ -306,7 +306,7 @@ void OnUiFrame() {
         return;
     }
     log::Info("Skin al instante: mandado el paquete de skin \"{}\" ({}x{}, id {}).", g_name, w, h, id);
-    notify::Push(notify::Kind::Success, Tr("Skin aplicada"));
+    notify::Push(notify::Kind::Success, Tr("Skin applied"));
 }
 
 }  // namespace luma::sdk::skinapply

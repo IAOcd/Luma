@@ -15,8 +15,8 @@ namespace luma::modules::hud {
 namespace ui = render::ui;
 
 MovableScoreboard::MovableScoreboard()
-    : Module("scoreboard", "Scoreboard movible",
-             "Mueve el scoreboard (la tabla de puntos de los servidores y minijuegos) a donde quieras con el editor de HUD.",
+    : Module("scoreboard", "Movable scoreboard",
+             "Moves the scoreboard (the score table of servers and minigames) wherever you want with the HUD editor.",
              Category::Hud) {
     HudLayout l;
     l.x = 0.82f;  // a la derecha, más o menos donde lo pone el juego
@@ -71,7 +71,7 @@ ImVec2 MovableScoreboard::OnRenderHud(const HudFrame& frame) {
             d->AddRectFilled(ImVec2(p.x + size.x * 0.08f, ry), ImVec2(p.x + size.x * 0.6f, ry + size.y * 0.07f), IM_COL32(255, 255, 255, 60));
             d->AddRectFilled(ImVec2(p.x + size.x * 0.82f, ry), ImVec2(p.x + size.x * 0.92f, ry + size.y * 0.07f), IM_COL32(255, 120, 120, 90));
         }
-        d->AddText(ImVec2(p.x, p.y + size.y + 2.0f), IM_COL32(255, 255, 255, 160), Tr("(aparece cuando un servidor muestra uno)"));
+        d->AddText(ImVec2(p.x, p.y + size.y + 2.0f), IM_COL32(255, 255, 255, 160), Tr("(shows up when a server displays one)"));
     }
     return size;
 }

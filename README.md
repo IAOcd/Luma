@@ -1,436 +1,444 @@
 # Luma
 
-Luma es un client de calidad de vida para **Minecraft Bedrock Edition en Windows** (versión GDK, `Minecraft.Windows.exe`).
-Es una DLL que se carga dentro del juego oficial y le agrega un overlay, un HUD personalizable, módulos visuales y de utilidad, y optimizaciones de rendimiento medibles.
+***English** · [Español](README.es.md)*
 
-Luma **no** incluye nada que dé ventaja en multijugador: nada de killaura, fly, reach, xray, ESP, autoclicker, etc.
+Luma is a quality-of-life client for **Minecraft Bedrock Edition on Windows** (the GDK version, `Minecraft.Windows.exe`).
+It is a DLL that loads inside the official game and adds an overlay, a customizable HUD, visual and utility modules, and measurable performance optimizations.
 
-> **Estado:** fases 0 a 8 casi completas, y el launcher con ventana (partes 1 y 2).
-> - **HUD:** keystrokes, FPS, CPS, reloj, coordenadas, brújula, velocidad, ping, armadura, ítem en mano, contador de ítems, muñeco movible y marca de agua. Todo se edita en el editor de HUD: se arrastra, se cambia de tamaño desde las esquinas y se alinea con "imanes".
-> - **Visual:** mira personalizada, post-procesado, fullbright, freelook, zoom (con modos cinematográficos), FOV, contorno de bloque y hitboxes, dibujados dentro del mundo.
-> - **Rendimiento:** overlay de frametime, benchmark exportable a CSV y optimizaciones del proceso, cada una por separado y medible.
-> - **Launcher:** ventana con temas oscuro y claro, botón PLAY que abre el juego e inyecta Luma, estadísticas, noticias, ajustes en inglés, español y portugués, e inicio de sesión opcional con Microsoft/Xbox.
-> - **Menú:** se abre con **L**. **Fin (End)** descarga Luma sin cerrar el juego.
+Luma does **not** include anything that gives an advantage in multiplayer: no killaura, fly, reach, xray, ESP, autoclicker, etc.
+
+> **Status:** phases 0 to 8 are nearly complete, plus the windowed launcher (parts 1 and 2).
+> - **HUD:** keystrokes, FPS, CPS, clock, coordinates, compass, speed, ping, armor, held item, item counter, movable paper doll and watermark. Everything is edited in the HUD editor: drag it, resize it from the corners and line it up with "magnets".
+> - **Visual:** custom crosshair, post-processing, fullbright, freelook, zoom (with cinematic modes), FOV, block outline and hitboxes, drawn inside the world.
+> - **Performance:** frametime overlay, benchmark exportable to CSV and process optimizations, each one separate and measurable.
+> - **Launcher:** a window with dark and light themes, a PLAY button that opens the game and injects Luma, stats, news, settings in English, Spanish and Portuguese, and optional Microsoft/Xbox sign-in.
+> - **Menu:** opens with **L**. **End** unloads Luma without closing the game.
 >
-> **Novedades de la 0.3.0:** menú nuevo en el juego (en inglés, español y portugués), skins que cambian al instante sin pasar por el vestidor, mira pintada a mano (8x8 a 64x64), colores rainbow, lista de jugadores con Tab, scoreboard movible, menú radial y Closet. Las notas completas están en `release/notes/0.3.0.json`.
+> **New in 0.3.0:** a new in-game menu (in English, Spanish and Portuguese), skins that change instantly without going through the Dressing Room, hand-painted crosshairs (8x8 to 64x64), rainbow colors, a Tab player list, a movable scoreboard, a radial menu and the Closet. The full notes are in `release/notes/0.3.0.json`.
 
 ---
 
-## Qué necesitas instalar
+## What you need to install
 
-| Programa | Para qué sirve | Cómo instalarlo |
+| Program | What it's for | How to install it |
 |---|---|---|
-| **Visual Studio 2022** (Community es gratis) | Trae el compilador de C++, que convierte el código en `.exe` y `.dll` | En el instalador, marca la carga de trabajo **"Desarrollo para el escritorio con C++"** |
-| **CMake** 3.24 o superior | Lee las "recetas" `CMakeLists.txt` y genera el proyecto de Visual Studio | `winget install Kitware.CMake`, o en el instalador de Visual Studio: "Herramientas de CMake de C++ para Windows" |
-| **Git** | Guarda el historial de cambios del proyecto | `winget install Git.Git` |
+| **Visual Studio 2022** (Community is free) | Brings the C++ compiler, which turns the code into `.exe` and `.dll` files | In the installer, tick the **"Desktop development with C++"** workload |
+| **CMake** 3.24 or newer | Reads the `CMakeLists.txt` "recipes" and generates the Visual Studio project | `winget install Kitware.CMake`, or in the Visual Studio installer: "C++ CMake tools for Windows" |
+| **Git** | Keeps the project's change history | `winget install Git.Git` |
 
-Las bibliotecas externas (MinHook, Dear ImGui, nlohmann/json) **no hay que instalarlas**: CMake las descarga solo la primera vez que configuras el proyecto. Por eso esa primera vez necesitas internet.
+You **don't need to install** the external libraries (MinHook, Dear ImGui, nlohmann/json): CMake downloads them by itself the first time you configure the project. That's why you need internet that first time.
 
-## Cómo compilar
+## How to build
 
-Abre una terminal (PowerShell) en la carpeta del proyecto y ejecuta:
+Open a terminal (PowerShell) in the project folder and run:
 
 ```
 cmake --preset x64
 cmake --build --preset release
 ```
 
-- El primer comando **configura**: descarga las dependencias y genera el proyecto de Visual Studio en `build/`.
-- El segundo **compila** en modo Release (optimizado).
+- The first command **configures**: it downloads the dependencies and generates the Visual Studio project in `build/`.
+- The second one **builds** in Release mode (optimized).
 
-El resultado queda en `build/bin/Release/`:
+The result ends up in `build/bin/Release/`:
 
 - `Luma.dll`
-- `LumaLauncher.exe` (el launcher con ventana)
-- `LumaLauncherCli.exe` (la versión de consola, para pruebas y scripts)
+- `LumaLauncher.exe` (the windowed launcher)
+- `LumaLauncherCli.exe` (the console version, for tests and scripts)
 
-Para una compilación de depuración (más lenta, pero útil para buscar errores), cambia el segundo comando por `cmake --build --preset debug`.
+For a debug build (slower, but useful for hunting bugs), change the second command to `cmake --build --preset debug`.
 
-**Desde Visual Studio:** también puedes usar *Archivo → Abrir → Carpeta* y elegir la carpeta del proyecto. Visual Studio detecta los presets solo.
+**From Visual Studio:** you can also use *File → Open → Folder* and pick the project folder. Visual Studio detects the presets by itself.
 
-Si algo se rompe raro, borra la carpeta `build/` y vuelve a ejecutar los dos comandos. Es seguro: todo lo que hay ahí se regenera.
+If something breaks in a weird way, delete the `build/` folder and run both commands again. It's safe: everything in there is regenerated.
 
-## Cómo usar Luma
+## How to use Luma
 
-1. Ejecuta `build\bin\Release\LumaLauncher.exe` con doble clic.
-2. Pulsa **PLAY**. Si Minecraft no está abierto, el launcher lo abre, espera a que cargue e inyecta Luma. Debajo del botón va diciendo qué está haciendo, o el error y qué hacer. Cuando termina, se minimiza.
-3. La tarjeta **Client Info** muestra la versión de Luma y la de Minecraft, y si el juego y Luma están funcionando ahora mismo.
-4. **L** abre y cierra el menú de Luma. Limitación conocida: Luma todavía no sabe si el chat del juego está abierto, así que escribir una "l" en el chat abre el menú. Se corrige en la Fase 7. Mientras tanto puedes cambiar la tecla en *Ajustes*, por ejemplo a Insert.
-5. Para quitar Luma sin cerrar el juego: pulsa **Fin (End)** con la ventana de Minecraft en primer plano. También se puede cambiar en *Ajustes*.
+1. Double-click `build\bin\Release\LumaLauncher.exe`.
+2. Press **PLAY**. If Minecraft isn't open, the launcher opens it, waits for it to load and injects Luma. Below the button it tells you what it's doing, or the error and what to do. When it's done, it minimizes.
+3. The **Client Info** card shows the Luma and Minecraft versions, and whether the game and Luma are running right now.
+4. **L** opens and closes the Luma menu. Known limitation: Luma doesn't know yet whether the game's chat is open, so typing an "l" in the chat opens the menu. Until that's fixed you can change the key in *Settings*, for example to Insert.
+5. To remove Luma without closing the game: press **End** with the Minecraft window in the foreground. This can also be changed in *Settings*.
 
-### El menú
-- **Estilo "liquid glass":** una sola ventana de vidrio que desenfoca el juego de verdad: se copia el frame y se le pasa un desenfoque gaussiano en la GPU (`client/render/gpu.cpp`). Tiene estilo oscuro y claro, con los colores de Luma (carbón `#25282B` y marfil `#E9E6DF`).
-- **Barra lateral:**
-  - el logo;
-  - las categorías de módulos: Todos, HUD, Visual, Utilidad, Mundo y Rendimiento;
-  - las páginas *Tema*, *Perfiles*, *Ajustes*, *Benchmark* y *Diagnóstico*.
-- **Barra superior:** búsqueda (en todas las categorías), selector de perfil y **Editar HUD**.
-- **Tarjetas de módulo:** ícono SVG propio, tecla asignada e interruptor. Al hacer clic se abre su página, con descripción, interruptor, tecla y opciones.
-- **Íconos:** son "paths" SVG dibujados como vectores (`client/render/icons.h`). Los que empiezan con `F` se rellenan, como el logo de Luma.
-- **Avisos (toasts), sonidos y animaciones:**
-  - Los sonidos de vidrio se **sintetizan** al arrancar y suenan con XAudio2, así que no hay archivos de audio ajenos.
-  - Todo se puede apagar en *Tema*.
-- **Pantalla de carga** al inyectar.
+### The menu
+- **"Liquid glass" style:** a single glass window that really blurs the game: the frame is copied and a Gaussian blur runs on the GPU (`client/render/gpu.cpp`). It has a dark and a light style, with Luma's colors (charcoal `#25282B` and ivory `#E9E6DF`).
+- **Sidebar:**
+  - the logo;
+  - the module categories: All, HUD, Visual, Utility, World and Performance;
+  - the *Theme*, *Profiles*, *Settings*, *Benchmark* and *Diagnostics* pages.
+- **Top bar:** search (across all categories), profile picker and **Edit HUD**.
+- **Module cards:** their own SVG icon, assigned key and switch. Clicking one opens its page, with description, switch, key and options. Modules can be shown as blocks or as a list.
+- **Icons:** SVG "paths" drawn as vectors (`client/render/icons.h`). The ones starting with `F` are filled, like the Luma logo.
+- **Toasts, sounds and animations:**
+  - The glass sounds are **synthesized** at startup and played with XAudio2, so there are no third-party audio files.
+  - Everything can be turned off in *Theme*.
+- **Languages:** English, Spanish and Portuguese, the same as the launcher (see "Translations" below).
+- **Loading screen** when injecting.
 
-### El HUD (lo que ves mientras juegas)
-El estilo es común a todos los elementos y se elige en *Tema > HUD en pantalla* (`client/render/hud.h`):
-- cajas cuadradas, oscuras y translúcidas;
-- texto con la sombra del juego;
-- opacidad, esquinas, borde y colores configurables.
+### The HUD (what you see while playing)
+The style is shared by every element and is chosen in *Theme > On-screen HUD* (`client/render/hud.h`):
+- square, dark, translucent boxes;
+- text with the game's shadow;
+- configurable opacity, corners, border and colors, including rainbow.
 
-**Letra "Pixel":** es la fuente pixelada que trae tu Minecraft (`Content\data\fonts\Mojangles.ttf`).
-- Luma la **lee de tu instalación** al arrancar: no la incluye ni la distribuye. Si no la encuentra, usa la de Luma (Segoe UI).
-- Para que se vea nítida, se carga a 8 tamaños exactos de su cuadrícula. Por eso el tamaño de los elementos va de a saltos.
+**"Pixel" font:** it's the pixel font that comes with your Minecraft (`Content\data\fonts\Mojangles.ttf`).
+- Luma **reads it from your installation** at startup: it doesn't include or distribute it. If it can't find it, it uses Luma's own (Segoe UI).
+- To look sharp, it's loaded at 8 exact sizes of its grid. That's why element sizes go in steps.
 
-Todo se mide en **píxeles de HUD**, como el juego: 1 píxel de HUD = 2 píxeles de pantalla a 1080p con tamaño 1x.
+Everything is measured in **HUD pixels**, like the game: 1 HUD pixel = 2 screen pixels at 1080p with size 1x.
 
-**Editor de HUD:** se abre con *Editar HUD* (`client/render/hud_editor.cpp`). El menú se oculta y cada elemento activo aparece con un contorno.
+**HUD editor:** opens with *Edit HUD* (`client/render/hud_editor.cpp`). The menu hides and every active element gets an outline.
 
-| Acción | Qué hace |
+| Action | What it does |
 |---|---|
-| Arrastrar | Mover. Se "imanta" a los bordes y al centro de la pantalla y a los bordes de los demás elementos, con una línea guía. |
-| Shift mientras arrastras | Mover sin imanes. |
-| Rueda | Tamaño, de 50% a 400%. |
-| Clic derecho | Volver a la posición de fábrica. |
-| Esc o *Listo* | Volver al menú. |
+| Drag | Move. It "snaps" to the edges and center of the screen and to the edges of other elements, with a guide line. |
+| Shift while dragging | Move without magnets. |
+| Wheel | Size, from 50% to 400%. |
+| Right click | Back to the default position. |
+| Esc or *Done* | Back to the menu. |
 
-Las posiciones se guardan en el perfil como **fracciones de la pantalla** más un **ancla**: el punto del elemento que queda fijo. El ancla se elige sola según en qué tercio de la pantalla sueltes el elemento. Así, un elemento pegado a la derecha crece hacia la izquierda si su texto se alarga, y todo sirve en cualquier resolución.
+Positions are saved in the profile as **fractions of the screen** plus an **anchor**: the point of the element that stays fixed. The anchor is picked automatically from the third of the screen where you drop the element. That way an element stuck to the right grows to the left if its text gets longer, and everything works at any resolution.
 
-**De dónde sale cada dato (sin leer memoria del juego):**
+**Where each value comes from (without reading game memory):**
 
-| Módulo | Dato |
+| Module | Value |
 |---|---|
-| FPS | La medición de frames de Luma (se actualiza 4 veces por segundo para que se pueda leer). |
-| CPS | Los clics de la **cola del mouse del juego** (`sdk/mouse_queue`), el mismo lugar donde los lee el juego. |
-| Keystrokes | `GetAsyncKeyState`, solo con la ventana del juego en primer plano. |
-| Reloj | `GetLocalTime`. |
+| FPS | Luma's frame measurement (updated 4 times per second so it's readable). |
+| CPS | The clicks in the **game's mouse queue** (`sdk/mouse_queue`), the same place the game reads them from. |
+| Keystrokes | `GetAsyncKeyState`, only while the game window is in the foreground. |
+| Clock | `GetLocalTime`. |
 
-Sobre el CPS:
-- Medimos que el juego no siempre vacía esa cola tras procesarla. Para no contar un clic dos veces, Luma marca cada clic contado en un byte de **relleno** de la acción: el byte +11, que no usa nadie.
-- Si la firma de la cola no se encuentra, usa los mensajes `WM_LBUTTONDOWN` de Windows como respaldo.
+About CPS:
+- We measured that the game doesn't always empty that queue after processing it. So a click isn't counted twice, Luma marks every counted click in a **padding** byte of the action: byte +11, which nothing uses.
+- If the queue's signature isn't found, it falls back to Windows' `WM_LBUTTONDOWN` messages.
 
-**Mira personalizada** (`modules/visual/crosshair.cpp`):
-- **Esconde la del juego:** la mira original la dibuja una función propia de la interfaz del juego. Luma la encuentra por el texto "cross_hair" (`sdk/game_crosshair.cpp`) y no la deja dibujar mientras el módulo está activo.
-- **Dos tipos:** una forma (cruz, punto, círculo) o una mira **pintada** píxel por píxel en un editor de 8x8, 16x16, 32x32 o 64x64, con espejo y paleta.
-- **Colores:** los originales, *Rainbow* o *Rainbow en onda*. Para que sea barata, la mira pintada se dibuja como tiras de píxeles iguales, calculadas al editar y no en cada frame.
-- Se esconde sola en los menús del juego.
+**Custom crosshair** (`modules/visual/crosshair.cpp`):
+- **Hides the game's one:** the original crosshair is drawn by a function of the game's own UI. Luma finds it through the text "cross_hair" (`sdk/game_crosshair.cpp`) and doesn't let it draw while the module is on.
+- **Two kinds:** a shape (cross, dot, circle) or a crosshair **painted** pixel by pixel in an 8x8, 16x16, 32x32 or 64x64 editor, with mirroring and a palette.
+- **Colors:** the original ones, *Rainbow* or *Rainbow wave*. To keep it cheap, the painted crosshair is drawn as strips of identical pixels, computed when editing and not every frame.
+- It hides by itself in the game's menus.
 
-**Toggle sprint / sneak** (`render/input.h`, "teclas sostenidas"):
-- **Cómo mantiene la tecla:** el juego lleva la cuenta de las teclas apretadas con los mensajes de la ventana. Luma le manda un `WM_KEYDOWN` de Ctrl (o Shift) y se guarda el `WM_KEYUP` real; además, `GetAsyncKeyState` responde "apretada".
-- **Cómo se alterna:** pulsando la tecla de verdad.
-- **Cuándo se suelta sola:**
-  - en el inventario, el chat y la pausa, porque el juego "suelta" el mouse (si no, un Shift sostenido haría que cada clic en el inventario mueva ítems);
-  - al perder el foco; al volver, se aprieta de nuevo.
+**Toggle sprint / sneak** (`render/input.h`, "held keys"):
+- **How it holds the key:** the game keeps track of pressed keys through the window messages. Luma sends it a `WM_KEYDOWN` for Ctrl (or Shift) and holds back the real `WM_KEYUP`; on top of that, `GetAsyncKeyState` answers "pressed".
+- **How it toggles:** by pressing the real key.
+- **When it releases by itself:**
+  - in the inventory, the chat and the pause screen, because the game "releases" the mouse (otherwise a held Shift would make every inventory click move items);
+  - when the window loses focus; when it comes back, it presses again.
 
-### Configuración y perfiles
-- `%APPDATA%\Luma\config\luma.json` guarda qué perfil está activo.
-- `%APPDATA%\Luma\config\profiles\<nombre>.json` guarda un perfil completo: módulos activos, sus opciones y teclas, el tema y las teclas de Luma.
-- **Guardado automático:** se guarda un segundo después del último cambio, y también al descargar Luma.
-- **Escritura segura:** primero se escribe a `.tmp` y después se reemplaza el archivo real, así un corte nunca lo deja a medias.
-- **Archivo dañado:** si un archivo está dañado, se guarda una copia `.corrupto.json`, se usan los valores de fábrica y aparece un aviso.
+### Settings and profiles
+- `%APPDATA%\Luma\config\luma.json` stores which profile is active.
+- `%APPDATA%\Luma\config\profiles\<name>.json` stores a whole profile: active modules, their options and keys, the theme and Luma's keys.
+- **Autosave:** it saves one second after the last change, and also when Luma unloads.
+- **Safe writes:** it first writes to `.tmp` and then replaces the real file, so a power cut never leaves it half written.
+- **Damaged file:** if a file is damaged, a `.corrupt.json` copy is kept, the defaults are used and a toast appears.
 
-### El launcher
+### Translations
+- **Launcher:** the texts use keys (`"home.play"` → "PLAY"), in `shared/i18n.cpp`, one line per text with the three languages.
+- **In game:** the code is written in English and `Tr("text")` (`client/core/tr.h`) looks it up in `client/core/tr_table.inc` and `tr_menu.inc`, one line per text: `{"Español", "English", "Português"}`. A row can be found by its English or its Spanish text. If a text isn't in the table, it's shown as written.
 
-- **Ventana propia:** Win32 + Direct3D 11 + Dear ImGui (`launcher/src/gui/`). Se mueve desde la barra de arriba, se agranda desde los bordes y tiene la sombra y las esquinas redondeadas de Windows 11.
-- **Temas:** oscuro y claro, sacados de los dos colores del logo. Se cambian con el botón del sol o la luna, arriba a la derecha.
-- **Idiomas:** inglés, español y portugués, se elige en *Ajustes*. Los textos están en `shared/i18n.cpp`, una línea por texto con los tres idiomas. El menú del juego va a usar los mismos textos.
-- **Config:** `%APPDATA%\Luma\launcher.json` guarda el tema, el idioma y qué hacer después de PLAY.
-- **Estadísticas:** Luma.dll anota en `stats.json` las sesiones (cada vez que se carga) y el tiempo jugado con Luma cargado. Lo guarda cada minuto y al descargar. El launcher lo muestra en "Your Stats".
-- **Tu nombre sin cuenta:** Luma.dll guarda tu nombre de jugador (en Bedrock es tu gamertag) en `profile.json` al entrar a un mundo.
-- **Cuenta de Microsoft (opcional):** *Ajustes → Cuenta*. Abre tu navegador en la página de Microsoft (OAuth 2.0 con PKCE); tu contraseña nunca pasa por Luma. Después se pide el token de Xbox Live, que trae tu gamertag y tu foto. La sesión queda en `account.dat`, cifrada con DPAPI: solo tu usuario de Windows en esta PC puede leerla. Código en `launcher/src/account.cpp`. La aplicación "Luma Launcher" está registrada en Azure; su identificador va en el código y es público por diseño.
-- **Abrir con Windows:** apagado de fábrica. Si lo activas, agrega el launcher a la clave `Run` del registro de tu usuario y arranca minimizado. Al desactivarlo, se borra.
-- **Rendimiento:** minimizado no dibuja nada.
+### The launcher
 
-Opciones de `LumaLauncherCli.exe` (la consola):
+- **Its own window:** Win32 + Direct3D 11 + Dear ImGui (`launcher/src/gui/`). It moves from the top bar, resizes from the edges and has Windows 11's shadow and rounded corners.
+- **Themes:** dark and light, taken from the two colors of the logo. Switch them with the sun or moon button at the top right.
+- **Languages:** English, Spanish and Portuguese, chosen in *Settings*. The in-game menu uses the same language.
+- **Config:** `%APPDATA%\Luma\launcher.json` stores the theme, the language and what to do after PLAY.
+- **Stats:** Luma.dll records the sessions (every time it loads) and the time played with Luma loaded in `stats.json`. It saves every minute and when unloading. The launcher shows them in "Your Stats".
+- **Your name without an account:** Luma.dll saves your player name (in Bedrock it's your gamertag) to `profile.json` when you join a world.
+- **Microsoft account (optional):** *Settings → Account*. It opens your browser on Microsoft's page (OAuth 2.0 with PKCE); your password never goes through Luma. Then it asks for the Xbox Live token, which brings your gamertag and picture. The session is kept in `account.dat`, encrypted with DPAPI: only your Windows user on this PC can read it. Code in `launcher/src/account.cpp`. The "Luma Launcher" app is registered in Azure; its identifier is in the code and is public by design.
+- **Start with Windows:** off by default. If you turn it on, it adds the launcher to the `Run` key of your user's registry and starts minimized. Turning it off removes it.
+- **Performance:** it draws nothing while minimized.
 
-| Opción | Qué hace |
+`LumaLauncherCli.exe` (console) options:
+
+| Option | What it does |
 |---|---|
-| `--no-pause` | No espera a que pulses Enter al terminar (útil para scripts) |
-| `--skip-gdk-check` | Salta la comprobación de versión GDK. Úsala solo si la detección falla y estás seguro de tener la versión GDK |
+| `--no-pause` | Doesn't wait for you to press Enter at the end (useful for scripts) |
+| `--skip-gdk-check` | Skips the GDK version check. Only use it if detection fails and you're sure you have the GDK version |
 
-**Logs:** cada vez que Luma se carga crea un archivo nuevo en `%APPDATA%\Luma\logs\` y conserva los últimos 10. Para abrir la carpeta, pega `%APPDATA%\Luma\logs` en la barra de direcciones del Explorador de archivos.
+**Logs:** every time Luma loads it creates a new file in `%APPDATA%\Luma\logs\` and keeps the last 10. To open the folder, paste `%APPDATA%\Luma\logs` into File Explorer's address bar.
 
-**Consola de depuración:** si usas la compilación Debug (`build\bin\Debug\`), se abre además una ventana con el log en vivo. Su botón de cerrar está desactivado a propósito: cerrar esa ventana cerraría el juego entero. Desaparece sola al descargar Luma.
+**Debug console:** if you use the Debug build (`build\bin\Debug\`), a window with the live log opens too. Its close button is disabled on purpose: closing that window would close the whole game. It disappears by itself when Luma unloads.
 
-## Estructura del proyecto
+## Project structure
 
 ```
-CMakeLists.txt        Receta principal: opciones comunes y subcarpetas
-CMakePresets.json     Atajos de configuración (x64, release, debug)
+CMakeLists.txt        Main recipe: shared options and subfolders
+CMakePresets.json     Configuration shortcuts (x64, release, debug)
 cmake/
-  Dependencies.cmake  Qué bibliotecas externas se descargan y en qué versión
-launcher/             LumaLauncher.exe (ventana) y LumaLauncherCli.exe (consola)
-  src/flow.cpp        Lo que pasa al pulsar PLAY (abrir el juego, inyectar, confirmar)
-  src/gui/            La ventana: plataforma, temas e interfaz
-shared/               Lo que usan el launcher y (pronto) Luma.dll: traducciones
+  Dependencies.cmake  Which external libraries are downloaded and at which version
+launcher/             LumaLauncher.exe (window) and LumaLauncherCli.exe (console)
+  src/flow.cpp        What happens when you press PLAY (open the game, inject, confirm)
+  src/gui/            The window: platform, themes and interface
+shared/               What the launcher and Luma.dll both use: translations, skin pack
 client/               Luma.dll
-  core/               Arranque, hooks, logger, config, eventos
-  render/             Overlay, editor de HUD, dibujo
-  modules/            Un archivo por módulo
-  sdk/                Todo lo que depende de la memoria interna del juego
-  perf/               Medición, benchmark y optimizaciones
+  core/               Startup, hooks, logger, config, events, translations
+  render/             Overlay, HUD editor, drawing
+  modules/            One file per module
+  sdk/                Everything that depends on the game's internal memory
+  perf/               Measurement, benchmark and optimizations
+release/              Release notes and supported Minecraft versions
 ```
 
-`sdk/` ya tiene el escáner de firmas, el control del mouse del juego (cliente y ventana) y el filtro de la cola del mouse. Se adelantaron de la Fase 6 para bloquear el mouse con el menú abierto.
+## How to update the signatures (when the game updates)
+If after a Minecraft update the *"Signature not found"* toast appears, the log says which one failed. For the mouse one:
+1. Put the old pattern from `client/sdk/mouse_grab.cpp` aside and find the equivalent function in the new version, repeating the method described below in "Input with the menu open":
+   - record the call stacks of `ShowCursor` and `ClipCursor` when pausing;
+   - disassemble the functions that show up with `dumpbin /disasm /range:...`.
+2. Write the new signature with the bytes from the start of the function. Put `??` on everything that is an address or an offset.
+3. Check that it appears **exactly once** in the executable.
 
-## Cómo actualizar las firmas (cuando el juego se actualiza)
-Si tras una actualización de Minecraft aparece el aviso *"Firma no encontrada"*, el log indica cuál falló. Para la del mouse:
-1. Pon el patrón antiguo en `client/sdk/mouse_grab.cpp` y busca la función equivalente en la versión nueva, repitiendo el método de arriba:
-   - registra las pilas de `ShowCursor` y `ClipCursor` al pausar;
-   - desensambla las funciones que aparezcan con `dumpbin /disasm /range:...`.
-2. Escribe la firma nueva con los bytes del inicio de la función. Pon `??` en todo lo que sea una dirección o un desplazamiento.
-3. Comprueba que aparece **exactamente una vez** en el ejecutable.
+## How to add a module
 
-## Cómo agregar un módulo
-
-1. Crea `client/modules/<categoría>/<nombre>.h` y `.cpp` con una clase que herede de `luma::modules::Module`. Usa como ejemplo `modules/hud/hud_modules.cpp` (FPS, reloj...).
-2. En el constructor:
-   - pasa un `id` interno (sin espacios ni tildes, y que nunca cambie: es la clave en la config), el nombre visible, la descripción y la categoría;
-   - si dibuja en pantalla, llama a `SetDefaultLayout(...)` con su posición de fábrica.
-3. Reemplaza solo lo que necesites:
-   - `HasHud()` + `OnRenderHud(frame)`: dibujar cada frame mientras está activo. Dibuja con su esquina en `frame.pos`, usa `render::hud` para el estilo y **devuelve su tamaño**. El gestor lo ubica y el editor de HUD lo mueve sin que el módulo haga nada.
-   - `IsHudElement()`: devuelve `false` si dibuja pero no se debe mover, como la mira.
+1. Create `client/modules/<category>/<name>.h` and `.cpp` with a class that inherits from `luma::modules::Module`. Use `modules/hud/hud_modules.cpp` (FPS, clock...) as an example.
+2. In the constructor:
+   - pass an internal `id` (no spaces or accents, and it must never change: it's the key in the config), the visible name, the description and the category;
+   - if it draws on screen, call `SetDefaultLayout(...)` with its default position.
+3. Override only what you need:
+   - `HasHud()` + `OnRenderHud(frame)`: draw every frame while it's on. Draw with its corner at `frame.pos`, use `render::hud` for the style and **return its size**. The manager places it and the HUD editor moves it without the module doing anything.
+   - `IsHudElement()`: return `false` if it draws but must not be moved, like the crosshair.
+   - `CanScale()`: return `false` if its size can't be changed (like the scoreboard, whose text the game draws).
    - `OnEnable()` / `OnDisable()`.
-   - `HasSettings()` + `DrawSettings()`: sus opciones en el menú. Devuelve `true` si algo cambió, para que se guarde.
-   - `SaveSettings()` / `LoadSettings()`: sus opciones en el perfil. La posición del HUD la guarda el gestor.
-   - `IconSvg()`: su ícono (un path SVG de 24x24).
-4. Agrégalo a la lista en `client/modules/registry.cpp` y su `.cpp` a `client/CMakeLists.txt`.
+   - `HasSettings()` + `DrawSettings()`: its options in the menu. Return `true` if something changed, so it gets saved.
+   - `SaveSettings()` / `LoadSettings()`: its options in the profile. The manager saves the HUD position.
+   - `IconSvg()`: its icon (a 24x24 SVG path).
+4. Add it to the list in `client/modules/registry.cpp` and its `.cpp` to `client/CMakeLists.txt`.
+5. Add its visible texts to `client/core/tr_table.inc` so they're translated.
 
-El menú, la búsqueda, las teclas, el guardado y el editor de HUD funcionan solos. Un módulo desactivado no ejecuta código por frame, porque el render solo recorre la lista de módulos activos con HUD.
+The menu, search, keys, saving and the HUD editor work by themselves. A module that's off runs no code per frame, because the render only walks the list of active modules with a HUD.
 
-## Benchmark y optimizaciones (Fase 4)
+## Benchmark and optimizations (Phase 4)
 
-### Benchmark (página *Benchmark*)
-1. Elige nombre, duración (10-300 s) y modo.
-2. Pulsa *Empezar*. El menú se cierra, hay una cuenta de 5 s (así no hay avisos en pantalla, que cuestan) y graba cada frame. Si abres el menú mientras graba, se cancela.
-3. Al terminar aparece un aviso con el resultado. Los archivos quedan en `%APPDATA%\Luma\benchmarks\`:
-   - `resumen.csv`: una fila por prueba, para comparar;
-   - `<fecha>_<nombre>.csv`: una fila por frame, para graficar.
+### Benchmark (*Benchmark* page)
+1. Pick a name, duration (10-300 s) and mode.
+2. Press *Start*. The menu closes, there's a 5 s countdown (so there are no toasts on screen, which cost something) and it records every frame. If you open the menu while it records, it's canceled.
+3. When it finishes, a toast shows the result. The files end up in `%APPDATA%\Luma\benchmarks\`:
+   - `summary.csv`: one row per test, to compare;
+   - `<date>_<name>.csv`: one row per frame, to chart.
 
-   Usan el separador y la coma decimal de tu Windows, así que Excel los abre bien a la primera.
+   They use your Windows list separator and decimal comma, so Excel opens them right the first time.
 
-Qué mide:
+What it measures:
 
-| Número | Significado |
+| Number | Meaning |
 |---|---|
-| FPS promedio | Frames / segundos. |
-| 1% low / 0.1% low | El 1% (o 0,1%) de frames más lentos, promediados y pasados a FPS. Muestran los tirones que el promedio esconde. |
-| Frametime, p99, máximo | En ms. p99 = el 99% de los frames tardó menos que eso. |
-| Costo de Luma | Promedio por frame. |
+| Average FPS | Frames / seconds. |
+| 1% low / 0.1% low | The slowest 1% (or 0.1%) of frames, averaged and turned into FPS. They show the stutters the average hides. |
+| Frametime, p99, max | In ms. p99 = 99% of the frames took less than that. |
+| Luma cost | Average per frame. |
 
-**Modos:**
-- **Con mi HUD:** mide el juego con tu configuración, incluido lo que cuesta dibujar el HUD.
-- **Luma en reposo:** durante la prueba Luma no dibuja nada. Su costo baja a ~0,001 ms por frame, así que es la referencia "sin Luma" más honesta que se puede medir desde dentro del juego. Para una medición externa de verdad sin Luma, existen herramientas como PresentMon o CapFrameX.
+**Modes:**
+- **With my HUD:** measures the game with your setup, including what drawing the HUD costs.
+- **Luma idle:** during the test Luma draws nothing. Its cost drops to ~0.001 ms per frame, so it's the most honest "without Luma" baseline that can be measured from inside the game. For a real external measurement without Luma, there are tools like PresentMon or CapFrameX.
 
-**Para tener números comparables** ("sin Luma / con Luma / con cada optimización"), quédate quieto en el mismo lugar y mirando lo mismo, y haz:
+**To get comparable numbers** ("without Luma / with Luma / with each optimization"), stay still in the same place looking at the same thing, and run:
 
-| # | Modo | Optimizaciones |
+| # | Mode | Optimizations |
 |---|---|---|
-| 1 | Luma en reposo | ninguna (≈ sin Luma) |
-| 2 | Con mi HUD | ninguna (= costo de Luma) |
-| 3, 4... | Luma en reposo | **una** optimización por prueba |
+| 1 | Luma idle | none (≈ without Luma) |
+| 2 | With my HUD | none (= Luma's cost) |
+| 3, 4... | Luma idle | **one** optimization per test |
 
-Si una optimización no mejora los números, se descarta (regla del proyecto).
+If an optimization doesn't improve the numbers, it's dropped (project rule).
 
-### Optimizaciones del proceso (categoría *Rendimiento*)
-Cada una es un módulo separado: se activa sola, se mide sola y se deshace al apagarla o al descargar Luma (`client/modules/performance/process_opts.cpp`).
+### Process optimizations (*Performance* category)
+Each one is a separate module: it's turned on by itself, measured by itself and undone when you turn it off or unload Luma (`client/modules/performance/process_opts.cpp`).
 
-| Módulo | Qué hace | Cuidado |
+| Module | What it does | Careful |
 |---|---|---|
-| Prioridad del proceso | `SetPriorityClass`: "por encima de lo normal" o "alta". | "Alta" puede frenar otros programas. Nunca "tiempo real", que puede congelar el PC. |
-| Timer de 1 ms | `timeBeginPeriod(1)` más la opción de Windows 11 para que se respete aunque la ventana esté tapada. Los frames pueden salir más parejos, sobre todo con límite de FPS. | Gasta un poco más de batería. |
-| Sin modo eficiencia | Le prohíbe a Windows 11 poner a Minecraft en "EcoQoS" (núcleos lentos), algo que hace con ventanas en segundo plano. | — |
-| Prioridad del hilo de render | Sube solo el hilo que llama a `Present`, no todo el juego. | — |
+| Process priority | `SetPriorityClass`: "above normal" or "high". | "High" can slow down other programs. Never "realtime", which can freeze the PC. |
+| 1 ms timer | `timeBeginPeriod(1)` plus the Windows 11 option to keep it honored even when the window is covered. Frames can come out more even, especially with an FPS limit. | Uses a bit more battery. |
+| No efficiency mode | Forbids Windows 11 from putting Minecraft in "EcoQoS" (slow cores), which it does with background windows. | — |
+| Render thread priority | Raises only the thread that calls `Present`, not the whole game. | — |
 
-Lo que **no** hacemos, a propósito: "limpiar la RAM", trucos de registro, prioridad de tiempo real y nada que no se pueda medir y deshacer.
+What we deliberately **don't** do: "RAM cleaning", registry tricks, realtime priority and anything that can't be measured and undone.
 
-### Consejos de Windows
-La página *Benchmark* **lee** cómo están estas opciones y explica cómo cambiarlas:
-- Modo de juego.
-- Programación de GPU acelerada por hardware.
-- Optimizaciones para juegos en ventana.
-- Plan de energía.
-- GPU preferida para Minecraft (importa en portátiles con dos GPU).
+### Windows tips
+The *Benchmark* page **reads** how these options are set and explains how to change them:
+- Game Mode.
+- Hardware-accelerated GPU scheduling.
+- Optimizations for windowed games.
+- Power plan.
+- Preferred GPU for Minecraft (matters on laptops with two GPUs).
 
-Tiene botones que abren la página correspondiente de Configuración de Windows. **Luma nunca las cambia por su cuenta.**
+It has buttons that open the matching Windows Settings page. **Luma never changes them by itself.**
 
-## Decisiones técnicas
+## Technical decisions
 
-### Dependencias con FetchContent (y no vcpkg)
-`FetchContent` viene incluido en CMake, así que no hay que instalar nada extra.
-Cada biblioteca tiene una **versión fija** en `cmake/Dependencies.cmake`, para que una actualización de terceros nunca rompa la compilación por sorpresa.
+### Dependencies with FetchContent (not vcpkg)
+`FetchContent` comes with CMake, so there's nothing extra to install.
+Every library has a **pinned version** in `cmake/Dependencies.cmake`, so a third-party update never breaks the build by surprise.
 
-| Biblioteca | Versión | Licencia | Uso |
+| Library | Version | License | Use |
 |---|---|---|---|
-| [MinHook](https://github.com/TsudaKageyu/minhook) | 1.3.4 | BSD-2-Clause | Interceptar funciones (hooks) |
-| [Dear ImGui](https://github.com/ocornut/imgui) | 1.91.5 | MIT | Interfaz del menú y HUD |
-| [nlohmann/json](https://github.com/nlohmann/json) | 3.11.3 | MIT | Archivos de configuración |
+| [MinHook](https://github.com/TsudaKageyu/minhook) | 1.3.4 | BSD-2-Clause | Intercepting functions (hooks) |
+| [Dear ImGui](https://github.com/ocornut/imgui) | 1.91.5 | MIT | Menu and HUD interface |
+| [nlohmann/json](https://github.com/nlohmann/json) | 3.11.3 | MIT | Configuration files |
 
-### Runtime de C++ estático (`/MT`)
-El código de soporte de C++ queda dentro de `Luma.dll`. Así la DLL no depende de archivos externos ni choca con la versión del runtime que use el juego.
+### Static C++ runtime (`/MT`)
+The C++ support code stays inside `Luma.dll`. That way the DLL doesn't depend on external files or clash with the runtime version the game uses.
 
-### Solo x64
-Minecraft GDK es un proceso de 64 bits, y una DLL de 32 bits no puede cargarse en él. CMake rechaza otras arquitecturas con un error claro.
+### x64 only
+Minecraft GDK is a 64-bit process, and a 32-bit DLL can't load into it. CMake rejects other architectures with a clear error.
 
-### Inyección: `LoadLibraryW` + `CreateRemoteThread`
-Es el método más simple y conocido: el launcher escribe la ruta de `Luma.dll` en la memoria del juego y crea ahí un hilo que la carga. No modifica ningún archivo del juego. Está explicado paso a paso en `launcher/src/injector.cpp`.
+### Injection: `LoadLibraryW` + `CreateRemoteThread`
+It's the simplest and best-known method: the launcher writes the path of `Luma.dll` into the game's memory and creates a thread there that loads it. It doesn't modify any game file. It's explained step by step in `launcher/src/injector.cpp`.
 
-### Detección de la versión GDK
-- La UWP antigua corre dentro de un *AppContainer* (el sandbox de las apps de la Store) y GDK no. Si el proceso está en un AppContainer, el launcher lo rechaza.
-- Los juegos GDK traen `MicrosoftGame.config` junto al ejecutable. Si ese archivo falta, el launcher también lo rechaza.
-- **No** se usa el nombre del paquete: la versión GDK sigue llamándose `Microsoft.MinecraftUWP` por compatibilidad.
-- Ruta de instalación: por defecto `C:\XboxGames\Minecraft for Windows\Content\`. Desde dentro del juego esa misma carpeta se ve como `C:\Program Files\WindowsApps\Microsoft.MinecraftUWP_...`, porque así monta Windows los juegos GDK. Es normal que el log muestre esa segunda ruta.
+### Detecting the GDK version
+- The old UWP version runs inside an *AppContainer* (the Store apps' sandbox) and GDK doesn't. If the process is in an AppContainer, the launcher rejects it.
+- GDK games ship `MicrosoftGame.config` next to the executable. If that file is missing, the launcher rejects it too.
+- The package name is **not** used: the GDK version is still called `Microsoft.MinecraftUWP` for compatibility.
+- Install path: by default `C:\XboxGames\Minecraft for Windows\Content\`. From inside the game that same folder looks like `C:\Program Files\WindowsApps\Microsoft.MinecraftUWP_...`, because that's how Windows mounts GDK games. It's normal for the log to show that second path.
 
-### Ciclo de vida de la DLL
-`DllMain` solo crea un hilo y todo el trabajo se hace en ese hilo (`client/core/luma.cpp`). Los pasos son:
-- **Arranque** (`Startup`).
-- **Espera** a la tecla Fin, revisándola cada 50 ms.
-- **Apagado** (`Shutdown`), que deshace todo en orden inverso.
-- **Salida** con `FreeLibraryAndExitThread`, que quita la DLL de la memoria y termina el hilo en un solo paso.
+### DLL lifecycle
+`DllMain` only creates a thread and all the work happens in that thread (`client/core/luma.cpp`). The steps are:
+- **Startup** (`Startup`).
+- **Wait** for the End key, checking it every 50 ms.
+- **Shutdown** (`Shutdown`), which undoes everything in reverse order.
+- **Exit** with `FreeLibraryAndExitThread`, which removes the DLL from memory and ends the thread in a single step.
 
-Si el juego se cierra con Luma cargado, Luma no hace nada en `DLL_PROCESS_DETACH`: tocar candados en ese momento podría congelar el cierre.
+If the game closes with Luma loaded, Luma does nothing in `DLL_PROCESS_DETACH`: touching locks at that moment could freeze the shutdown.
 
-### API gráfica del overlay: DirectX 12
-Minecraft GDK carga `d3d12.dll` y dibuja con DirectX 12, salvo en algunas PCs con GPUs antiguas, donde usa DirectX 11. Luma dibuja su overlay con DX12 usando los backends oficiales de ImGui (`imgui_impl_dx12` + `imgui_impl_win32`). Si detecta que el juego usa otra API, desactiva solo el overlay, lo anota en el log y el juego sigue normal. El soporte DX11 (y una opción para forzarlo) queda para la Fase 4, y se va a medir con el benchmark.
+### Overlay graphics API: DirectX 12
+Minecraft GDK loads `d3d12.dll` and draws with DirectX 12, except on some PCs with old GPUs, where it uses DirectX 11. Luma draws its overlay with DX12 using ImGui's official backends (`imgui_impl_dx12` + `imgui_impl_win32`). If it detects the game uses another API, it turns off only the overlay, writes it to the log and the game carries on normally. DX11 support (and an option to force it) is left for later, and will be measured with the benchmark.
 
-**Cómo se engancha** (`client/render/dx12_hooks.cpp`):
-1. Luma crea por un instante una swapchain DX12 de prueba sobre una ventana invisible y lee de su *vtable* las direcciones de `Present`, `Present1`, `ResizeBuffers` y `ResizeBuffers1`. También lee `ExecuteCommandLists` de una cola de comandos de prueba.
-2. Las posiciones dentro de la vtable las fija el ABI de COM y nunca cambian. Además son funciones de Windows, no del juego, así que **no dependen de la versión de Minecraft** y no necesitan escaneo de firmas.
-3. Con MinHook se interceptan esas funciones:
-   - **`ExecuteCommandLists`:** captura la cola *directa* del juego, que es la que hace falta en DX12 para mandar trabajo a la GPU.
-   - **`Present`:** dibuja el menú encima del frame.
-   - **`ResizeBuffers`:** suelta y recrea los recursos cuando cambia el tamaño de la ventana.
+**How it hooks in** (`client/render/dx12_hooks.cpp`):
+1. For an instant, Luma creates a test DX12 swapchain on an invisible window and reads the addresses of `Present`, `Present1`, `ResizeBuffers` and `ResizeBuffers1` from its *vtable*. It also reads `ExecuteCommandLists` from a test command queue.
+2. The positions inside the vtable are fixed by the COM ABI and never change. They're also Windows functions, not the game's, so they **don't depend on the Minecraft version** and need no signature scanning.
+3. MinHook intercepts those functions:
+   - **`ExecuteCommandLists`:** captures the game's *direct* queue, which DX12 needs to send work to the GPU.
+   - **`Present`:** draws the menu on top of the frame.
+   - **`ResizeBuffers`:** releases and recreates the resources when the window size changes.
 
-**Costo con el menú cerrado:** el hook de `Present` sale enseguida, después de leer un par de variables. ImGui no se ejecuta.
+**Cost with the menu closed:** the `Present` hook returns right away after reading a couple of variables. ImGui doesn't run.
 
-### Input con el menú abierto
-Con el menú abierto, el juego no debe recibir **nada**: ni cámara, ni clics, ni teclas. Hay tres capas, y hacen falta todas.
+### Input with the menu open
+With the menu open, the game must receive **nothing**: no camera, no clicks, no keys. There are three layers, and all of them are needed.
 
-**1. Windows** (`client/render/input.cpp`). Son funciones de Windows, estables entre versiones del juego:
-- **WndProc propia:** detecta la tecla del menú (por mensaje, sin revisar el teclado en cada frame), Esc y las teclas de los módulos. Con el menú abierto, el teclado y el mouse van a ImGui.
-- **`PeekMessageW`:** el juego a veces mira los mensajes antes de entregarlos a la ventana. Con el menú abierto, Luma los procesa y el juego recibe un `WM_NULL`.
-- **Mensajes de soltar:** los de *soltar* tecla o botón siempre pasan. El juego lleva la cuenta de las teclas apretadas con esos mensajes, y si se perdiera el "soltar W" seguiría caminando. Al abrir el menú, Luma además le avisa al juego que se soltó todo lo que estaba apretado.
-- **`GetAsyncKeyState` / `GetKeyState`:** con el menú abierto, el juego ve todas las teclas sin pulsar.
-- **`ClipCursor`:** con el menú abierto, el juego puede liberar el cursor, pero no encerrarlo.
+**1. Windows** (`client/render/input.cpp`). These are Windows functions, stable across game versions:
+- **Its own WndProc:** detects the menu key (by message, without polling the keyboard every frame), Esc and the module keys. With the menu open, keyboard and mouse go to ImGui.
+- **`PeekMessageW`:** the game sometimes peeks at messages before handing them to the window. With the menu open, Luma processes them and the game gets a `WM_NULL`.
+- **Release messages:** key and button *release* messages always go through. The game keeps track of pressed keys with them, and if the "release W" got lost it would keep walking. When the menu opens, Luma also tells the game that everything that was pressed got released.
+- **`GetAsyncKeyState` / `GetKeyState`:** with the menu open, the game sees every key as not pressed.
+- **`ClipCursor`:** with the menu open, the game can free the cursor, but not lock it.
 
-**2. El cliente del juego suelta el mouse** (`client/sdk/mouse_grab.cpp`). Es lo mismo que hace la pausa: muestra el cursor y deja de tratar el mouse como "de juego". Hay dos niveles:
-- **Ventana** (capa de plataforma):
-  - *Agarrar*: esconde el cursor, lo encierra en el centro y pone `ventana+0x398 = 1`.
-  - *Soltar*: hace lo contrario.
-- **Cliente** (`ClientInstance`): su indicador `cliente+0x1F8` dice si el mouse es "de juego". Sus funciones *agarrar* (`juego+0x8BF820`) y *soltar* (`juego+0x8BFA10`) cambian ese indicador y llaman a las de la ventana. Luma usa estas, igual que otros clients.
-- **Objetos sin pulsar Esc:**
-  - El del cliente se captura la primera vez que el juego llama a *agarrar*, cosa que hace continuamente.
-  - El de la ventana se encuentra al cargar, a partir de la variable global del WndProc del juego, en `[[contexto+0x8]+0x78]`.
+**2. The game's client releases the mouse** (`client/sdk/mouse_grab.cpp`). It's the same thing pausing does: it shows the cursor and stops treating the mouse as "in game". There are two levels:
+- **Window** (platform layer):
+  - *Grab*: hides the cursor, locks it in the center and sets `window+0x398 = 1`.
+  - *Release*: does the opposite.
+- **Client** (`ClientInstance`): its flag `client+0x1F8` says whether the mouse is "in game". Its *grab* (`game+0x8BF820`) and *release* (`game+0x8BFA10`) functions change that flag and call the window ones. Luma uses these, like other clients do.
+- **Objects without pressing Esc:**
+  - The client one is captured the first time the game calls *grab*, which it does continuously.
+  - The window one is found at load time, from the global variable of the game's WndProc, at `[[context+0x8]+0x78]`.
 
-**3. La cola de acciones del mouse** (`client/sdk/mouse_queue.cpp`). Es la clave para los clics:
-- **Una lista central:** el juego tiene un objeto global `MouseDevice` con una lista de acciones de mouse pendientes (movimiento, clics y rueda), de 20 bytes cada una. Todo el mouse, venga de GameInput o de mensajes, termina ahí.
-- **Se procesa en cada tick:** una función del juego (`juego+0x427EF0`) la recorre en cada tick.
-- **Qué hace Luma:** hookea esa función y, con el menú abierto, **quita los clics y la rueda** antes de que se procesen. Al abrir el menú agrega "soltar izquierdo/derecho" para cortar acciones en curso.
-- **Por qué no se vacía entera:** los movimientos se dejan pasar. Con el mouse suelto no giran la cámara, y si se borraran, la cámara saltaría al cerrar el menú porque el juego no actualizaría su posición.
-- **Memoria:** nunca se le agrega memoria a la lista; solo se escribe dentro del espacio que ya tiene.
+**3. The mouse action queue** (`client/sdk/mouse_queue.cpp`). It's the key for clicks:
+- **One central list:** the game has a global `MouseDevice` object with a list of pending mouse actions (movement, clicks and wheel), 20 bytes each. All mouse input, whether it comes from GameInput or from messages, ends up there.
+- **Processed every tick:** a game function (`game+0x427EF0`) walks it every tick.
+- **What Luma does:** it hooks that function and, with the menu open, **removes the clicks and the wheel** before they're processed. When the menu opens it adds "release left/right" to cut off actions in progress.
+- **Why it isn't emptied entirely:** movements are let through. With the mouse released they don't turn the camera, and if they were deleted, the camera would jump when the menu closes because the game wouldn't update its position.
+- **Memory:** nothing is ever added to the list's memory; it only writes inside the space it already has.
 
-**Firmas:** todas se encuentran por escaneo (`client/sdk/scanner.cpp`). Los desplazamientos (`+0x398`, `+0x3A0`, `+0x1F8`) y las variables globales se leen de las propias instrucciones encontradas. Si alguna firma falla tras una actualización, aparece un aviso y solo se pierde esa parte del bloqueo.
+**Signatures:** all of them are found by scanning (`client/sdk/scanner.cpp`). The offsets (`+0x398`, `+0x3A0`, `+0x1F8`) and global variables are read from the matched instructions themselves. If a signature fails after an update, a toast appears and only that part of the blocking is lost.
 
-**Cómo se llegó aquí.** Costó bastante, y lo dejo anotado por si sirve en otra actualización:
-- Bloquear raw input, `GetCursorPos` y los métodos de GameInput **no servía**: un diagnóstico que contaba cada vía mostró que el juego no las usa para la cámara ni los clics.
-- Las funciones de *agarrar/soltar* se encontraron registrando la **pila de llamadas** de `ShowCursor`/`ClipCursor` al pausar y desensamblando con `dumpbin /disasm`.
-- La cola de acciones se encontró **estudiando los clients open source [Latite](https://github.com/LatiteClient/Latite) y Flarial**, para entender la idea. Las firmas de Luma son propias, sacadas del desensamblado de este juego. Las públicas de Flarial no coinciden con 1.26.63.
-- Congelar `GetCursorPos` y devolver el cursor a su sitio al cerrar **causaban el salto de cámara**, porque GameInput lee la posición del cursor. Se quitaron.
+**How we got here.** It took quite a while, so I'm writing it down in case it helps with another update:
+- Blocking raw input, `GetCursorPos` and the GameInput methods **didn't work**: a diagnostic that counted each path showed the game doesn't use them for the camera or the clicks.
+- The *grab/release* functions were found by recording the **call stack** of `ShowCursor`/`ClipCursor` when pausing and disassembling with `dumpbin /disasm`.
+- The action queue was found by **studying the open-source clients [Latite](https://github.com/LatiteClient/Latite) and Flarial** to understand the idea. Luma's signatures are its own, taken from the disassembly of this game. Flarial's public ones don't match 1.26.63.
+- Freezing `GetCursorPos` and putting the cursor back when closing **caused the camera jump**, because GameInput reads the cursor position. They were removed.
 
-**Descarga segura**, en este orden:
-1. Los hooks dejan de tocar el estado de Luma.
-2. MinHook restaura las funciones originales.
-3. Se espera a que ningún hilo del juego siga dentro de código de Luma.
-4. Se restaura la WndProc original.
-5. Se espera a la GPU y se liberan ImGui y DX12.
+**Safe unload**, in this order:
+1. The hooks stop touching Luma's state.
+2. MinHook restores the original functions.
+3. It waits until no game thread is still inside Luma's code.
+4. The original WndProc is restored.
+5. It waits for the GPU and releases ImGui and DX12.
 
-**Asserts de ImGui:** en Debug, un error interno de ImGui cerraría el juego. `client/render/imgui_config.h` lo redirige al log.
+**ImGui asserts:** in Debug, an internal ImGui error would close the game. `client/render/imgui_config.h` redirects it to the log.
 
-### Medición de rendimiento (`client/perf/`)
-- **Reloj:** `QueryPerformanceCounter`, que tiene una resolución de ~100 ns y cuesta ~20-30 ns leerlo.
-- **Frametime:** el tiempo entre dos llamadas a `Present`.
-- **Costo de Luma:** el tiempo desde que entra el hook de `Present` hasta que termina el código de Luma, sin contar el `Present` original del juego. El propio registro de la medición (unas decenas de ns) queda fuera. Los hooks de `ExecuteCommandLists` y `GetRawInputData` no se miden porque, con el menú cerrado, solo leen una variable.
-- **Historial:** los últimos 512 frames en arreglos de tamaño fijo (un *ring buffer*), sin asignar memoria por frame. Lo usan el gráfico de *Diagnóstico* y el HUD. El benchmark guarda aparte cada frame de la prueba, en memoria reservada al empezar.
-- **Resumen cada 30 s en el log:** el FPS promedio y el costo de Luma **solo de los frames con el menú cerrado** (promedio y máximo). Lo escribe el hilo principal de Luma, no el de render, así que escribir en disco no causa tirones. Así se comprueba el criterio de la Fase 2 sin abrir el menú, porque abrirlo cambia la medición.
-- **Inicialización:** el overlay se inicializa una sola vez, en el primer frame. Se informa aparte en el log y no se cuenta como costo por frame.
+### Performance measurement (`client/perf/`)
+- **Clock:** `QueryPerformanceCounter`, which has ~100 ns resolution and costs ~20-30 ns to read.
+- **Frametime:** the time between two calls to `Present`.
+- **Luma cost:** the time from entering the `Present` hook until Luma's code finishes, not counting the game's original `Present`. Recording the measurement itself (a few tens of ns) is left out. The `ExecuteCommandLists` and `GetRawInputData` hooks aren't measured because, with the menu closed, they only read a variable.
+- **History:** the last 512 frames in fixed-size arrays (a *ring buffer*), without allocating memory per frame. The *Diagnostics* graph and the HUD use it. The benchmark stores every frame of the test separately, in memory reserved when it starts.
+- **Summary every 30 s in the log:** the average FPS and Luma's cost **only for frames with the menu closed** (average and max). Luma's main thread writes it, not the render thread, so writing to disk causes no stutter. That way the Phase 2 criterion can be checked without opening the menu, since opening it changes the measurement.
+- **Initialization:** the overlay initializes only once, on the first frame. It's reported separately in the log and isn't counted as per-frame cost.
 
-### Camino rápido del render (Fase 3)
-En cada frame, el hook de `Present` revisa tres variables atómicas:
-- ¿el menú está abierto?
-- ¿hay algún módulo activo que dibuje?
-- ¿hay algún aviso en pantalla?
+### Render fast path (Phase 3)
+Every frame, the `Present` hook checks three atomic variables:
+- is the menu open?
+- is there any active module that draws?
+- is there any toast on screen?
 
-Si las tres son "no", vuelve sin tocar ImGui. Con 0 módulos activos, el costo medido fue de **~0.0009 ms por frame**; en la Fase 2 era de 0.0002-0.0005 ms. La diferencia es de menos de 1 µs, en el orden del ruido de la medición.
+If all three are "no", it returns without touching ImGui. With 0 active modules, the measured cost was **~0.0009 ms per frame**; in Phase 2 it was 0.0002-0.0005 ms. The difference is under 1 µs, in the range of measurement noise.
 
-Costo con módulos activos (menú cerrado, 1080p, medido en el log):
+Cost with active modules (menu closed, 1080p, measured in the log):
 
-| Módulos activos | Costo por frame |
+| Active modules | Cost per frame |
 |---|---|
-| Marca de agua | ~0.09 ms |
-| 7 elementos (keystrokes, FPS, CPS, reloj, marca de agua, mira, overlay de rendimiento) | ~0.37 ms |
+| Watermark | ~0.09 ms |
+| 7 elements (keystrokes, FPS, CPS, clock, watermark, crosshair, performance overlay) | ~0.37 ms |
 
-Casi todo ese costo es fijo: preparar un frame de ImGui y mandar sus comandos a la GPU. Lo que cuesta cada elemento es poco. Optimizarlo más queda para la Fase 12 (por ejemplo, reutilizar la geometría del HUD entre frames si no cambió).
+Almost all of that cost is fixed: preparing an ImGui frame and sending its commands to the GPU. Each element costs little. Optimizing it further is left for Phase 12 (for example, reusing the HUD geometry between frames if it didn't change).
 
-### Hilos y candado único
-- **Tres hilos tocan el estado de Luma:**
-  - el de render del juego, que dibuja;
-  - el de la ventana, que recibe teclas y mouse;
-  - el principal de Luma, que guarda la config y espera la tecla de descarga.
-- **Candado:** todo acceso a módulos, config e ImGui pasa por `luma::StateMutex()` (`client/core/state.h`).
-- **Regla para evitar bloqueos:** nunca tener el candado tomado mientras se llama a una función original del juego o de DirectX.
+### Threads and a single lock
+- **Three threads touch Luma's state:**
+  - the game's render thread, which draws;
+  - the window thread, which receives keys and mouse;
+  - Luma's main thread, which saves the config and waits for the unload key.
+- **Lock:** every access to modules, config and ImGui goes through `luma::StateMutex()` (`client/core/state.h`).
+- **Rule to avoid deadlocks:** never hold the lock while calling an original game or DirectX function.
 
-## Fases
+## Phases
 
-Avance:
+Progress:
 
-- [x] 0. Entorno
-- [x] 1. Launcher + DLL mínima
-- [x] 2. Overlay + medición (costo con el menú cerrado: ~0.0003 ms por frame)
-- [x] 3. Sistema de módulos y config (costo con 0 módulos: ~0.0009 ms por frame)
-- [x] 4. Benchmark + optimizaciones del proceso
-- [x] 5. Editor de HUD + módulos sin memoria del juego (FPS, CPS, keystrokes, reloj, mira, toggle sprint/sneak)
-- [x] 6. SDK (escaneo de firmas, jugador local, inventario, entidades, cámara)
-- [x] 7. Módulos con datos del juego (faltan efectos de pociones y mejoras del chat)
-- [x] 8. Cámara y render (zoom, FOV, fullbright, freelook, contorno de bloque, hitboxes)
-- [ ] 9. Optimizaciones de render
+- [x] 0. Environment
+- [x] 1. Launcher + minimal DLL
+- [x] 2. Overlay + measurement (cost with the menu closed: ~0.0003 ms per frame)
+- [x] 3. Module system and config (cost with 0 modules: ~0.0009 ms per frame)
+- [x] 4. Benchmark + process optimizations
+- [x] 5. HUD editor + modules without game memory (FPS, CPS, keystrokes, clock, crosshair, toggle sprint/sneak)
+- [x] 6. SDK (signature scanning, local player, inventory, entities, camera)
+- [x] 7. Modules with game data (potion effects and chat improvements still missing)
+- [x] 8. Camera and render (zoom, FOV, fullbright, freelook, block outline, hitboxes)
+- [ ] 9. Render optimizations
 - [ ] 10. Free cam
-- [ ] 11. Minimapa
-- [ ] 12. Pulido
+- [ ] 11. Minimap
+- [ ] 12. Polish
 
-## Actualizaciones automáticas y cómo publicar una versión
+## Automatic updates and how to publish a version
 
-`LumaLauncher.exe` se actualiza solo, como Flarial. Al abrir, baja de la última Release de GitHub dos archivos chicos: `latest.json` y su firma `latest.json.sig`.
-- Si hay una versión nueva **y la firma es válida**, baja el `.exe` nuevo, comprueba su huella SHA-256, se reemplaza y se vuelve a abrir.
-- Sin internet, sigue normal.
-- Solo se actualizan las compilaciones **oficiales**, las que arma GitHub Actions. Las tuyas, desde `build/`, nunca se pisan.
-- Código: `launcher/src/updater.cpp`, `signature.cpp` y `net.cpp`.
+`LumaLauncher.exe` updates itself, like Flarial. When it opens, it downloads two small files from the latest GitHub Release: `latest.json` and its signature `latest.json.sig`.
+- If there's a new version **and the signature is valid**, it downloads the new `.exe`, checks its SHA-256 hash, replaces itself and reopens.
+- Without internet, it carries on normally.
+- Only **official** builds update, the ones GitHub Actions builds. Yours, from `build/`, are never overwritten.
+- Code: `launcher/src/updater.cpp`, `signature.cpp` and `net.cpp`.
 
-**La firma.** Hay un par de claves ECDSA P-256:
-- La **pública** va dentro del launcher (`launcher/src/signature.cpp`) y solo sirve para comprobar.
-- La **privada** está en el secreto `LUMA_SIGNING_KEY` del repositorio y en una copia de seguridad del autor. **Nunca va en el código.** Si se pierde, los launchers ya instalados no aceptarían actualizaciones firmadas con otra clave.
+**The signature.** There's an ECDSA P-256 key pair:
+- The **public** key is inside the launcher (`launcher/src/signature.cpp`) and is only used to verify.
+- The **private** key is in the repository's `LUMA_SIGNING_KEY` secret and in the author's backup. **It never goes in the code.** If it's lost, already installed launchers wouldn't accept updates signed with a different key.
 
-**Para publicar una versión:**
-1. Cambia `kVersion` en `client/core/version.h`, y la versión de `project(...)` en `CMakeLists.txt`.
-2. Escribe las novedades en `release/notes/<versión>.json`, en inglés, español y portugués.
-3. Si cambió la versión de Minecraft soportada, actualiza `release/minecraft.json`.
-4. Haz commit y sube los cambios. Después crea la etiqueta y súbela:
+**To publish a version:**
+1. Change `kVersion` in `client/core/version.h`, and the `project(...)` version in `CMakeLists.txt`.
+2. Write the release notes in `release/notes/<version>.json`, in English, Spanish and Portuguese.
+3. If the supported Minecraft version changed, update `release/minecraft.json`.
+4. Commit and push the changes. Then create the tag and push it:
    ```
    git tag v0.3.0
    git push origin v0.3.0
    ```
-5. GitHub Actions (`.github/workflows/release.yml`) compila, arma y firma `latest.json`, y crea la Release. Lo ves en la pestaña **Actions** del repo.
+5. GitHub Actions (`.github/workflows/release.yml`) builds, assembles and signs `latest.json`, and creates the Release. You can watch it in the repo's **Actions** tab.
 
-## Licencia
+## License
 
-Luma es software libre bajo la licencia **GNU General Public License v3.0** (ver [`LICENSE`](LICENSE)). Puedes usarlo, estudiarlo, modificarlo y compartirlo. Si publicas una versión modificada, tiene que ser también GPL-3.0 y con su código disponible.
+Luma is free software under the **GNU General Public License v3.0** (see [`LICENSE`](LICENSE)). You can use, study, modify and share it. If you publish a modified version, it must also be GPL-3.0 with its source code available.
 
-Bibliotecas de terceros, que se descargan al compilar y tienen sus propias licencias:
+Third-party libraries, downloaded at build time, have their own licenses:
 - [MinHook](https://github.com/TsudaKageyu/minhook) (BSD-2-Clause)
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT)
 - [nlohmann/json](https://github.com/nlohmann/json) (MIT)
 
-Las ideas de cómo funcionan algunas partes internas del juego se estudiaron en clients de código abierto como Latite y Flarial. El código de Luma está escrito desde cero.
+The ideas of how some of the game's internals work were studied in open-source clients such as Latite and Flarial. Luma's code is written from scratch.
 
-## Aviso
+## Disclaimer
 
-Luma es un proyecto independiente. **No está afiliado, aprobado ni asociado a Mojang Studios ni a Microsoft.** "Minecraft" es una marca de Mojang Studios / Microsoft. Luma no incluye ni distribuye archivos del juego: necesitas tu propia copia legítima de Minecraft Bedrock para Windows.
+Luma is an independent project. **It is not affiliated with, endorsed by or associated with Mojang Studios or Microsoft.** "Minecraft" is a trademark of Mojang Studios / Microsoft. Luma doesn't include or distribute game files: you need your own legitimate copy of Minecraft Bedrock for Windows.

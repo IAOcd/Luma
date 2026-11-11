@@ -174,7 +174,7 @@ bool Startup(HMODULE module) {
     // dibuja en cuanto llega el primer frame, en paralelo con este hilo).
     render::loading::Begin();
     render::assets::Decode();  // el logo (se sube a la GPU en el próximo frame)
-    render::loading::SetStep(Tr("Cargando la configuración..."), 0.10f);
+    render::loading::SetStep(Tr("Loading settings..."), 0.10f);
 
     // --- Módulos y configuración (Fase 3) --------------------------------------
     // Primero se crean los módulos (todos desactivados) y después la config
@@ -202,12 +202,12 @@ bool Startup(HMODULE module) {
     // encuentran, solo se pierde el bloqueo de la cámara con el menú abierto.
     if (g_hooksReady) {
         sdk::mouse::Init([](int step, int total) {
-            static const char* const kSteps[] = {"Buscando funciones del juego (1/5)...",
-                                                 "Buscando funciones del juego (2/5)...",
-                                                 "Buscando funciones del juego (3/5)...",
-                                                 "Buscando funciones del juego (4/5)...",
-                                                 "Buscando funciones del juego (5/5)...",
-                                                 "Conectando con el juego..."};
+            static const char* const kSteps[] = {"Finding game functions (1/5)...",
+                                                 "Finding game functions (2/5)...",
+                                                 "Finding game functions (3/5)...",
+                                                 "Finding game functions (4/5)...",
+                                                 "Finding game functions (5/5)...",
+                                                 "Connecting to the game..."};
             render::loading::SetStep(Tr(kSteps[std::min(step, 5)]),
                                      0.2f + 0.7f * static_cast<float>(step) / static_cast<float>(total));
         });
@@ -215,7 +215,7 @@ bool Startup(HMODULE module) {
     // La cola de acciones del mouse: lo que de verdad le impide al juego
     // recibir clics y movimiento con el menú abierto (ver sdk/mouse_queue.h).
     if (g_hooksReady) {
-        render::loading::SetStep(Tr("Conectando con el mouse del juego..."), 0.95f);
+        render::loading::SetStep(Tr("Connecting to the game's mouse..."), 0.95f);
         sdk::mousequeue::Init();
         // El jugador local (Fase 6): se captura al mover el mouse en un mundo.
         sdk::player::Init();
@@ -234,7 +234,7 @@ bool Startup(HMODULE module) {
     cloud::Start();  // "estoy usando Luma" + quién más lo usa (en su propio hilo)
 
     const std::string menuKey = keys::Name(config::g_menuKey.load());
-    notify::Push(notify::Kind::Info, TrFormat("{} cargado · pulsa {} para abrir el menú", kName, menuKey));
+    notify::Push(notify::Kind::Info, TrFormat("{} loaded · press {} to open the menu", kName, menuKey));
     log::Info("Listo. Menú: {}. Descargar: {} (con el juego en primer plano).", menuKey,
               keys::Name(config::g_unloadKey.load()));
     return true;

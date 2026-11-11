@@ -71,12 +71,12 @@ Info Read() {
     wchar_t exe[MAX_PATH] = L"";
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     std::wstring text;
-    info.gpuPreference = "Lo decide Windows";
+    info.gpuPreference = "Windows decides";
     if (ReadString(HKEY_CURRENT_USER, prefsPath, exe, text)) {
         if (text.find(L"GpuPreference=2") != std::wstring::npos) {
-            info.gpuPreference = "Alto rendimiento";
+            info.gpuPreference = "High performance";
         } else if (text.find(L"GpuPreference=1") != std::wstring::npos) {
-            info.gpuPreference = "Ahorro de energía";
+            info.gpuPreference = "Power saving";
         }
     }
     if (ReadString(HKEY_CURRENT_USER, prefsPath, L"DirectXUserGlobalSettings", text)) {

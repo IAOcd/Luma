@@ -67,6 +67,7 @@ struct Fonts {
     ImFont* regular = nullptr;  // texto general
     ImFont* medium = nullptr;   // nombres de módulos (más grande)
     ImFont* title = nullptr;    // títulos y marca (seminegrita)
+    ImFont* lyrics = nullptr;   // the Music page's lyrics: big and bold (Segoe UI Bold)
 };
 Fonts& GetFonts();
 

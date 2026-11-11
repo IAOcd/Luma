@@ -47,7 +47,7 @@ float Heading(float yaw) {
 
 const char* FacingName(float heading) {
     static const char* const kNames[] = {"North (-Z)", "East (+X)", "South (+Z)", "West (-X)"};
-    return kNames[static_cast<int>(std::floor((heading + 45.0f) / 90.0f)) % 4];
+    return Tr(kNames[static_cast<int>(std::floor((heading + 45.0f) / 90.0f)) % 4]);  // in the chosen language
 }
 
 HudLayout ColumnRight(float y) {
@@ -213,7 +213,7 @@ ImVec2 Compass::OnRenderHud(const HudFrame& frame) {
     const float centerX = o.x + width * 0.5f;
     const float bandTop = o.y;
     const float bandH = rh::LineBoxHeight(m);
-    static const char* const kPoints[] = {"N", "NE", "E", "SE", "S", "SW", "O", "NW"};
+    static const char* const kPoints[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};  // translated when drawn
     draw->PushClipRect(o, ImVec2(o.x + width, o.y + height), true);
     for (int i = 0; i < 8; ++i) {
         float delta = static_cast<float>(i) * 45.0f - heading;
@@ -223,10 +223,11 @@ ImVec2 Compass::OnRenderHud(const HudFrame& frame) {
         }
         const float x = centerX + delta / kVisible * width;
         const bool main = i % 2 == 0;
-        const ImVec2 size = rh::TextSize(m, kPoints[i]);
+        const char* point = Tr(kPoints[i]);  // W -> O in Spanish, E -> L in Portuguese...
+        const ImVec2 size = rh::TextSize(m, point);
         // Más tenue cuanto más lejos del centro.
         const float fade = 1.0f - std::min(1.0f, std::fabs(delta) / (kVisible * 0.5f)) * 0.7f;
-        rh::Text(draw, m, ImVec2(x - size.x * 0.5f, bandTop + (bandH - m.capHeight) * 0.5f - m.capTop), kPoints[i],
+        rh::Text(draw, m, ImVec2(x - size.x * 0.5f, bandTop + (bandH - m.capHeight) * 0.5f - m.capTop), point,
                  rh::TextColor((main ? 1.0f : 0.6f) * fade));
     }
     // Marcas cada 15°.

@@ -38,6 +38,7 @@ ComPtr<ID3D12Fence> g_uploadFence;
 UINT64 g_uploadValue = 0;
 HANDLE g_uploadEvent = nullptr;
 std::vector<ComPtr<ID3D12Resource>> g_textures;  // las mantenemos vivas
+std::vector<UINT> g_textureSlots;                 // the descriptor slot of each one (same order)
 
 // --- Desenfoque ----------------------------------------------------------------------
 ComPtr<ID3D12RootSignature> g_rootSignature;
@@ -327,6 +328,7 @@ void Shutdown() {
     g_rootSignature.Reset();
     g_blurRtvHeap.Reset();
     g_textures.clear();
+    g_textureSlots.clear();
     g_uploadList.Reset();
     g_uploadAllocator.Reset();
     g_uploadFence.Reset();
@@ -356,15 +358,13 @@ D3D12_GPU_DESCRIPTOR_HANDLE GpuSlot(UINT slot) {
     return handle;
 }
 
-ImTextureID CreateTexture(const std::uint8_t* rgba, UINT width, UINT height) {
-    if (!g_device || g_queue == nullptr || g_nextSlot >= kSlotCount || rgba == nullptr) {
-        return 0;
-    }
-    ComPtr<ID3D12Resource> texture = CreateTexture2D(width, height, DXGI_FORMAT_R8G8B8A8_UNORM,
-                                                     D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
-    if (!texture) {
-        return 0;
-    }
+// Copies "rgba" into "texture" and waits for the GPU. "before" = the state the
+// texture is in now (COPY_DEST if new, PIXEL_SHADER_RESOURCE if it's being
+// updated). It ends up as PIXEL_SHADER_RESOURCE, ready for ImGui.
+// The game's queue runs in order, so the frames that drew the old picture
+// are finished on the GPU before this copy starts.
+bool UploadInto(ID3D12Resource* texture, const std::uint8_t* rgba, UINT width, UINT height,
+                D3D12_RESOURCE_STATES before) {
 
     // La GPU pide que cada fila de la imagen ocupe un múltiplo de 256 bytes en
     // la memoria de subida. GetCopyableFootprints calcula ese formato.
@@ -389,11 +389,11 @@ ImTextureID CreateTexture(const std::uint8_t* rgba, UINT width, UINT height) {
     if (FAILED(g_device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufferDesc,
                                                  D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                                  IID_PPV_ARGS(&upload)))) {
-        return 0;
+        return false;
     }
     std::uint8_t* mapped = nullptr;
     if (FAILED(upload->Map(0, nullptr, reinterpret_cast<void**>(&mapped)))) {
-        return 0;
+        return false;
     }
     for (UINT y = 0; y < height; ++y) {
         std::memcpy(mapped + footprint.Offset + static_cast<SIZE_T>(y) * footprint.Footprint.RowPitch,
@@ -404,15 +404,18 @@ ImTextureID CreateTexture(const std::uint8_t* rgba, UINT width, UINT height) {
     // Grabar la copia, mandarla a la cola del juego y esperar a que termine.
     g_uploadAllocator->Reset();
     g_uploadList->Reset(g_uploadAllocator.Get(), nullptr);
+    if (before != D3D12_RESOURCE_STATE_COPY_DEST) {
+        Barrier(g_uploadList.Get(), texture, before, D3D12_RESOURCE_STATE_COPY_DEST);
+    }
     D3D12_TEXTURE_COPY_LOCATION dst{};
-    dst.pResource = texture.Get();
+    dst.pResource = texture;
     dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     D3D12_TEXTURE_COPY_LOCATION src{};
     src.pResource = upload.Get();
     src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
     src.PlacedFootprint = footprint;
     g_uploadList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-    Barrier(g_uploadList.Get(), texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+    Barrier(g_uploadList.Get(), texture, D3D12_RESOURCE_STATE_COPY_DEST,
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     g_uploadList->Close();
     ID3D12CommandList* lists[] = {g_uploadList.Get()};
@@ -423,11 +426,40 @@ ImTextureID CreateTexture(const std::uint8_t* rgba, UINT width, UINT height) {
         g_uploadFence->SetEventOnCompletion(value, g_uploadEvent);
         WaitForSingleObject(g_uploadEvent, 2000);
     }
+    return true;
+}
 
+ImTextureID CreateTexture(const std::uint8_t* rgba, UINT width, UINT height) {
+    if (!g_device || g_queue == nullptr || g_nextSlot >= kSlotCount || rgba == nullptr) {
+        return 0;
+    }
+    ComPtr<ID3D12Resource> texture = CreateTexture2D(width, height, DXGI_FORMAT_R8G8B8A8_UNORM,
+                                                     D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
+    if (!texture || !UploadInto(texture.Get(), rgba, width, height, D3D12_RESOURCE_STATE_COPY_DEST)) {
+        return 0;
+    }
     const UINT slot = g_nextSlot++;
     CreateSrv(texture.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, slot);
     g_textures.push_back(texture);
+    g_textureSlots.push_back(slot);
     return static_cast<ImTextureID>(GpuSlot(slot).ptr);
+}
+
+bool UpdateTexture(ImTextureID id, const std::uint8_t* rgba, UINT width, UINT height) {
+    if (!g_device || g_queue == nullptr || rgba == nullptr) {
+        return false;
+    }
+    for (std::size_t i = 0; i < g_textureSlots.size(); ++i) {
+        if (static_cast<ImTextureID>(GpuSlot(g_textureSlots[i]).ptr) != id) {
+            continue;
+        }
+        const D3D12_RESOURCE_DESC desc = g_textures[i]->GetDesc();
+        if (desc.Width != width || desc.Height != height) {
+            return false;  // only the same size: the slot keeps its texture
+        }
+        return UploadInto(g_textures[i].Get(), rgba, width, height, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    }
+    return false;
 }
 
 // El pipeline del post-procesado escribe en el back buffer, así que se crea

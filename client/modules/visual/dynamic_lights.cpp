@@ -93,8 +93,9 @@ DynamicLights::DynamicLights()
 
 const char* DynamicLights::IconSvg() const {
     // A small torch with rays.
-    return "M10 10h4l-1 11h-2z M12 3c1.7 1.5 2 3 1.2 4.5c-.4.8-1.6.8-2.4 0C10 6 10.3 4.5 12 3z M5 6l2 1.5 M19 6l-2 "
-           "1.5 M4 11h2.5 M20 11h-2.5";
+    // (Absolute commands only: render/icons.cpp reads M L H V C S Q Z.)
+    return "M10 10H14L13 21H11Z M12 3C13.7 4.5 14 6 13.2 7.5C12.8 8.3 11.6 8.3 10.8 7.5C10 6 10.3 4.5 12 3Z "
+           "M5 6L7 7.5 M19 6L17 7.5 M4 11H6.5 M20 11H17.5";
 }
 
 bool DynamicLights::SdkReady() const {

@@ -272,6 +272,7 @@ constexpr Entry kEntries[] = {
     {"radial.mods",         {"Mods", "Mods", "Mods"}},
     {"radial.hud",          {"HUD", "HUD", "HUD"}},
     {"radial.closet",       {"Closet", "Closet", "Closet"}},
+    {"radial.music",        {"Music", "Música", "Música"}},
     {"radial.settings",     {"Settings", "Ajustes", "Configurações"}},
     {"radial.home",         {"Home", "Inicio", "Início"}},
     {"radial.hint",         {"%s or Esc to close", "%s o Esc para cerrar", "%s ou Esc para fechar"}},

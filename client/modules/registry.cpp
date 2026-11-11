@@ -18,6 +18,7 @@
 #include "modules/hud/inventory_hud.h"
 #include "modules/hud/paperdoll.h"
 #include "modules/hud/player_list.h"
+#include "modules/hud/music.h"
 #include "modules/hud/scoreboard.h"
 #include "modules/hud/watermark.h"
 #include "modules/performance/perf_overlay.h"
@@ -50,6 +51,7 @@ void Manager::RegisterAll() {
     modules_.push_back(std::make_unique<hud::MovableScoreboard>());
     modules_.push_back(std::make_unique<hud::Watermark>());
     modules_.push_back(std::make_unique<hud::PlayerList>());
+    modules_.push_back(std::make_unique<hud::NowPlaying>());
     // Visual
     modules_.push_back(std::make_unique<visual::Crosshair>());
     modules_.push_back(std::make_unique<visual::PostProcessing>());

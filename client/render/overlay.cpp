@@ -280,6 +280,12 @@ void LoadFonts() {
     if (fonts.title == nullptr) {
         fonts.title = fonts.medium;
     }
+    // The lyrics are loaded at their real size (scaling a smaller font up
+    // would look blurry).
+    fonts.lyrics = load(L"segoeuib.ttf", base * 2.05f);
+    if (fonts.lyrics == nullptr) {
+        fonts.lyrics = fonts.title;
+    }
     // Las del HUD (la pixelada del juego a varios tamaños exactos y la suave).
     hud::LoadFonts(io, theme::UiScale());
 }

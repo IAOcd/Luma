@@ -50,6 +50,8 @@
 #include <nlohmann/json.hpp>
 
 #include "core/config.h"
+#include "core/lyrics.h"
+#include "core/media.h"
 #include "core/keys.h"
 #include "core/paths.h"
 #include "core/version.h"
@@ -65,6 +67,7 @@
 #include "render/hud.h"
 #include "render/hud_editor.h"
 #include "render/icons.h"
+#include "render/music.h"
 #include "render/module_options.h"
 #include "render/input.h"
 #include "render/notifications.h"
@@ -87,7 +90,14 @@ using modules::Module;
 //  Estado
 // =============================================================================
 
-enum class Page { Modules, Theme, Profiles, Settings, Benchmark, Diagnostics, Closet };
+// The sidebar has 4 entries: Modules, Music, Closet and Settings. Theme,
+// Profiles, Benchmark and Diagnostics are tabs inside Settings (they keep
+// their own Page value so old links still work: they open the right tab).
+enum class Page { Modules, Theme, Profiles, Settings, Benchmark, Diagnostics, Closet, Music };
+int g_settingsTab = 0;  // 0 general, 1 appearance, 2 profiles, 3 performance
+int g_musicTab = 0;     // 0 lyrics, 1 styles, 2 halo
+constexpr const char* kMusicIcon =
+    "M9 18V6L19 4V16 M9 18C9 19.38 7.88 20.5 6.5 20.5C5.12 20.5 4 19.38 4 18C4 16.62 5.12 15.5 6.5 15.5C7.88 15.5 9 16.62 9 18Z M19 16C19 17.38 17.88 18.5 16.5 18.5C15.12 18.5 14 17.38 14 16C14 14.62 15.12 13.5 16.5 13.5C17.88 13.5 19 14.62 19 16Z";
 
 Page g_page = Page::Modules;
 Category g_categoryFilter = Category::Count;  // Count = todas
@@ -884,14 +894,54 @@ bool IconToggle(const char* id, const char* icon, bool selected, const char* too
 }
 
 void DrawModuleDetail(Module& module);
+int CountModules(Category c);
+
+// The categories as a row of pills (they used to be sidebar entries).
+void CategoryPills() {
+    const float fs = Fs();
+    const theme::Palette& p = theme::P();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    auto pill = [&](const char* label, Category c) {
+        label = Tr(label);
+        const ImVec2 ts = ImGui::CalcTextSize(label);
+        const ImVec2 size(std::floor(ts.x + fs * 1.7f), std::floor(ImGui::GetFrameHeight()));
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImGui::PushID(static_cast<int>(c) + 100);
+        const bool clicked = ImGui::InvisibleButton("##pill", size);
+        const bool hovered = ImGui::IsItemHovered();
+        const float on = Animate(ImGui::GetItemID(), g_categoryFilter == c ? 1.0f : 0.0f, 16.0f);
+        ImGui::PopID();
+        HoverFeedback(hovered);
+        const ImVec2 max(pos.x + size.x, pos.y + size.y);
+        const float r = size.y * 0.5f;
+        draw->AddRectFilled(pos, max, Col(Mix(theme::WithAlpha(p.field, hovered ? 1.6f : 1.0f), theme::Accent(1.0f), on)), r);
+        if (on < 0.99f) {
+            draw->AddRect(pos, max, Col(p.border, 0.55f * (1.0f - on)), r, 0, 1.0f);
+        }
+        CenteredText(draw, ImGui::GetFont(), pos, max, Col(Mix(p.text, p.onAccentText, on)), label);
+        if (clicked && g_categoryFilter != c) {
+            g_categoryFilter = c;
+            g_pageChangedAt = perf::Now();
+            sound::Play(sound::Effect::Click);
+        }
+        ImGui::SameLine(0.0f, fs * 0.4f);
+    };
+    pill("All", Category::Count);
+    for (int i = 0; i < static_cast<int>(Category::Count); ++i) {
+        const auto c = static_cast<Category>(i);
+        if (CountModules(c) > 0) {
+            pill(modules::CategoryName(c), c);
+        }
+    }
+    ImGui::NewLine();
+}
 
 void DrawModulesPage() {
     const float fs = Fs();
     // Encabezado: título a la izquierda; búsqueda, vista y HUD a la derecha.
     const float headerY = ImGui::GetCursorPosY();
     const float contentRight = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-    const char* title = g_categoryFilter == Category::Count ? Tr("Modules") : modules::CategoryName(g_categoryFilter);
-    PageHeader(title, g_categoryFilter == Category::Count ? "Everything Luma can do." : "Modules in this category.");
+    PageHeader("Modules", "Everything Luma can do.");
     const float afterHeader = ImGui::GetCursorPosY();
     const float buttonH = ImGui::GetFrameHeight() * 1.05f;
     const char* hudLabel = Tr("Edit HUD");
@@ -923,6 +973,8 @@ void DrawModulesPage() {
         ImGui::SetTooltip("%s", Tr("Move and scale the active HUD elements."));
     }
     ImGui::SetCursorPosY(std::max(afterHeader, headerY + buttonH + fs * 0.2f) + fs * 0.3f);
+    CategoryPills();
+    ImGui::Dummy(ImVec2(0, fs * 0.35f));
 
     // La lista de módulos y, si elegiste uno, su panel de opciones a la derecha.
     const float gap = fs * 0.9f;
@@ -1659,6 +1711,261 @@ void DrawDiagnosticsPage(const RenderInfo& info) {
 //  Mods / Closet / Ajustes abren el menú grande en esa página; HUD abre el
 //  editor de HUD. Desde el menú grande, "Inicio" vuelve al radial.
 
+
+// =============================================================================
+//  Settings: one page with tabs (General, Appearance, Profiles, Performance)
+// =============================================================================
+void DrawSettingsHub(const RenderInfo& info) {
+    const float fs = Fs();
+    static const char* const kTabs[] = {"General", "Appearance", "Profiles", "Performance"};
+    if (Segmented("##settingsTabs", kTabs, 4, &g_settingsTab)) {
+        g_profilesDirty = true;
+        g_windowsInfoDirty = true;
+        g_pageChangedAt = perf::Now();
+    }
+    ImGui::Dummy(ImVec2(0, fs * 0.7f));
+    switch (g_settingsTab) {
+        case 1: DrawThemePage(); break;
+        case 2: DrawProfilesPage(); break;
+        case 3:
+            DrawDiagnosticsPage(info);
+            ImGui::Dummy(ImVec2(0, fs * 1.2f));
+            DrawBenchmarkPage();
+            break;
+        default: DrawSettingsPage(); break;
+    }
+}
+
+// =============================================================================
+//  Music: the song, its controls and the music settings (lyrics coming)
+// =============================================================================
+bool MusicButton(const char* id, ImVec2 center, float radius, const char* icon, bool primary, bool enabled,
+                 ImVec4 color) {
+    const theme::Palette& p = theme::P();
+    ImGui::SetCursorScreenPos(ImVec2(center.x - radius, center.y - radius));
+    ImGui::PushID(id);
+    const bool clicked = ImGui::InvisibleButton("##b", ImVec2(radius * 2.0f, radius * 2.0f)) && enabled;
+    const bool hovered = enabled && ImGui::IsItemHovered();
+    const float h = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 16.0f);
+    ImGui::PopID();
+    HoverFeedback(hovered);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float r = radius * (1.0f + 0.06f * h);
+    const float alpha = enabled ? 1.0f : 0.35f;
+    if (primary) {
+        draw->AddCircleFilled(center, r, Col(color, alpha), 40);
+        icons::Draw(draw, icon, center, r * 1.05f, Col(theme::kCharcoal, alpha));
+    } else {
+        draw->AddCircleFilled(center, r, Col(p.surface, (0.7f + 0.3f * h) * alpha), 40);
+        icons::Draw(draw, icon, center, r * 0.95f, Col(Mix(p.text, color, h), alpha));
+    }
+    if (clicked) {
+        sound::Play(sound::Effect::Click);
+    }
+    return clicked;
+}
+
+void DrawMusicPage() {
+    const theme::Palette& p = theme::P();
+    const float fs = Fs();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    music::Settings& s = music::Get();
+    const media::Track t = media::Current();
+    const ImVec4 accent = music::AccentFor(s.haloColor, t, theme::Accent(1.0f));
+
+    // The page takes the album's color, softly (like Liner): a glow from the
+    // top-left and a darker bottom-right.
+    {
+        const ImVec2 wMin = ImGui::GetWindowPos();
+        const ImVec2 wMax(wMin.x + ImGui::GetWindowWidth(), wMin.y + ImGui::GetWindowHeight());
+        ImDrawList* bg = ImGui::GetWindowDrawList();
+        const ImVec4 a0 = theme::WithAlpha(accent, t.artVersion != 0 ? 0.30f : 0.10f);
+        const ImVec4 a1 = theme::WithAlpha(accent, t.artVersion != 0 ? 0.12f : 0.04f);
+        const ImVec4 a2 = ImVec4(0.0f, 0.0f, 0.0f, 0.18f);
+        bg->AddRectFilledMultiColor(wMin, wMax, Col(a0), Col(a1), Col(a2), Col(a1));
+    }
+    const float total = ImGui::GetContentRegionAvail().x;
+    const float leftW = std::floor(std::clamp(total * 0.40f, fs * 15.0f, fs * 24.0f));
+    const float gap = fs * 1.6f;
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const float startY = ImGui::GetCursorPosY();
+
+    // --- Left: the art, the song and the controls ---
+    float y = origin.y;
+    const ImVec2 artMin(origin.x, y);
+    const ImVec2 artMax(origin.x + leftW, y + leftW);
+    music::DrawArt(draw, artMin, artMax, s.artShape, s.artShape == 2 && s.spinArt ? music::SpinAngle() : 0.0f,
+                   ImGui::GetStyle().Alpha);
+    y += leftW + fs * 0.8f;
+    ImFont* title = theme::GetFonts().title;
+    ImFont* medium = theme::GetFonts().medium;
+    if (t.present && t.title[0] != '\0') {
+        draw->PushClipRect(ImVec2(origin.x, y), ImVec2(origin.x + leftW, y + fs * 6.0f), true);
+        draw->AddText(title, title->FontSize, ImVec2(origin.x, y), Col(p.text), t.title);
+        y += title->FontSize * 1.08f;
+        draw->AddText(medium, medium->FontSize, ImVec2(origin.x, y), Col(p.text, 0.78f), t.artist);
+        y += medium->FontSize * 1.15f;
+        char line[240];
+        const bool album = t.album[0] != '\0' && std::strcmp(t.album, t.title) != 0 && _stricmp(t.album, t.app) != 0;
+        std::snprintf(line, sizeof(line), "%s%s%s", album ? t.album : "", album && t.app[0] ? "  ·  " : "", t.app);
+        draw->AddText(ImVec2(origin.x, y), Col(p.textDim), line);
+        draw->PopClipRect();
+        y += fs * 1.9f;
+    } else {
+        draw->AddText(medium, medium->FontSize, ImVec2(origin.x, y), Col(p.text), Tr("Nothing is playing"));
+        y += medium->FontSize * 1.2f;
+        draw->PushClipRect(ImVec2(origin.x, y), ImVec2(origin.x + leftW, y + fs * 4.0f), true);
+        draw->AddText(ImGui::GetFont(), fs, ImVec2(origin.x, y), Col(p.textDim), Tr("Play something on Spotify,"));
+        draw->AddText(ImGui::GetFont(), fs, ImVec2(origin.x, y + fs * 1.2f), Col(p.textDim), Tr("your browser or any music app."));
+        draw->PopClipRect();
+        y += fs * 2.8f;
+    }
+    // The progress bar (click or drag to seek, if the app allows it).
+    const float frac = t.duration > 0.0 ? static_cast<float>(std::clamp(t.position / t.duration, 0.0, 1.0)) : 0.0f;
+    static bool seeking = false;
+    static float seekFrac = 0.0f;
+    const float barH = std::max(3.0f, fs * 0.22f);
+    ImGui::SetCursorScreenPos(ImVec2(origin.x, y - fs * 0.4f));
+    ImGui::InvisibleButton("##musicSeek", ImVec2(leftW, fs * 0.8f + barH));
+    const bool canSeek = t.canSeek && t.duration > 0.0;
+    if (canSeek && ImGui::IsItemActive()) {
+        seeking = true;
+        seekFrac = std::clamp((ImGui::GetIO().MousePos.x - origin.x) / leftW, 0.0f, 1.0f);
+    } else if (seeking) {
+        media::Seek(seekFrac * t.duration);
+        seeking = false;
+    }
+    if (canSeek && ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+    const float shown = seeking ? seekFrac : frac;
+    draw->AddRectFilled(ImVec2(origin.x, y), ImVec2(origin.x + leftW, y + barH), Col(p.text, 0.15f), barH * 0.5f);
+    if (shown > 0.0f) {
+        draw->AddRectFilled(ImVec2(origin.x, y), ImVec2(origin.x + leftW * shown, y + barH), Col(accent), barH * 0.5f);
+        draw->AddCircleFilled(ImVec2(origin.x + leftW * shown, y + barH * 0.5f), barH * 1.6f, Col(accent), 20);
+    }
+    y += barH + fs * 0.5f;
+    if (t.duration > 0.0) {
+        char a[16], b[16];
+        music::FormatTime(shown * t.duration, a, sizeof(a));
+        music::FormatTime(t.duration, b, sizeof(b));
+        draw->AddText(ImVec2(origin.x, y), Col(p.textDim), a);
+        const ImVec2 bs = ImGui::CalcTextSize(b);
+        draw->AddText(ImVec2(origin.x + leftW - bs.x, y), Col(p.textDim), b);
+    }
+    y += fs * 2.7f;
+    const float cx = origin.x + leftW * 0.5f;
+    const float spacing = std::min(fs * 3.4f, leftW * 0.2f);
+    // Shuffle and repeat: lit when on (only if the app lets them be changed).
+    auto toggleIcon = [&](const char* id, ImVec2 at, const char* icon, bool on, bool enabled, const char* badge) {
+        ImGui::SetCursorScreenPos(ImVec2(at.x - fs * 0.95f, at.y - fs * 0.95f));
+        ImGui::PushID(id);
+        const bool clicked = ImGui::InvisibleButton("##t", ImVec2(fs * 1.9f, fs * 1.9f)) && enabled;
+        const bool hovered = enabled && ImGui::IsItemHovered();
+        ImGui::PopID();
+        HoverFeedback(hovered);
+        const float alpha = enabled ? 1.0f : 0.3f;
+        const ImVec4 color = on ? accent : theme::WithAlpha(p.text, hovered ? 0.95f : 0.6f);
+        icons::Draw(draw, icon, at, fs * 1.15f, Col(color, alpha));
+        if (on) draw->AddCircleFilled(ImVec2(at.x, at.y + fs * 0.9f), fs * 0.12f, Col(accent, alpha), 10);
+        if (badge != nullptr) {
+            ImFont* tiny = theme::GetFonts().regular;
+            draw->AddText(tiny, tiny->FontSize * 0.72f, ImVec2(at.x + fs * 0.35f, at.y - fs * 0.75f), Col(color, alpha), badge);
+        }
+        if (clicked) sound::Play(sound::Effect::Click);
+        return clicked;
+    };
+    if (toggleIcon("##shuffle", ImVec2(cx - spacing * 2.0f, y), music::kIconShuffle, t.shuffle, t.canShuffle, nullptr)) {
+        media::SetShuffle(!t.shuffle);
+    }
+    if (MusicButton("##prev", ImVec2(cx - spacing, y), fs * 1.15f, music::kIconPrev, false, t.canPrevious, accent)) {
+        media::Previous();
+    }
+    if (MusicButton("##play", ImVec2(cx, y), fs * 1.55f, t.playing ? music::kIconPause : music::kIconPlay, true,
+                    t.canPlayPause, accent)) {
+        media::PlayPause();
+    }
+    if (MusicButton("##next", ImVec2(cx + spacing, y), fs * 1.15f, music::kIconNext, false, t.canNext, accent)) {
+        media::Next();
+    }
+    // Repeat goes off -> the whole list -> this song -> off.
+    if (toggleIcon("##repeat", ImVec2(cx + spacing * 2.0f, y), music::kIconRepeat, t.repeat != 0, t.canRepeat,
+                   t.repeat == 1 ? "1" : nullptr)) {
+        media::SetRepeat(t.repeat == 0 ? 2 : t.repeat == 2 ? 1 : 0);
+    }
+    y += fs * 2.6f;
+
+    // The app's volume (like Windows' volume mixer: only that app).
+    if (t.volume >= 0.0f) {
+        const float vw = leftW * 0.62f;
+        const float vx = cx - vw * 0.5f + fs * 0.9f;
+        const float vh = std::max(3.0f, fs * 0.2f);
+        icons::Draw(draw, music::kIconVolume, ImVec2(vx - fs * 1.4f, y), fs * 1.05f, Col(p.text, 0.7f));
+        ImGui::SetCursorScreenPos(ImVec2(vx, y - fs * 0.5f));
+        ImGui::InvisibleButton("##musicVolume", ImVec2(vw - fs * 0.9f, fs));
+        static float dragVolume = -1.0f;
+        if (ImGui::IsItemActive()) {
+            dragVolume = std::clamp((ImGui::GetIO().MousePos.x - vx) / (vw - fs * 0.9f), 0.0f, 1.0f);
+            media::SetVolume(dragVolume);
+        } else {
+            dragVolume = -1.0f;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        const float vol = dragVolume >= 0.0f ? dragVolume : t.volume;
+        const float barW = vw - fs * 0.9f;
+        draw->AddRectFilled(ImVec2(vx, y - vh * 0.5f), ImVec2(vx + barW, y + vh * 0.5f), Col(p.text, 0.15f), vh * 0.5f);
+        draw->AddRectFilled(ImVec2(vx, y - vh * 0.5f), ImVec2(vx + barW * vol, y + vh * 0.5f), Col(p.text, 0.85f), vh * 0.5f);
+        y += fs * 1.8f;
+    }
+
+    // The module's switch: the HUD element and the Halo need it on.
+    Module* module = Manager::Find("now_playing");
+    if (module != nullptr && !module->IsEnabled()) {
+        ImGui::SetCursorScreenPos(ImVec2(origin.x, y));
+        if (GlassButton("Show it on the HUD and the radial", icons::kHud, ImVec2(leftW, ImGui::GetFrameHeight() * 1.1f), true)) {
+            Manager::SetEnabled(*module, true, true);
+            config::MarkDirty();
+        }
+        y += ImGui::GetFrameHeight() * 1.1f + fs * 0.5f;
+    }
+
+    // --- Right: tabs ---
+    const float rightX = origin.x + leftW + gap;
+    const float rightW = total - leftW - gap;
+    ImGui::SetCursorScreenPos(ImVec2(rightX, origin.y));
+    static const char* const kTabs[] = {"Lyrics", "Styles", "Halo"};
+    Segmented("##musicTabs", kTabs, 3, &g_musicTab);
+    const float tabsBottom = ImGui::GetCursorScreenPos().y + fs * 0.6f;
+    const float rightH = std::max(fs * 10.0f, ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - tabsBottom -
+                                                  ImGui::GetStyle().WindowPadding.y);
+    ImGui::SetCursorScreenPos(ImVec2(rightX, tabsBottom));
+    ImGui::BeginChild("##musicRight", ImVec2(rightW, rightH), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
+    SmoothScroll();
+    if (g_musicTab == 0) {
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        music::DrawLyrics(at, ImVec2(at.x + rightW, at.y + rightH - fs * 0.2f));
+        ImGui::Dummy(ImVec2(rightW, rightH - fs * 0.4f));
+    } else {
+        ui::SetLabelColumn(11.0f);
+        bool changed = false;
+        if (g_musicTab == 1) {
+            changed |= music::DrawStyleSettings();
+            changed |= music::DrawAlbumColorSettings();
+            changed |= music::DrawLyricsSettings();
+        } else {
+            changed = music::DrawHaloSettings();
+        }
+        ui::SetLabelColumn(15.0f);
+        if (changed) {
+            config::MarkDirty();
+        }
+    }
+    ImGui::EndChild();
+    ImGui::SetCursorPosY(std::max(startY + (y - origin.y), ImGui::GetCursorPosY()));
+    ImGui::Dummy(ImVec2(0, fs * 0.5f));
+}
+
 bool g_radial = true;  // ¿se muestra el radial (true) o el menú grande (false)?
 
 enum class RadialItem { Mods = 0, Closet = 1, Settings = 2, Hud = 3, Count = 4 };
@@ -1764,13 +2071,18 @@ void DrawRadial(float appear, float scale) {
         draw->AddCircleFilled(c, inner, Col(p.surface, 0.9f), 64);
         draw->AddCircle(c, inner, Col(p.border), 64, 1.0f);
 
+        // The music "Halo" around the radial (render/music.h). If the mouse is
+        // on it, the radial's buttons ignore it.
+        bool artInCenter = false;
+        const bool overHalo = music::DrawHalo(draw, c, outer, inner, appear, artInCenter);
+
         // ¿Sobre qué botón está el mouse? (por el ángulo y la distancia al centro)
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         const float dx = mouse.x - c.x;
         const float dy = mouse.y - c.y;
         const float dist = std::sqrt(dx * dx + dy * dy);
         int hovered = -1;
-        if (dist > inner && dist < outer * 1.08f) {
+        if (!overHalo && dist > inner && dist < outer * 1.04f) {
             float a = std::atan2(dy, dx) * 180.0f / 3.14159265f;  // 0 = derecha, 90 = abajo
             if (a < 0.0f) a += 360.0f;
             hovered = a >= 315.0f || a < 45.0f ? static_cast<int>(RadialItem::Closet)
@@ -1827,7 +2139,9 @@ void DrawRadial(float appear, float scale) {
         bool legacy = false;
         const ImTextureID skin = skinheads::OwnSkin(legacy);
         (void)skinheads::Own();  // (sube también la cara plana, que usan otras partes)
-        if (skin != 0) {
+        if (artInCenter) {
+            // the album art is already in the middle
+        } else if (skin != 0) {
             static float yaw = 0.0f;
             static float pitch = 0.0f;
             const float targetYaw = std::clamp(dx / outer, -1.2f, 1.2f) * 0.75f;
@@ -1843,7 +2157,10 @@ void DrawRadial(float appear, float scale) {
         char hint[96];
         std::snprintf(hint, sizeof(hint), i18n::T("radial.hint"), keys::Name(config::g_menuKey.load()).c_str());
         const ImVec2 hs = ImGui::CalcTextSize(hint);
-        draw->AddText(ImVec2(c.x - hs.x * 0.5f, c.y + outer + fs * 0.9f), Col(p.textDim), hint);
+        const float hintY = media::Current().present && music::Get().active && music::Get().halo
+                                ? c.y + outer + (music::Get().haloGap + 2.6f) * fs  // under the Halo's buttons
+                                : c.y + outer + fs * 0.9f;
+        draw->AddText(ImVec2(c.x - hs.x * 0.5f, hintY), Col(p.textDim), hint);
 
         if (clicked) {
             sound::Play(sound::Effect::Click);
@@ -2051,37 +2368,29 @@ void Sidebar() {
     draw->ChannelsSetCurrent(1);
     g_navPillTarget = -1.0f;
 
-    NavLabel("Mods");
-    auto category = [](const char* label, const char* icon, Category c) {
-        const bool selected = g_page == Page::Modules && g_categoryFilter == c;
-        if (NavItem(label, icon, selected, CountModules(c)) && !selected) {
-            g_page = Page::Modules;
-            g_categoryFilter = c;
-            OnNavigate();
-        }
+    // Four places: Modules (categories are pills inside), Music, Closet and
+    // Settings (Appearance, Profiles, Benchmark and Diagnostics are its tabs).
+    ImGui::Dummy(ImVec2(0, fs * 0.4f));
+    auto go = [](Page pg) {
+        g_page = pg;
+        g_detail = nullptr;
+        g_profilesDirty = true;
+        g_windowsInfoDirty = true;
+        OnNavigate();
     };
-    category("All", icons::kAll, Category::Count);
-    for (int i = 0; i < static_cast<int>(Category::Count); ++i) {
-        const auto c = static_cast<Category>(i);
-        if (CountModules(c) > 0) category(modules::CategoryName(c), CategoryIcon(c), c);
+    if (NavItem("Modules", icons::kAll, g_page == Page::Modules, CountModules(Category::Count)) && g_page != Page::Modules) {
+        g_categoryFilter = Category::Count;
+        go(Page::Modules);
     }
-
-    NavLabel("Luma");
-    auto page = [](const char* label, const char* icon, Page pg) {
-        if (NavItem(label, icon, g_page == pg) && g_page != pg) {
-            g_page = pg;
-            g_detail = nullptr;
-            g_profilesDirty = true;
-            g_windowsInfoDirty = true;
-            OnNavigate();
-        }
-    };
-    page(i18n::T("closet.title"), icons::kProfiles, Page::Closet);
-    page("Appearance", icons::kTheme, Page::Theme);
-    page("Profiles", icons::kProfiles, Page::Profiles);
-    page("Settings", icons::kSettings, Page::Settings);
-    page("Benchmark", icons::kChart, Page::Benchmark);
-    page("Diagnostics", icons::kDiagnostics, Page::Diagnostics);
+    if (NavItem("Music", kMusicIcon, g_page == Page::Music) && g_page != Page::Music) {
+        go(Page::Music);
+    }
+    if (NavItem(i18n::T("closet.title"), icons::kProfiles, g_page == Page::Closet) && g_page != Page::Closet) {
+        go(Page::Closet);
+    }
+    if (NavItem("Settings", icons::kSettings, g_page == Page::Settings) && g_page != Page::Settings) {
+        go(Page::Settings);
+    }
 
     // La marca de la elegida: un fondo cálido tenue y una rayita del acento
     // que se desliza hasta ella.
@@ -2136,6 +2445,8 @@ void OnOpened() {
 }
 
 void OnClosed() {
+    media::Want(media::kMenu, false);
+    lyrics::Want(lyrics::kMenu, false);
     if (hudeditor::IsActive()) {
         hudeditor::End();
     }
@@ -2230,7 +2541,15 @@ void Draw(const RenderInfo& info) {
             ImGui::ColorConvertFloat4ToU32(ImVec4(0.02f, 0.02f, 0.03f, dim)));
     }
 
-    // Al abrir: el menú radial (Mods, HUD, Closet, Ajustes).
+    // The Music page reads the music even if the module is off.
+    media::Want(media::kMenu, !g_radial && g_page == Page::Music && !closing);
+    lyrics::Want(lyrics::kMenu, !g_radial && g_page == Page::Music && !closing);
+    if (!g_radial && g_page == Page::Music && !closing && music::Get().hdCovers) {
+        lyrics::SetHdCovers(true);
+        lyrics::Want(lyrics::kCovers, true);
+    }
+
+    // Al abrir: el menú radial (Mods, Música, Closet, Ajustes).
     if (g_radial) {
         DrawRadial(appear, scale);
         return;
@@ -2287,13 +2606,14 @@ void Draw(const RenderInfo& info) {
                               (g_page == Page::Modules ? ImGuiWindowFlags_NoScrollbar : 0));
         if (g_page != Page::Modules) SmoothScroll();
         switch (g_page) {
-            case Page::Theme:       DrawThemePage(); break;
-            case Page::Profiles:    DrawProfilesPage(); break;
-            case Page::Settings:    DrawSettingsPage(); break;
-            case Page::Benchmark:   DrawBenchmarkPage(); break;
-            case Page::Diagnostics: DrawDiagnosticsPage(info); break;
+            case Page::Theme:       g_settingsTab = 1; g_page = Page::Settings; DrawSettingsHub(info); break;
+            case Page::Profiles:    g_settingsTab = 2; g_page = Page::Settings; DrawSettingsHub(info); break;
+            case Page::Benchmark:
+            case Page::Diagnostics: g_settingsTab = 3; g_page = Page::Settings; DrawSettingsHub(info); break;
+            case Page::Settings:    DrawSettingsHub(info); break;
             case Page::Modules:     DrawModulesPage(); break;
             case Page::Closet:      DrawClosetPage(); break;
+            case Page::Music:       DrawMusicPage(); break;
         }
         ImGui::EndChild();
         ImGui::PopStyleVar(2);

@@ -20,6 +20,8 @@ add_library(Luma SHARED
     core/stats.cpp
     core/tr.cpp                             # traducciones de los textos del juego
     core/cloud.cpp                          # hablar con el servidor de Luma (usuarios de Luma)
+    core/media.cpp                          # la música que suena en Windows (módulo de música)
+    core/lyrics.cpp                         # las letras de la canción (LRCLIB)
     ${PROJECT_SOURCE_DIR}/shared/skin_pack.cpp  # tus skins como paquete del juego
     ${PROJECT_SOURCE_DIR}/shared/i18n.cpp   # textos en inglés, español y portugués (los mismos del launcher)
     modules/module_manager.cpp
@@ -28,6 +30,7 @@ add_library(Luma SHARED
     modules/hud/inventory_hud.cpp
     modules/hud/paperdoll.cpp
     modules/hud/player_list.cpp
+    modules/hud/music.cpp
     modules/hud/scoreboard.cpp
     modules/hud/player_hud.cpp
     modules/hud/watermark.cpp
@@ -56,6 +59,7 @@ add_library(Luma SHARED
     render/item_icons.cpp
     render/loading.cpp
     render/menu.cpp
+    render/music.cpp
     render/module_options.cpp
     render/notifications.cpp
     render/overlay.cpp
@@ -102,5 +106,6 @@ target_link_libraries(Luma PRIVATE
     winmm                     # timeBeginPeriod (optimización "Timer de 1 ms")
     powrprof                  # leer el plan de energía (consejos de Windows)
     winhttp                   # HTTPS al servidor de Luma (core/cloud.cpp)
+    windowsapp                # APIs de Windows "WinRT": la música que suena (core/media.cpp)
     crypt32                   # DPAPI: abrir el pase de Luma cifrado
 )

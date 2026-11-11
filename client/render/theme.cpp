@@ -3,6 +3,8 @@
 // =============================================================================
 #include "render/theme.h"
 
+#include "render/music.h"
+
 #include <algorithm>
 #include <atomic>
 
@@ -70,6 +72,10 @@ float UiScale() {
 }
 
 ImVec4 Accent(float alpha) {
+    float album[3];
+    if (render::music::MenuTint(album)) {  // "Color Luma's menu" (Now playing module)
+        return ImVec4(album[0], album[1], album[2], alpha);
+    }
     if (g_settings.accentAuto) {
         // El color de Luma que contrasta con el estilo.
         const ImVec4 c = g_settings.style == Style::Light ? kCharcoal : kIvory;

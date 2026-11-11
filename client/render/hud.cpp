@@ -3,6 +3,7 @@
 // =============================================================================
 #include "render/hud.h"
 #include "render/rainbow.h"
+#include "render/music.h"
 
 #include <windows.h>
 
@@ -123,6 +124,10 @@ ImU32 TextColor(float alpha) {
         rainbow::Color(g_current->rainbowSpeed, 0.0f, c[0], c[1], c[2]);
         return ToU32(c, alpha);
     }
+    float album[3];
+    if (music::HudTint(album)) {  // "Color the whole HUD" (Now playing module)
+        return ToU32(album, alpha);
+    }
     return ToU32(g_current->text, alpha);
 }
 
@@ -131,6 +136,10 @@ ImU32 PressedColor(float alpha) {
         float c[3];
         rainbow::Color(g_current->rainbowSpeed, 0.5f, c[0], c[1], c[2]);  // (medio arcoíris corrido: se distingue)
         return ToU32(c, alpha);
+    }
+    float album[3];
+    if (music::HudTint(album)) {
+        return ToU32(album, alpha);
     }
     return ToU32(g_current->pressed, alpha);
 }

@@ -53,6 +53,8 @@
 #include <nlohmann/json.hpp>
 
 #include "core/cloud.h"
+#include "core/lyrics.h"
+#include "core/media.h"
 #include <filesystem>
 #include "sdk/memory.h"
 #include "sdk/watch.h"
@@ -323,6 +325,8 @@ void Shutdown() {
     }
     stats::End();
     cloud::Stop();
+    lyrics::Shutdown();  // the lyrics thread (a request takes 8 s at most)
+    media::Shutdown();  // the music thread (it waits at most a couple of seconds)
     sdk::camera::BeginUnload();
     sdk::paperdoll::BeginUnload();  // the paper doll goes back to its place
     sdk::network::BeginUnload();

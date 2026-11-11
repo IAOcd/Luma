@@ -50,6 +50,10 @@ D3D12_GPU_DESCRIPTOR_HANDLE GpuSlot(UINT slot);
 // identificador para ImGui::Image / AddImage. 0 si falló. Espera a que termine.
 ImTextureID CreateTexture(const std::uint8_t* rgba, UINT width, UINT height);
 
+// Replaces the picture of a texture made with CreateTexture (same size only).
+// For things that change, like the album art: no new slot each time.
+bool UpdateTexture(ImTextureID id, const std::uint8_t* rgba, UINT width, UINT height);
+
 // --- Desenfoque -------------------------------------------------------------------
 
 // (Re)crear las texturas del desenfoque para un tamaño de pantalla. Se llama

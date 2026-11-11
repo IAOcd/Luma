@@ -11,6 +11,7 @@
 #include "core/logger.h"
 #include "perf/timer.h"
 #include "sdk/draw3d.h"
+#include "sdk/dynlight.h"
 #include "sdk/memory.h"
 #include "sdk/scanner.h"
 
@@ -226,7 +227,9 @@ void __fastcall RenderLevelDetour(void* levelRenderer, void* screenContext, void
         ApplyFov(lr);
     }
     draw3d::BeginLevel(lr);
+    dynlight::EnterRenderLevel(lr);  // dynamic lights: rebuilds + light for entities (sdk/dynlight.h)
     g_renderLevel(levelRenderer, screenContext, unk);
+    dynlight::LeaveRenderLevel();
     draw3d::EndLevel();
     if (active) {
         ApplyFov(lr);

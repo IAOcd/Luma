@@ -26,6 +26,7 @@
 #include "modules/utility/toggle_keys.h"
 #include "modules/visual/camera_mods.h"
 #include "modules/visual/crosshair.h"
+#include "modules/visual/dynamic_lights.h"
 #include "modules/visual/post_processing.h"
 #include "modules/visual/world_draw.h"
 
@@ -59,6 +60,7 @@ void Manager::RegisterAll() {
     modules_.push_back(std::make_unique<visual::BlockOutline>());
     modules_.push_back(std::make_unique<visual::Hitboxes>());
     modules_.push_back(std::make_unique<visual::ChunkBorders>());
+    modules_.push_back(std::make_unique<visual::DynamicLights>());
     // Utilidad
     modules_.push_back(std::make_unique<utility::ToggleKey>(render::input::HoldSlot::Sprint));
     modules_.push_back(std::make_unique<utility::ToggleKey>(render::input::HoldSlot::Sneak));

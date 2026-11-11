@@ -47,6 +47,7 @@
 #include "sdk/draw3d.h"
 #include "sdk/hud_ui.h"
 #include "sdk/game_crosshair.h"
+#include "sdk/dynlight.h"
 #include "sdk/skin_apply.h"
 #include "sdk/paperdoll.h"
 #include <nlohmann/json.hpp>
@@ -226,6 +227,7 @@ bool Startup(HMODULE module) {
         sdk::hudui::Init();      // movable scoreboard without flicker (UIControl::updatePos)
         sdk::skinapply::Init();  // Equip changes the skin instantly
         sdk::gamecrosshair::Init();  // hiding the game's crosshair (crosshair module)
+        sdk::dynlight::Init();       // dynamic lights (dynamic lights module)
         std::lock_guard lock(StateMutex());
         modules::Manager::DisableUnavailable();
     }

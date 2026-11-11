@@ -37,6 +37,7 @@ add_library(Luma SHARED
     modules/utility/toggle_keys.cpp
     modules/visual/camera_mods.cpp
     modules/visual/crosshair.cpp
+    modules/visual/dynamic_lights.cpp
     modules/visual/post_processing.cpp
     modules/visual/world_draw.cpp
     perf/benchmark.cpp
@@ -70,6 +71,7 @@ add_library(Luma SHARED
     sdk/memory.cpp
     sdk/paperdoll.cpp
     sdk/hud_ui.cpp
+    sdk/dynlight.cpp                        # dynamic lights (luz de la mano)
     sdk/game_crosshair.cpp                  # esconder la mira del juego
     sdk/skin_apply.cpp                      # Equipar cambia la skin al instante
     sdk/watch.cpp                           # diagnóstico: quién escribe en una dirección

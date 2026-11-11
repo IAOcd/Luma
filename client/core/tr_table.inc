@@ -232,6 +232,12 @@
 {"Frames en el gráfico", "Frames in the graph", "Quadros no gráfico"},
 {"Con un elemento del HUD activo, Luma dibuja cada frame y su costo sube un poco.", "With a HUD element on, Luma draws every frame and its cost goes up a little.", "Com um elemento do HUD ativo, o Luma desenha cada quadro e o custo sobe um pouco."},
 {"Tiempo de GPU", "GPU time", "Tempo de GPU"},
+{"Luces dinámicas", "Dynamic lights", "Luzes dinâmicas"},
+{"Una antorcha, linterna, piedra luminosa o cualquier ítem que dé luz en tu mano ilumina el mundo a tu alrededor. Solo en tu pantalla: el servidor y la aparición de mobs ven la luz real.", "A torch, lantern, glowstone or any light-giving item in your hand lights up the world around you. Only on your screen: the server and mob spawning see the real light.", "Uma tocha, lanterna, pedra luminosa ou qualquer item que dê luz na sua mão ilumina o mundo ao seu redor. Só na sua tela: o servidor e o surgimento de mobs veem a luz real."},
+{"También la otra mano", "Other hand too", "A outra mão também"},
+{"Iluminar entidades y tu mano", "Light entities and your hand", "Iluminar entidades e sua mão"},
+{"Actualizaciones por segundo", "Updates per second", "Atualizações por segundo"},
+{"Cada actualización rearma los pedazos del mundo alrededor de la luz, como cuando cambia un bloque. Menos actualizaciones = más liviano, pero la luz te sigue a saltitos.", "Each update rebuilds the pieces of the world around the light, like when a block changes. Fewer updates = lighter, but the light follows you in small jumps.", "Cada atualização refaz os pedaços do mundo ao redor da luz, como quando um bloco muda. Menos atualizações = mais leve, mas a luz te segue aos saltinhos."},
 {"Tiempo de GPU: cuánto trabajó la tarjeta gráfica en el frame. Cerca del 100% significa que el límite es la GPU; mucho menos, que es el procesador (o un límite de FPS / vsync).", "GPU time: how long the graphics card worked in the frame. Close to 100% means the GPU is the limit; much lower means the CPU is (or an FPS cap / vsync).", "Tempo de GPU: quanto a placa de vídeo trabalhou no quadro. Perto de 100% significa que o limite é a GPU; bem menos, que é o processador (ou um limite de FPS / vsync)."},
 
 // --- Optimizations -----------------------------------------------------------------------

@@ -1,5 +1,5 @@
 // =============================================================================
-//  hooks.cpp - Implementación del envoltorio de MinHook
+//  hooks.cpp - MinHook wrapper implementation
 // =============================================================================
 #include "core/hooks.h"
 
@@ -22,7 +22,7 @@ bool g_initialized = false;
 bool Init() {
     const MH_STATUS status = MH_Initialize();
     if (status != MH_OK) {
-        log::Error("MinHook no pudo iniciar: {}", MH_StatusToString(status));
+        log::Error("MinHook couldn't start: {}", MH_StatusToString(status));
         return false;
     }
     g_initialized = true;
@@ -32,19 +32,19 @@ bool Init() {
 bool Create(void* target, void* detour, void** original, const char* name) {
     const MH_STATUS status = MH_CreateHook(target, detour, original);
     if (status != MH_OK) {
-        log::Error("No se pudo crear el hook {}: {}", name, MH_StatusToString(status));
+        log::Error("Couldn't create hook {}: {}", name, MH_StatusToString(status));
         return false;
     }
-    log::Info("Hook creado: {} (0x{:X})", name, reinterpret_cast<std::uintptr_t>(target));
+    log::Info("Hook created: {} (0x{:X})", name, reinterpret_cast<std::uintptr_t>(target));
     return true;
 }
 
 bool EnableAll() {
-    // MH_ALL_HOOKS = "todos los hooks creados". Activarlos todos juntos es
-    // mejor que uno por uno: MinHook pausa los hilos del juego una sola vez.
+    // MH_ALL_HOOKS = "every hook created". Enabling them all together is
+    // better than one by one: MinHook pauses the game's threads only once.
     const MH_STATUS status = MH_EnableHook(MH_ALL_HOOKS);
     if (status != MH_OK) {
-        log::Error("No se pudieron activar los hooks: {}", MH_StatusToString(status));
+        log::Error("Couldn't enable the hooks: {}", MH_StatusToString(status));
         return false;
     }
     return true;
@@ -53,7 +53,7 @@ bool EnableAll() {
 bool Enable(void* target, const char* name) {
     const MH_STATUS status = MH_EnableHook(target);
     if (status != MH_OK) {
-        log::Error("No se pudo activar el hook {}: {}", name, MH_StatusToString(status));
+        log::Error("Couldn't enable hook {}: {}", name, MH_StatusToString(status));
         return false;
     }
     return true;
@@ -66,20 +66,20 @@ void DisableAll() {
 }
 
 void WaitForActiveCalls() {
-    // Esperamos en pasos de 10 ms. Si tarda mucho, lo anotamos en el log
-    // (por ejemplo, si estás arrastrando la ventana del juego, Windows retiene
-    // el hilo de la ventana dentro de nuestro procesador de mensajes).
+    // We wait in 10 ms steps. If it takes long, we note it in the log
+    // (for example, if you're dragging the game window, Windows holds the
+    // window thread inside our message handler).
     int waitedMs = 0;
     while (g_activeCalls.load(std::memory_order_acquire) > 0) {
         Sleep(10);
         waitedMs += 10;
         if (waitedMs == 2000) {
-            log::Warn("Esperando a que el juego salga del código de Luma...");
+            log::Warn("Waiting for the game to leave Luma's code...");
         }
     }
-    // Margen extra: un hilo podría haber saltado a nuestro detour justo antes
-    // de desactivar el hook y todavía no haber sumado 1 al contador (son
-    // nanosegundos). 100 ms cubren ese caso de sobra.
+    // Extra margin: a thread could have jumped into our detour right before
+    // the hook was disabled and not yet added 1 to the counter (it's a matter of
+    // nanoseconds). 100 ms covers that case with room to spare.
     Sleep(100);
 }
 
@@ -87,7 +87,7 @@ void Shutdown() {
     if (!g_initialized) {
         return;
     }
-    // Quita todos los hooks y libera la memoria de los trampolines.
+    // Removes every hook and frees the trampolines' memory.
     MH_Uninitialize();
     g_initialized = false;
 }

@@ -1,5 +1,5 @@
 // =============================================================================
-//  windows_info.cpp - Implementación de la lectura de opciones de Windows
+//  windows_info.cpp - Reading Windows options, implementation
 // =============================================================================
 #include "perf/windows_info.h"
 
@@ -38,7 +38,7 @@ std::string Utf8(const std::wstring& text) {
 Info Read() {
     Info info;
 
-    // Modo de juego: si el valor no existe, en Windows 10/11 está ACTIVADO.
+    // Game Mode: if the value doesn't exist, on Windows 10/11 it's ON.
     DWORD value = 0;
     if (ReadDword(HKEY_CURRENT_USER, L"Software\\Microsoft\\GameBar", L"AutoGameModeEnabled", value)) {
         info.gameMode = value != 0 ? Status::On : Status::Off;
@@ -46,12 +46,12 @@ Info Read() {
         info.gameMode = Status::On;
     }
 
-    // HAGS: 2 = activada, 1 = desactivada. Si no existe, la GPU o el driver no la soportan.
+    // HAGS: 2 = on, 1 = off. If it doesn't exist, the GPU or driver doesn't support it.
     if (ReadDword(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers", L"HwSchMode", value)) {
         info.gpuScheduling = value == 2 ? Status::On : Status::Off;
     }
 
-    // Plan de energía activo y su nombre.
+    // Active power plan and its name.
     GUID* scheme = nullptr;
     if (PowerGetActiveScheme(nullptr, &scheme) == ERROR_SUCCESS && scheme != nullptr) {
         wchar_t name[256] = L"";
@@ -60,13 +60,13 @@ Info Read() {
             ERROR_SUCCESS) {
             info.powerPlan = Utf8(name);
         }
-        // GUID del plan "Alto rendimiento" (GUID_MIN_POWER_SAVINGS) o "Máximo rendimiento".
+        // GUID of the "High performance" plan (GUID_MIN_POWER_SAVINGS) or "Ultimate Performance".
         static const GUID kUltimate = {0xe9a42b02, 0xd5df, 0x448d, {0xaa, 0x00, 0x03, 0xf1, 0x47, 0x49, 0xeb, 0x61}};
         info.powerPlanIsHighPerformance = IsEqualGUID(*scheme, GUID_MIN_POWER_SAVINGS) || IsEqualGUID(*scheme, kUltimate);
         LocalFree(scheme);
     }
 
-    // Preferencias de DirectX de este usuario (Configuración > Pantalla > Gráficos).
+    // This user's DirectX preferences (Settings > Display > Graphics).
     const wchar_t* prefsPath = L"Software\\Microsoft\\DirectX\\UserGpuPreferences";
     wchar_t exe[MAX_PATH] = L"";
     GetModuleFileNameW(nullptr, exe, MAX_PATH);

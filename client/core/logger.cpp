@@ -1,5 +1,5 @@
 // =============================================================================
-//  logger.cpp - Implementación del log
+//  logger.cpp - Log implementation
 // =============================================================================
 #include "core/logger.h"
 
@@ -8,49 +8,49 @@
 #include <algorithm>
 #include <cstdio>
 #include <mutex>
-#include <share.h>  // _SH_DENYNO: permitir que otros programas lean el archivo
+#include <share.h>  // _SH_DENYNO: let other programs read the file
 #include <string>
 #include <system_error>
 #include <vector>
 
 namespace luma::log {
 
-// Un "namespace" sin nombre hace que todo lo de adentro sea privado de este
-// archivo: nadie más puede tocar estas variables.
+// An unnamed "namespace" makes everything inside private to this file:
+// nobody else can touch these variables.
 namespace {
 
-// Cuántos archivos de log se conservan (el actual incluido).
+// How many log files are kept (the current one included).
 constexpr std::size_t kMaxLogFiles = 10;
 constexpr std::wstring_view kLogPrefix = L"luma_";
 constexpr std::wstring_view kLogExtension = L".log";
 
-// Un "mutex" es un candado: si dos hilos quieren escribir en el log al mismo
-// tiempo, uno espera a que el otro termine. Sin esto, las líneas podrían
-// mezclarse entre sí.
+// A "mutex" is a lock: if two threads want to write to the log at the same
+// time, one waits for the other to finish. Without it, lines could get
+// mixed together.
 std::mutex g_mutex;
 std::FILE* g_file = nullptr;
 std::filesystem::path g_filePath;
-HANDLE g_consoleOut = nullptr;  // salida de la consola, si está abierta
+HANDLE g_consoleOut = nullptr;  // console output, if it's open
 
-// --- Consola -----------------------------------------------------------------
+// --- Console -----------------------------------------------------------------
 
-// Windows avisa a los programas de consola cuando el usuario pulsa Ctrl+C.
-// Por defecto, eso CIERRA EL PROCESO... que en nuestro caso es el juego.
-// Este "manejador" le responde a Windows "ya lo manejé" (TRUE) y no hace nada.
+// Windows notifies console programs when the user presses Ctrl+C.
+// By default, that CLOSES THE PROCESS... which in our case is the game.
+// This "handler" answers Windows "I handled it" (TRUE) and does nothing.
 BOOL WINAPI ConsoleCtrlHandler(DWORD type) {
     return type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT ? TRUE : FALSE;
 }
 
 void OpenConsole() {
     if (!AllocConsole()) {
-        return;  // Ya había una consola o Windows no quiso: seguimos sin ella.
+        return;  // There was already a console or Windows refused: we carry on without it.
     }
-    SetConsoleTitleW(L"Luma - consola de depuración");
-    SetConsoleOutputCP(CP_UTF8);  // Para que tildes y ñ se vean bien.
+    SetConsoleTitleW(L"Luma - debug console");
+    SetConsoleOutputCP(CP_UTF8);  // So accented characters show correctly.
     SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
 
-    // Cerrar la ventana de consola con la X también cerraría el juego entero.
-    // Para evitarlo, quitamos el botón de cerrar de esa ventana.
+    // Closing the console window with the X would also close the whole game.
+    // To prevent that, we remove that window's close button.
     if (HWND window = GetConsoleWindow()) {
         if (HMENU menu = GetSystemMenu(window, FALSE)) {
             DeleteMenu(menu, SC_CLOSE, MF_BYCOMMAND);
@@ -64,18 +64,18 @@ void CloseConsole() {
     if (g_consoleOut == nullptr) {
         return;
     }
-    // MUY IMPORTANTE: quitar el manejador antes de descargar la DLL. Si no,
-    // Windows seguiría apuntando a una función que ya no existe en memoria y
-    // el próximo Ctrl+C crashearía el juego.
+    // VERY IMPORTANT: remove the handler before unloading the DLL. Otherwise
+    // Windows would keep pointing to a function that no longer exists in memory
+    // and the next Ctrl+C would crash the game.
     SetConsoleCtrlHandler(ConsoleCtrlHandler, FALSE);
     FreeConsole();
     g_consoleOut = nullptr;
 }
 
-// --- Archivos ------------------------------------------------------------------
+// --- Files ---------------------------------------------------------------------
 
-// Hora local en el formato pedido. "forFileName" usa guiones en lugar de ":"
-// porque Windows no permite ":" en nombres de archivo.
+// Local time in the requested format. "forFileName" uses dashes instead of ":"
+// because Windows doesn't allow ":" in file names.
 std::string Timestamp(bool forFileName) {
     SYSTEMTIME t{};
     GetLocalTime(&t);
@@ -87,13 +87,13 @@ std::string Timestamp(bool forFileName) {
                        t.wMilliseconds);
 }
 
-// Borra los logs más viejos para que, al crear el nuevo, queden kMaxLogFiles.
-// Como el nombre empieza con la fecha en formato año-mes-día, ordenar por
-// nombre es lo mismo que ordenar por antigüedad.
+// Deletes the oldest logs so that, once the new one is created, kMaxLogFiles
+// remain. Since the name starts with the date in year-month-day format,
+// sorting by name is the same as sorting by age.
 void DeleteOldLogs(const std::filesystem::path& dir) {
-    // Usamos la versión de las funciones de filesystem que recibe un
-    // "error_code": si algo falla, nos lo dice en esa variable en vez de
-    // lanzar una excepción. Dentro del juego preferimos no lanzar nunca.
+    // We use the version of the filesystem functions that takes an
+    // "error_code": if something fails, it tells us in that variable instead of
+    // throwing an exception. Inside the game we'd rather never throw.
     std::error_code ec;
     std::vector<std::filesystem::path> logs;
     for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
@@ -106,7 +106,7 @@ void DeleteOldLogs(const std::filesystem::path& dir) {
         return;
     }
     std::sort(logs.begin(), logs.end());
-    // Dejamos kMaxLogFiles - 1 para hacerle lugar al archivo nuevo.
+    // We keep kMaxLogFiles - 1 to make room for the new file.
     const std::size_t toDelete = logs.size() - (kMaxLogFiles - 1);
     for (std::size_t i = 0; i < toDelete; ++i) {
         std::filesystem::remove(logs[i], ec);
@@ -125,7 +125,7 @@ const char* LevelName(Level level) {
 }  // namespace
 
 bool Init(const std::filesystem::path& logDir, bool withConsole) {
-    // "lock_guard" toma el candado y lo suelta solo al salir de la función.
+    // "lock_guard" takes the lock and releases it by itself when leaving the function.
     std::lock_guard lock(g_mutex);
 
     if (withConsole) {
@@ -136,7 +136,7 @@ bool Init(const std::filesystem::path& logDir, bool withConsole) {
     }
 
     std::error_code ec;
-    std::filesystem::create_directories(logDir, ec);  // no falla si ya existe
+    std::filesystem::create_directories(logDir, ec);  // doesn't fail if it already exists
     DeleteOldLogs(logDir);
 
     const std::string stamp = Timestamp(true);
@@ -144,9 +144,9 @@ bool Init(const std::filesystem::path& logDir, bool withConsole) {
                            std::wstring(stamp.begin(), stamp.end()) +
                            std::wstring(kLogExtension));
 
-    // _wfsopen abre el archivo permitiendo que otros programas (por ejemplo,
-    // el Bloc de notas) lo lean mientras el juego está abierto.
-    // "ab" = agregar al final, en modo binario (escribimos el texto tal cual).
+    // _wfsopen opens the file while letting other programs (for example
+    // Notepad) read it while the game is open.
+    // "ab" = append at the end, in binary mode (we write the text as is).
     g_file = _wfsopen(g_filePath.c_str(), L"ab", _SH_DENYNO);
     if (g_file == nullptr) {
         g_filePath.clear();
@@ -165,16 +165,16 @@ void Shutdown() {
 }
 
 void Write(Level level, std::string_view message) {
-    // Armamos la línea completa fuera del candado, así el candado se mantiene
-    // tomado el menor tiempo posible.
+    // We build the whole line outside the lock, so the lock is held for as
+    // short a time as possible.
     const std::string line =
         std::format("[{}] [{}] {}\n", Timestamp(false), LevelName(level), message);
 
     std::lock_guard lock(g_mutex);
     if (g_file != nullptr) {
         std::fwrite(line.data(), 1, line.size(), g_file);
-        // fflush fuerza a escribir en disco YA. Si el juego crashea un
-        // instante después, la línea igual queda guardada.
+        // fflush forces writing to disk RIGHT NOW. If the game crashes an
+        // instant later, the line is still saved.
         std::fflush(g_file);
     }
     if (g_consoleOut != nullptr) {
@@ -182,7 +182,7 @@ void Write(Level level, std::string_view message) {
         WriteConsoleA(g_consoleOut, line.data(), static_cast<DWORD>(line.size()), &written,
                       nullptr);
     }
-    // También al "depurador" de Windows (se ve con herramientas como DebugView).
+    // Also to the Windows "debugger" (visible with tools like DebugView).
     OutputDebugStringA(line.c_str());
 }
 

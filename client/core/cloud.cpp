@@ -1,5 +1,5 @@
 // =============================================================================
-//  cloud.cpp - Conexión con el servidor de Luma (ver cloud.h)
+//  cloud.cpp - Connection to the Luma server (see cloud.h)
 // =============================================================================
 #include "core/cloud.h"
 
@@ -34,17 +34,17 @@ std::thread g_thread;
 std::atomic<bool> g_quit{false};
 std::mutex g_mutex;
 std::condition_variable g_wake;
-std::string g_token;                                  // el pase de Luma ("" = sin sesión)
-std::vector<std::string> g_pending;                   // nombres para preguntar
-std::map<std::string, ULONGLONG> g_asked;             // nombre (minúsculas) -> cuándo se preguntó
-std::set<std::string> g_luma;                         // nombres (minúsculas) que usan Luma
+std::string g_token;                                  // the Luma pass ("" = not signed in)
+std::vector<std::string> g_pending;                   // names to ask about
+std::map<std::string, ULONGLONG> g_asked;             // name (lowercase) -> when it was asked
+std::set<std::string> g_luma;                         // names (lowercase) that use Luma
 
 std::string Lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
 }
 
-// Lee el pase que dejó el launcher (cifrado con DPAPI: solo tu usuario de Windows lo abre).
+// Reads the pass the launcher left (encrypted with DPAPI: only your Windows user can open it).
 std::string LoadToken() {
     std::ifstream file(paths::DataDir() / L"session.dat", std::ios::binary);
     if (!file) return {};
@@ -60,7 +60,7 @@ std::string LoadToken() {
     return token.size() == 64 ? token : std::string();
 }
 
-// Un pedido HTTPS al servidor. Devuelve el código (0 = sin conexión).
+// One HTTPS request to the server. Returns the status code (0 = no connection).
 int Post(const wchar_t* path, const std::string& body, const std::string& token, std::string* response) {
     HINTERNET session = WinHttpOpen(L"Luma/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                                     WINHTTP_NO_PROXY_BYPASS, 0);
@@ -106,21 +106,21 @@ void Worker() {
         std::lock_guard lock(g_mutex);
         g_token = token;
     }
-    log::Info("Nube: {}", token.empty() ? "sin pase de Luma (inicia sesión con Microsoft en el launcher para aparecer como usuario de Luma)."
-                                        : "pase de Luma encontrado.");
+    log::Info("Cloud: {}", token.empty() ? "no Luma pass (sign in with Microsoft in the launcher to show up as a Luma user)."
+                                        : "Luma pass found.");
     ULONGLONG lastPresence = 0;
     bool loggedPresence = false;
     while (!g_quit.load()) {
-        // 1. "Sigo usando Luma" (al arrancar y cada 5 minutos).
+        // 1. "I'm still using Luma" (at startup and every 5 minutes).
         if (!token.empty() && (lastPresence == 0 || GetTickCount64() - lastPresence >= kPresenceEveryMs)) {
             lastPresence = GetTickCount64();
             const int status = Post(L"/v1/presence", "{}", token, nullptr);
             if (!loggedPresence) {
                 loggedPresence = true;
-                log::Info("Nube: aviso de presencia -> {}", status == 200 ? "ok" : std::to_string(status));
+                log::Info("Cloud: presence ping -> {}", status == 200 ? "ok" : std::to_string(status));
             }
         }
-        // 2. Preguntar por los nombres pendientes (de a muchos juntos).
+        // 2. Ask about the pending names (many at once).
         std::vector<std::string> names;
         {
             std::lock_guard lock(g_mutex);
@@ -132,7 +132,7 @@ void Worker() {
             if (Post(L"/v1/lookup", body.dump(), {}, &response) == 200) {
                 const nlohmann::json reply = nlohmann::json::parse(response, nullptr, false);
                 std::lock_guard lock(g_mutex);
-                for (const std::string& n : names) g_luma.erase(Lower(n));  // los que no vuelven, ya no usan Luma
+                for (const std::string& n : names) g_luma.erase(Lower(n));  // the ones that don't come back no longer use Luma
                 if (reply.is_object() && reply.contains("users") && reply["users"].is_array()) {
                     for (const auto& u : reply["users"]) {
                         if (u.is_object()) g_luma.insert(Lower(u.value("gamertag", std::string())));

@@ -1,12 +1,12 @@
 // =============================================================================
-//  paths.h - Carpetas de datos de Luma
+//  paths.h - Luma's data folders
 // =============================================================================
-//  Todo lo que Luma guarda en disco vive en %APPDATA%\Luma\ :
-//    %APPDATA%\Luma\logs\        -> archivos de log
-//    (más adelante: config, perfiles, waypoints, benchmarks)
+//  Everything Luma saves to disk lives in %APPDATA%\Luma\ :
+//    %APPDATA%\Luma\logs\        -> log files
+//    (also: config, profiles, benchmarks, stats, skins)
 //
-//  %APPDATA% es una carpeta de Windows para datos de programas del usuario,
-//  normalmente C:\Users\<tu usuario>\AppData\Roaming.
+//  %APPDATA% is a Windows folder for the user's program data,
+//  usually C:\Users\<your user>\AppData\Roaming.
 // =============================================================================
 #pragma once
 
@@ -15,20 +15,19 @@
 
 namespace luma::paths {
 
-// Devuelve %APPDATA%\Luma. Si Windows no puede darnos %APPDATA% (muy raro),
-// devuelve una ruta vacía y quien llama decide qué hacer.
+// Returns %APPDATA%\Luma. If Windows can't give us %APPDATA% (very rare),
+// it returns an empty path and the caller decides what to do.
 //
-// "std::filesystem::path" es el tipo de C++ para representar rutas de
-// archivos; se encarga de las barras "\" y de los caracteres especiales.
+// "std::filesystem::path" is the C++ type for file paths; it takes care of
+// the "\" slashes and special characters.
 std::filesystem::path DataDir();
 
-// Devuelve %APPDATA%\Luma\logs (o vacío si DataDir() falla).
+// Returns %APPDATA%\Luma\logs (or empty if DataDir() fails).
 std::filesystem::path LogsDir();
 
-// Convierte una ruta a texto UTF-8 para escribirla en el log.
-// (path.string() de C++ puede lanzar un error si la ruta tiene caracteres
-// que la configuración regional de Windows no sabe representar; esta función
-// nunca falla.)
+// Converts a path to UTF-8 text to write it to the log.
+// (C++'s path.string() can throw an error if the path has characters the
+// Windows regional settings can't represent; this function never fails.)
 std::string ToUtf8(const std::filesystem::path& path);
 
 }  // namespace luma::paths

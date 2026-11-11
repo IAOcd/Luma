@@ -1468,7 +1468,7 @@ void DrawBenchmarkPage() {
         ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", Tr("resumen.csv = one row per test; one .csv per test with every frame."));
+    ImGui::TextDisabled("%s", Tr("summary.csv = one row per test; one .csv per test with every frame."));
 
     // --- Consejos de Windows ---------------------------------------------------
     if (g_windowsInfoDirty) {

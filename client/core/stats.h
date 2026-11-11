@@ -1,32 +1,32 @@
 // =============================================================================
-//  stats.h - Estadísticas de juego y nombre del jugador (para el launcher)
+//  stats.h - Game stats and player name (for the launcher)
 // =============================================================================
-//  Luma anota dos archivos en %APPDATA%\Luma\ que lee el launcher:
+//  Luma writes two files in %APPDATA%\Luma\ that the launcher reads:
 //
 //    stats.json   -> {"sessions": 12, "playSeconds": 45210, "lastPlayed": 1794300000}
-//                    Una "sesión" = una vez que Luma se cargó en el juego. El
-//                    tiempo cuenta solo mientras Luma está cargado. Se guarda
-//                    cada minuto (si el juego se cierra de golpe, se pierde
-//                    como mucho un minuto) y al descargar Luma.
-//    profile.json -> {"name": "TuGamertag", "gameDir": "C:/XboxGames/.../Content"}
-//                    El nombre de tu jugador (en Bedrock es tu gamertag de
-//                    Xbox), leído del juego al entrar a un mundo, y la carpeta
-//                    del juego (el launcher saca de ahí la letra pixelada).
-//    skin.png + skin.json -> tu skin, leída del juego cada 10 s (solo se
-//                    escribe si cambió). Ver sdk/skin.h.
+//                    A "session" = one time Luma was loaded into the game. Time
+//                    only counts while Luma is loaded. It's saved every minute
+//                    (if the game closes abruptly, at most one minute is lost)
+//                    and when Luma unloads.
+//    profile.json -> {"name": "YourGamertag", "gameDir": "C:/XboxGames/.../Content"}
+//                    Your player's name (in Bedrock it's your Xbox gamertag),
+//                    read from the game when you join a world, and the game
+//                    folder (the launcher takes the pixel font from there).
+//    skin.png + skin.json -> your skin, read from the game every 10 s (only
+//                    written if it changed). See sdk/skin.h.
 //
-//  Todo corre en el hilo principal de Luma (el que espera la tecla de
-//  descarga), nunca en el de render: escribir en disco ahí costaría frames.
+//  Everything runs on Luma's main thread (the one that waits for the unload
+//  key), never on the render thread: writing to disk there would cost frames.
 // =============================================================================
 #pragma once
 
 namespace luma::stats {
 
-// Al cargar Luma: cuenta una sesión nueva.
+// When Luma loads: counts a new session.
 void Begin();
-// Cada vuelta del hilo principal (~50 ms): hace algo solo cada tanto.
+// Every loop of the main thread (~50 ms): only does something every so often.
 void Poll();
-// Al descargar Luma: guarda el tiempo que faltaba.
+// When Luma unloads: saves the time still missing.
 void End();
 
 }  // namespace luma::stats

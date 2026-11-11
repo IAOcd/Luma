@@ -1,5 +1,5 @@
 // =============================================================================
-//  clicks.cpp - Implementación del registro de clics
+//  clicks.cpp - Click log implementation
 // =============================================================================
 #include "core/clicks.h"
 
@@ -13,11 +13,11 @@ namespace luma::clicks {
 
 namespace {
 
-// 64 clics por botón es de sobra: nadie hace 64 clics en un segundo.
+// 64 clicks per button is plenty: nobody clicks 64 times in one second.
 constexpr std::size_t kSlots = 64;
 
 struct Ring {
-    std::array<std::atomic<std::int64_t>, kSlots> times{};  // momento de cada clic (ticks)
+    std::array<std::atomic<std::int64_t>, kSlots> times{};  // time of each click (ticks)
     std::atomic<std::uint32_t> next{0};
 };
 
@@ -49,7 +49,7 @@ void Record(Button button) {
 int PerSecond(Button button) {
     const Ring& ring = g_rings[static_cast<std::size_t>(button)];
     const std::int64_t now = perf::Now();
-    const std::int64_t window = perf::g_ticksPerSecond;  // 1 segundo en ticks
+    const std::int64_t window = perf::g_ticksPerSecond;  // 1 second in ticks
     int count = 0;
     for (const auto& t : ring.times) {
         const std::int64_t value = t.load(std::memory_order_relaxed);

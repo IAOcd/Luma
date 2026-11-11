@@ -1,24 +1,24 @@
 // =============================================================================
-//  config.h - Configuración y perfiles de Luma (JSON)
+//  config.h - Luma configuration and profiles (JSON)
 // =============================================================================
-//  Dónde se guarda:
-//    %APPDATA%\Luma\config\luma.json              -> qué perfil está activo
-//    %APPDATA%\Luma\config\profiles\<nombre>.json -> todo lo demás
+//  Where it's stored:
+//    %APPDATA%\Luma\config\luma.json            -> which profile is active
+//    %APPDATA%\Luma\config\profiles\<name>.json -> everything else
 //
-//  Un PERFIL es una configuración completa (módulos activos, sus opciones y
-//  teclas, el tema, las teclas del menú y de descarga). Puedes tener varios
-//  ("PvP", "Survival", ...) y cambiar entre ellos desde el menú.
+//  A PROFILE is a complete configuration (active modules, their options and
+//  keys, the theme, the menu and unload keys). You can have several
+//  ("PvP", "Survival", ...) and switch between them from the menu.
 //
-//  Guardado automático: cuando algo cambia se marca "pendiente de guardar" y
-//  el hilo principal de Luma lo escribe un segundo después (así mover un
-//  slider no escribe el archivo 60 veces por segundo). Se escribe primero a
-//  un archivo temporal y después se reemplaza el real: si el juego se cierra
-//  justo en ese momento, el archivo nunca queda a medio escribir.
+//  Autosave: when something changes it's marked "waiting to be saved" and
+//  Luma's main thread writes it one second later (so moving a slider doesn't
+//  write the file 60 times per second). It first writes to a temporary file
+//  and then replaces the real one: if the game closes right at that moment,
+//  the file is never left half written.
 //
-//  Si un archivo está dañado, se guarda una copia (.corrupto.json), se usan
-//  los valores por defecto y se avisa con un toast. Nunca se crashea.
+//  If a file is damaged, a copy is kept (.corrupt.json), the defaults are
+//  used and a toast warns about it. It never crashes.
 //
-//  HILOS: salvo donde se indique, llamar con luma::StateMutex() tomado.
+//  THREADS: unless stated otherwise, call with luma::StateMutex() held.
 // =============================================================================
 #pragma once
 
@@ -28,39 +28,39 @@
 
 namespace luma::config {
 
-// Teclas globales (dentro del perfil). Atómicas porque las leen la ventana y
-// el hilo principal sin tomar el candado.
+// Global keys (inside the profile). Atomic because the window and the main
+// thread read them without taking the lock.
 extern std::atomic<int> g_menuKey;
 extern std::atomic<int> g_unloadKey;
 
-// Carga el perfil activo (al arrancar, desde el hilo principal).
+// Loads the active profile (at startup, from the main thread).
 void LoadAtStartup();
 
-// Marca que hay cambios para guardar (cualquier hilo, sin candado).
+// Marks that there are changes to save (any thread, no lock).
 void MarkDirty();
 
-// Guarda si hay cambios pendientes desde hace más de 1 s. Hilo principal,
-// SIN el candado tomado (lo toma solo lo justo).
+// Saves if there have been pending changes for more than 1 s. Main thread,
+// WITHOUT the lock held (it takes it only as long as needed).
 void SaveIfDirty();
 
-// Guarda ya (al descargar Luma). Hilo principal, sin el candado tomado.
+// Saves right now (when unloading Luma). Main thread, without the lock held.
 void SaveNow();
 
-// --- Perfiles ------------------------------------------------------------------
+// --- Profiles ------------------------------------------------------------------
 const std::string& ActiveProfile();
 std::vector<std::string> ListProfiles();
 
-// Nombre válido: letras, números, espacios, '-' y '_', de 1 a 32 caracteres.
+// Valid name: letters, numbers, spaces, '-' and '_', 1 to 32 characters.
 bool IsValidProfileName(const std::string& name);
 
-// Guarda el perfil actual y carga otro.
+// Saves the current profile and loads another one.
 bool SwitchProfile(const std::string& name);
-// Crea un perfil nuevo copiando la configuración actual y lo activa.
+// Creates a new profile by copying the current configuration and activates it.
 bool CreateProfile(const std::string& name);
-// Borra un perfil (no el activo).
+// Deletes a profile (not the active one).
 bool DeleteProfile(const std::string& name);
 
-// Vuelve todo a los valores de fábrica en el perfil activo.
+// Resets everything in the active profile to the defaults.
 void ResetActiveProfile();
 
 }  // namespace luma::config

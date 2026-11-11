@@ -1,15 +1,15 @@
 // =============================================================================
-//  cloud.h - Hablar con el servidor de Luma (luma-api.gios-app.workers.dev)
+//  cloud.h - Talking to the Luma server (luma-api.gios-app.workers.dev)
 // =============================================================================
-//  Para que los usuarios de Luma se reconozcan entre sí:
-//    - "Estoy usando Luma": al cargar y cada 5 minutos (si iniciaste sesión
-//      con Microsoft en el launcher: el launcher deja tu "pase de Luma" en
-//      %APPDATA%\Luma\session.dat, cifrado con DPAPI).
-//    - "¿Quién de estos usa Luma?": la lista de jugadores pregunta por los
-//      nombres que ve; la respuesta se guarda unos minutos.
+//  So Luma users can recognize each other:
+//    - "I'm using Luma": when loading and every 5 minutes (if you signed in
+//      with Microsoft in the launcher: the launcher leaves your "Luma pass" in
+//      %APPDATA%\Luma\session.dat, encrypted with DPAPI).
+//    - "Which of these use Luma?": the player list asks about the names it
+//      sees; the answer is kept for a few minutes.
 //
-//  Todo corre en un hilo propio: una conexión lenta nunca traba el juego.
-//  Sin internet, simplemente no hay logos.
+//  Everything runs on its own thread: a slow connection never stalls the game.
+//  Without internet, there are simply no logos.
 // =============================================================================
 #pragma once
 
@@ -21,12 +21,12 @@ namespace luma::cloud {
 void Start();
 void Stop();
 
-// Pide (sin esperar) saber cuáles de estos nombres usan Luma. Los que ya se
-// preguntaron hace poco no se vuelven a preguntar.
+// Asks (without waiting) which of these names use Luma. Names that were
+// asked recently aren't asked again.
 void RequestLookup(const std::vector<std::string>& names);
-// ¿Ese jugador usa Luma? (según la última respuesta del servidor)
+// Does that player use Luma? (according to the server's last answer)
 bool IsLumaUser(const std::string& name);
-// ¿Tienes un pase de Luma (iniciaste sesión con Microsoft en el launcher)?
+// Do you have a Luma pass (did you sign in with Microsoft in the launcher)?
 bool SignedIn();
 
 }  // namespace luma::cloud

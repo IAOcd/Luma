@@ -1,18 +1,19 @@
 // =============================================================================
-//  tr_table.inc - Traducciones de los textos de Luma en el juego
+//  tr_table.inc - Translations of Luma's in-game texts
 // =============================================================================
-//  Una línea por texto: {"español", "English", "Português"}. El español tiene
-//  que ser EXACTAMENTE el texto que aparece en el código (es la clave).
-//  Los textos iguales en los tres idiomas (FPS, CPS, Zoom...) no hace falta
-//  ponerlos. Ver core/tr.h.
+//  One line per text: {"Español", "English", "Português"}. The code writes
+//  the English text (or, in older code, the Spanish one): either must match
+//  EXACTLY the text in the table, because that's how the row is found.
+//  Texts that are the same in all three languages (FPS, CPS, Zoom...) don't
+//  need a row. See core/tr.h.
 // =============================================================================
 
-// --- Categorías ------------------------------------------------------------------
+// --- Categories ------------------------------------------------------------------
 {"Utilidad", "Utility", "Utilidade"},
 {"Mundo", "World", "Mundo"},
 {"Rendimiento", "Performance", "Desempenho"},
 
-// --- Avisos generales ------------------------------------------------------------
+// --- General toasts ------------------------------------------------------------
 {"{}: solo funciona en mundos locales", "{}: only works in local worlds", "{}: só funciona em mundos locais"},
 {"{}: no disponible en esta versión del juego", "{}: not available in this game version", "{}: indisponível nesta versão do jogo"},
 {"{} desactivado: estás en un servidor", "{} turned off: you're on a server", "{} desativado: você está em um servidor"},
@@ -27,7 +28,7 @@
 {"Perfil borrado: {}", "Profile deleted: {}", "Perfil apagado: {}"},
 {"Perfil restablecido a los valores de fábrica", "Profile reset to defaults", "Perfil restaurado para o padrão"},
 
-// --- Teclas ------------------------------------------------------------------------
+// --- Keys ------------------------------------------------------------------------
 {"Ninguna", "None", "Nenhuma"},
 {"Supr", "Delete", "Delete"},
 {"Inicio", "Home", "Home"},
@@ -51,7 +52,7 @@
 {"Clic central", "Middle click", "Clique do meio"},
 {"Tecla 0x{:02X}", "Key 0x{:02X}", "Tecla 0x{:02X}"},
 
-// --- Controles comunes -------------------------------------------------------------
+// --- Common controls -------------------------------------------------------------
 {"Formato", "Format", "Formato"},
 {"Mostrar", "Show", "Mostrar"},
 {"Estilo", "Style", "Estilo"},
@@ -85,7 +86,7 @@
 {"%d bloques", "%d blocks", "%d blocos"},
 {"Esconder en los menús", "Hide in menus", "Esconder nos menus"},
 
-// --- FPS / CPS / Keystrokes / Reloj -----------------------------------------------------
+// --- FPS / CPS / Keystrokes / Clock -----------------------------------------------------
 {"Muestra los cuadros por segundo del juego.", "Shows the game's frames per second.", "Mostra os quadros por segundo do jogo."},
 {"Mostrar el frametime", "Show frametime", "Mostrar o frametime"},
 {"(ms por cuadro)", "(ms per frame)", "(ms por quadro)"},
@@ -117,7 +118,7 @@
 {"Fecha", "Date", "Data"},
 {"Sin fecha", "No date", "Sem data"},
 
-// --- Armadura / ítems ---------------------------------------------------------------
+// --- Armor / items ---------------------------------------------------------------
 {"Armadura", "Armor", "Armadura"},
 {"Tu armadura (y lo que tienes en las manos) con su ícono y su durabilidad.", "Your armor (and what you hold) with its icon and durability.", "Sua armadura (e o que você segura) com ícone e durabilidade."},
 {"Diseño", "Layout", "Layout"},
@@ -166,7 +167,7 @@
 {"También la armadura", "Armor too", "Também a armadura"},
 {"Con sonido", "With sound", "Com som"},
 
-// --- Muñeco ----------------------------------------------------------------------------
+// --- Paper doll ----------------------------------------------------------------------
 {"Muñeco movible", "Movable paper doll", "Boneco móvel"},
 {"Mueve y agranda el muñeco de tu personaje que muestra el juego al correr, agacharte o volar.", "Moves and resizes the character doll the game shows when you sprint, sneak or fly.", "Move e aumenta o boneco do personagem que o jogo mostra ao correr, agachar ou voar."},
 {"(corre para verlo)", "(sprint to see it)", "(corra para ver)"},
@@ -174,7 +175,7 @@
 {"(sin tener que correr ni agacharte)", "(without sprinting or sneaking)", "(sem precisar correr ou agachar)"},
 {"El muñeco lo dibuja el juego: Luma solo lo mueve y cambia su tamaño. Muévelo y agrándalo desde el editor de HUD.", "The game draws the doll: Luma only moves and resizes it. Move and resize it from the HUD editor.", "O jogo desenha o boneco: o Luma só move e muda o tamanho. Mova e aumente pelo editor de HUD."},
 
-// --- Coordenadas / brújula / velocidad / ping ----------------------------------------------
+// --- Coordinates / compass / speed / ping ----------------------------------------------
 {"Norte (-Z)", "North (-Z)", "Norte (-Z)"},
 {"Este (+X)", "East (+X)", "Leste (+X)"},
 {"Sur (+Z)", "South (+Z)", "Sul (+Z)"},
@@ -203,13 +204,13 @@
 {"Color según el ping", "Color by ping", "Cor pelo ping"},
 {"\"Mundo local\" sin servidor", "\"Local world\" without a server", "\"Mundo local\" sem servidor"},
 
-// --- Scoreboard movible ---------------------------------------------------------------
+// --- Movable scoreboard ---------------------------------------------------------------
 {"Scoreboard movible", "Movable scoreboard", "Placar móvel"},
 {"Mueve el scoreboard (la tabla de puntos de los servidores y minijuegos) a donde quieras con el editor de HUD.", "Moves the scoreboard (the score table of servers and minigames) wherever you want with the HUD editor.", "Move o placar (a tabela de pontos dos servidores e minijogos) para onde quiser com o editor de HUD."},
 {"(aparece cuando un servidor muestra uno)", "(shows up when a server displays one)", "(aparece quando um servidor mostra um)"},
 {"El scoreboard lo dibuja el juego: Luma solo lo mueve. Arrástralo desde el editor de HUD. También funciona con los scoreboards propios de algunos servidores.", "The game draws the scoreboard: Luma only moves it. Drag it from the HUD editor. It also works with some servers' own scoreboards.", "O jogo desenha o placar: o Luma só move. Arraste pelo editor de HUD. Também funciona com placares próprios de alguns servidores."},
 
-// --- Lista de jugadores ------------------------------------------------------------------
+// --- Player list ------------------------------------------------------------------
 {"Lista de jugadores", "Player list", "Lista de jogadores"},
 {"Mantén Tab para ver los jugadores con sus caras, el servidor y tu ping; con el logo de Luma en quienes lo usan.", "Hold Tab to see the players with their faces, the server and your ping, with the Luma logo on those who use it.", "Segure Tab para ver os jogadores com seus rostos, o servidor e seu ping, com o logo do Luma em quem usa."},
 {"Servidor y ping arriba", "Server and ping on top", "Servidor e ping no topo"},
@@ -217,7 +218,7 @@
 {"Usuarios de Luma primero", "Luma users first", "Usuários do Luma primeiro"},
 {"Se abre manteniendo Tab. El logo de Luma aparece en quienes usan Luma e iniciaron sesión con Microsoft en el launcher. El ping de los demás no se puede ver: Bedrock no lo manda.", "Opens while you hold Tab. The Luma logo shows on players who use Luma and signed in with Microsoft in the launcher. Other players' ping can't be shown: Bedrock doesn't send it.", "Abre enquanto você segura Tab. O logo do Luma aparece em quem usa o Luma e entrou com a Microsoft no launcher. O ping dos outros não aparece: o Bedrock não envia."},
 
-// --- Marca de agua / overlay -----------------------------------------------------------------
+// --- Watermark / overlay -----------------------------------------------------------------
 {"Marca de agua", "Watermark", "Marca d'água"},
 {"Muestra el logo y el nombre de Luma en pantalla.", "Shows Luma's logo and name on screen.", "Mostra o logo e o nome do Luma na tela."},
 {"Versión", "Version", "Versão"},
@@ -231,7 +232,7 @@
 {"Frames en el gráfico", "Frames in the graph", "Quadros no gráfico"},
 {"Con un elemento del HUD activo, Luma dibuja cada frame y su costo sube un poco.", "With a HUD element on, Luma draws every frame and its cost goes up a little.", "Com um elemento do HUD ativo, o Luma desenha cada quadro e o custo sobe um pouco."},
 
-// --- Optimizaciones -----------------------------------------------------------------------
+// --- Optimizations -----------------------------------------------------------------------
 {"Prioridad del proceso", "Process priority", "Prioridade do processo"},
 {"Windows le da a Minecraft la CPU antes que a otros programas. \"Por encima de lo normal\" es seguro; \"Alta\" puede hacer que otros programas (Discord, el navegador) vayan lentos.", "Windows gives Minecraft the CPU before other programs. \"Above normal\" is safe; \"High\" can make other programs (Discord, the browser) slow.", "O Windows dá a CPU ao Minecraft antes de outros programas. \"Acima do normal\" é seguro; \"Alta\" pode deixar outros programas (Discord, o navegador) lentos."},
 {"Sobre lo normal", "Above normal", "Acima do normal"},
@@ -245,7 +246,7 @@
 {"La más alta", "Highest", "A mais alta"},
 {"Todavía no se vio el hilo de render.", "The render thread hasn't been seen yet.", "A thread de render ainda não foi vista."},
 
-// --- Mouse / teclas ----------------------------------------------------------------------
+// --- Mouse / keys ----------------------------------------------------------------------
 {"Desactivar la rueda", "Disable scroll wheel", "Desativar a roda"},
 {"Mientras juegas, la rueda del mouse no cambia de ranura en la barra rápida.", "While playing, the mouse wheel doesn't change the hotbar slot.", "Enquanto você joga, a roda do mouse não muda o slot da barra rápida."},
 {"Multiplicador de sensibilidad", "Sensitivity multiplier", "Multiplicador de sensibilidade"},
@@ -263,7 +264,7 @@
 {"Tiene que ser la misma tecla que usas en el juego (Opciones > Controles).", "It has to be the same key you use in the game (Settings > Controls).", "Tem que ser a mesma tecla que você usa no jogo (Configurações > Controles)."},
 {"Texto en el HUD", "Text on the HUD", "Texto no HUD"},
 
-// --- Cámara ---------------------------------------------------------------------------------
+// --- Camera ---------------------------------------------------------------------------------
 {"Ves todo iluminado aunque sea de noche o estés en una cueva.", "See everything lit up, even at night or in a cave.", "Veja tudo iluminado, mesmo à noite ou numa caverna."},
 {"Brillo", "Brightness", "Brilho"},
 {"El brillo máximo del juego es 1. Con 10 o más, las cuevas se ven como de día.", "The game's maximum brightness is 1. At 10 or more, caves look like daytime.", "O brilho máximo do jogo é 1. Com 10 ou mais, as cavernas parecem de dia."},
@@ -301,7 +302,7 @@
 {"Campo de visión", "Field of view", "Campo de visão"},
 {"Vertical, en grados. Reemplaza el del juego (también el efecto de correr).", "Vertical, in degrees. Replaces the game's (also the sprint effect).", "Vertical, em graus. Substitui o do jogo (também o efeito de correr)."},
 
-// --- Mira ------------------------------------------------------------------------------------
+// --- Crosshair ------------------------------------------------------------------------------------
 {"Mira personalizada", "Custom crosshair", "Mira personalizada"},
 {"Tu propia mira en el centro: una forma o una que pintas píxel por píxel, con colores o rainbow. Esconde la mira del juego.", "Your own crosshair in the center: a shape or one you paint pixel by pixel, with colors or rainbow. Hides the game's crosshair.", "Sua própria mira no centro: uma forma ou uma que você pinta pixel por pixel, com cores ou rainbow. Esconde a mira do jogo."},
 {"Esconder la mira del juego", "Hide the game's crosshair", "Esconder a mira do jogo"},
@@ -341,7 +342,7 @@
 {"Contorno", "Outline", "Contorno"},
 {"(se ve sobre fondos claros)", "(visible on light backgrounds)", "(aparece em fundos claros)"},
 
-// --- Post-procesado -------------------------------------------------------------------------
+// --- Post-processing -------------------------------------------------------------------------
 {"Vívido", "Vivid", "Vívido"},
 {"Cálido", "Warm", "Quente"},
 {"Frío", "Cold", "Frio"},
@@ -362,7 +363,7 @@
 {"Volver a neutral", "Back to neutral", "Voltar ao neutro"},
 {"También cambia la interfaz del juego (barra, chat). El menú y el HUD de Luma no.", "It also changes the game's UI (hotbar, chat). Luma's menu and HUD don't change.", "Também muda a interface do jogo (barra, chat). O menu e o HUD do Luma não."},
 
-// --- Dibujo en el mundo -----------------------------------------------------------------------
+// --- Drawing in the world -----------------------------------------------------------------------
 {"Contorno de bloque", "Block outline", "Contorno de bloco"},
 {"Cambia el contorno del bloque que miras: su color y un relleno opcional.", "Changes the outline of the block you look at: its color and an optional fill.", "Muda o contorno do bloco que você olha: a cor e um preenchimento opcional."},
 {"Color de la línea", "Line color", "Cor da linha"},
@@ -391,7 +392,7 @@
 {"Color de los vecinos", "Neighbor color", "Cor dos vizinhos"},
 {"Se dibujan dentro del mundo: las paredes los tapan.", "Drawn inside the world: walls cover them.", "Desenhados dentro do mundo: as paredes cobrem."},
 
-// --- Editor de HUD y estilo de cada elemento -------------------------------------------------
+// --- HUD editor and per-element style -------------------------------------------------
 {"Editor de HUD", "HUD editor", "Editor de HUD"},
 {"Arrastra para mover · esquinas o rueda: tamaño · clic derecho: opciones · Shift: sin imanes", "Drag to move · corners or wheel: size · right click: options · Shift: no snapping", "Arraste para mover · cantos ou roda: tamanho · clique direito: opções · Shift: sem ímãs"},
 {"Imanes", "Snapping", "Ímãs"},
@@ -413,6 +414,6 @@
 {"Copiar el estilo de Tema", "Copy the Appearance style", "Copiar o estilo de Aparência"},
 
 // =============================================================================
-//  Menú de Luma (render/menu.cpp)
+//  Luma menu (render/menu.cpp)
 // =============================================================================
 #include "core/tr_menu.inc"

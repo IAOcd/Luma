@@ -1,24 +1,23 @@
 // =============================================================================
-//  hooks.h - Envoltorio sobre MinHook
+//  hooks.h - Wrapper over MinHook
 // =============================================================================
-//  ¿Qué es un hook? Es "interceptar" una función: cada vez que el juego la
-//  llama, primero se ejecuta NUESTRA función (el "detour"), que puede hacer
-//  algo y después llamar a la función original (a través del "trampolín"
-//  que MinHook nos da).
+//  What's a hook? It "intercepts" a function: every time the game calls it,
+//  OUR function (the "detour") runs first, and it can do something and then
+//  call the original function (through the "trampoline" MinHook gives us).
 //
-//      juego --llama--> Present  ==hook==>  nuestro detour
-//                                             | dibuja Luma
+//      game --calls--> Present  ==hook==>  our detour
+//                                             | draws Luma
 //                                             v
-//                                           trampolín --> Present original
+//                                           trampoline --> original Present
 //
-//  MinHook lo logra reescribiendo los primeros bytes de la función original
-//  con un salto hacia nuestro detour. Al desactivar el hook, restaura esos
-//  bytes y todo vuelve a quedar como estaba.
+//  MinHook does this by rewriting the first bytes of the original function
+//  with a jump to our detour. When the hook is disabled, it restores those
+//  bytes and everything is back the way it was.
 //
-//  Este archivo además lleva la cuenta de cuántos hilos están DENTRO de algún
-//  detour en este momento. Al descargar Luma hay que esperar a que esa cuenta
-//  llegue a 0: si quitáramos la DLL de la memoria mientras un hilo del juego
-//  todavía está ejecutando nuestro código, el juego crashearía.
+//  This file also keeps count of how many threads are INSIDE some detour
+//  right now. When unloading Luma we have to wait for that count to reach 0:
+//  if we removed the DLL from memory while a game thread was still running
+//  our code, the game would crash.
 // =============================================================================
 #pragma once
 
@@ -26,39 +25,39 @@
 
 namespace luma::hooks {
 
-// Prepara MinHook. Llamar una vez al arrancar.
+// Sets up MinHook. Call once at startup.
 bool Init();
 
-// Crea un hook (todavía desactivado).
-//   target   -> la función a interceptar.
-//   detour   -> nuestra función de reemplazo.
-//   original -> aquí MinHook escribe la dirección del trampolín, que usamos
-//               para llamar a la función original.
-//   name     -> nombre para el log.
+// Creates a hook (still disabled).
+//   target   -> the function to intercept.
+//   detour   -> our replacement function.
+//   original -> MinHook writes the trampoline's address here, which we use
+//               to call the original function.
+//   name     -> name for the log.
 bool Create(void* target, void* detour, void** original, const char* name);
 
-// Activa / desactiva todos los hooks creados.
+// Enables / disables every hook created.
 bool EnableAll();
 
-// Activa un solo hook (para hooks que se crean más tarde, con Luma ya
-// funcionando).
+// Enables a single hook (for hooks created later, with Luma already
+// running).
 bool Enable(void* target, const char* name);
 void DisableAll();
 
-// Espera a que ningún hilo esté dentro de un detour. Ver ActiveCallGuard.
+// Waits until no thread is inside a detour. See ActiveCallGuard.
 void WaitForActiveCalls();
 
-// Libera MinHook (quita los hooks del todo). Llamar después de DisableAll y
+// Releases MinHook (removes the hooks completely). Call after DisableAll and
 // WaitForActiveCalls.
 void Shutdown();
 
-// --- Contador de llamadas activas ---------------------------------------------
-// Cada detour crea uno de estos al empezar. El constructor suma 1 al contador
-// y el destructor (que C++ llama automáticamente al salir de la función, por
-// cualquier camino) resta 1.
+// --- Active call counter ------------------------------------------------------
+// Every detour creates one of these when it starts. The constructor adds 1 to
+// the counter and the destructor (which C++ calls automatically when leaving
+// the function, whichever way it leaves) subtracts 1.
 //
-// "std::atomic" es un número que varios hilos pueden modificar a la vez sin
-// corromperlo.
+// "std::atomic" is a number several threads can modify at the same time
+// without corrupting it.
 extern std::atomic<int> g_activeCalls;
 
 struct ActiveCallGuard {

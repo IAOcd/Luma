@@ -1,5 +1,5 @@
 // =============================================================================
-//  stats.cpp - Implementación de las estadísticas (ver stats.h)
+//  stats.cpp - Stats implementation (see stats.h)
 // =============================================================================
 #include "core/stats.h"
 
@@ -32,24 +32,24 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr ULONGLONG kSaveEveryMs = 60'000;   // estadísticas: cada minuto
-constexpr ULONGLONG kNameEveryMs = 5'000;    // nombre: revisar cada 5 s
-constexpr ULONGLONG kSkinEveryMs = 10'000;   // skin: revisar cada 10 s
+constexpr ULONGLONG kSaveEveryMs = 60'000;   // stats: every minute
+constexpr ULONGLONG kNameEveryMs = 5'000;    // name: check every 5 s
+constexpr ULONGLONG kSkinEveryMs = 10'000;   // skin: check every 10 s
 
 std::int64_t g_sessions = 0;
-std::int64_t g_playSeconds = 0;     // lo que ya estaba guardado + lo sumado
-ULONGLONG g_lastCount = 0;          // desde cuándo falta sumar tiempo
+std::int64_t g_playSeconds = 0;     // what was already saved + what was added
+ULONGLONG g_lastCount = 0;          // since when time still needs to be added
 ULONGLONG g_lastSave = 0;
 ULONGLONG g_lastNameCheck = 0;
 std::string g_lastName;
 bool g_begun = false;
 ULONGLONG g_lastSkinCheck = 0;
-std::uint64_t g_lastSkinHash = 0;               // Begin() ya corrió (si Luma no arrancó, no se cuenta nada)
+std::uint64_t g_lastSkinHash = 0;               // Begin() already ran (if Luma didn't start, nothing is counted)
 
 fs::path StatsPath() { return paths::DataDir() / L"stats.json"; }
 fs::path ProfilePath() { return paths::DataDir() / L"profile.json"; }
 
-// Escribir seguro: primero a ".tmp", después reemplazar (nunca queda a medias).
+// Safe write: first to ".tmp", then replace (it's never left half written).
 void WriteJson(const fs::path& path, const nlohmann::json& json) {
     if (path.empty()) {
         return;
@@ -79,20 +79,20 @@ nlohmann::json ReadJson(const fs::path& path) {
     return json.is_object() ? json : nlohmann::json::object();
 }
 
-// Suma el tiempo pasado desde la última vez y guarda.
+// Adds the time elapsed since last time and saves.
 void Save() {
     const ULONGLONG now = GetTickCount64();
     g_playSeconds += static_cast<std::int64_t>((now - g_lastCount) / 1000);
-    g_lastCount = now - (now - g_lastCount) % 1000;  // los milisegundos sobrantes, para la próxima
+    g_lastCount = now - (now - g_lastCount) % 1000;  // the leftover milliseconds, for next time
     g_lastSave = now;
     nlohmann::json json = ReadJson(StatsPath());
     json["sessions"] = g_sessions;
     json["playSeconds"] = g_playSeconds;
-    json["lastPlayed"] = static_cast<std::int64_t>(std::time(nullptr));  // segundos desde 1970 (hora UTC)
+    json["lastPlayed"] = static_cast<std::int64_t>(std::time(nullptr));  // seconds since 1970 (UTC)
     WriteJson(StatsPath(), json);
 }
 
-// ¿Parece un gamertag? (1 a 32 caracteres visibles; si leímos basura, no)
+// Does it look like a gamertag? (1 to 32 visible characters; if we read garbage, no)
 bool LooksLikeName(const char* name) {
     const std::size_t length = std::strlen(name);
     if (length == 0 || length > 32) {
@@ -121,19 +121,19 @@ void CheckName() {
     nlohmann::json json = ReadJson(ProfilePath());
     json["name"] = g_lastName;
     WriteJson(ProfilePath(), json);
-    log::Info("Perfil: nombre del jugador guardado para el launcher.");
+    log::Info("Profile: player name saved for the launcher.");
 }
 
-// --- La skin (para el launcher) ------------------------------------------------
-// Guarda los píxeles RGBA como PNG con WIC (el codificador de imágenes de Windows).
+// --- The skin (for the launcher) -------------------------------------------------
+// Saves the RGBA pixels as a PNG with WIC (Windows' image encoder).
 bool WritePng(const fs::path& path, const sdk::skin::Image& image) {
-    CoInitializeEx(nullptr, COINIT_MULTITHREADED);  // (si ya estaba, no pasa nada)
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);  // (if it already existed, nothing happens)
     IWICImagingFactory* factory = nullptr;
     IWICStream* stream = nullptr;
     IWICBitmapEncoder* encoder = nullptr;
     IWICBitmapFrameEncode* frame = nullptr;
-    // El codificador PNG de Windows quiere los píxeles como BGRA (azul primero):
-    // los damos vuelta (la skin del juego viene como RGBA).
+    // Windows' PNG encoder wants the pixels as BGRA (blue first):
+    // we swap them (the game's skin comes as RGBA).
     std::vector<std::uint8_t> bgra(image.rgba);
     for (std::size_t i = 0; i + 3 < bgra.size(); i += 4) {
         std::swap(bgra[i], bgra[i + 2]);
@@ -161,14 +161,14 @@ void CheckSkin() {
     if (!sdk::skin::ReadLocal(image)) {
         return;
     }
-    // ¿Cambió? (una "huella" de los píxeles: si es la misma, no se escribe nada)
+    // Did it change? (a "fingerprint" of the pixels: if it's the same, nothing is written)
     std::uint64_t hash = 0xCBF29CE484222325ull;
     for (std::uint8_t b : image.rgba) hash = (hash ^ b) * 0x100000001B3ull;
     if (hash == g_lastSkinHash) {
         return;
     }
     g_lastSkinHash = hash;
-    render::skinheads::SetOwn(image.rgba.data(), image.width, image.height);  // la cara del menú radial
+    render::skinheads::SetOwn(image.rgba.data(), image.width, image.height);  // the radial menu's face
     std::error_code ec;
     fs::create_directories(paths::DataDir(), ec);
     fs::path temp = paths::DataDir() / L"skin.png.tmp";
@@ -177,7 +177,7 @@ void CheckSkin() {
         static bool warned = false;
         if (!warned) {
             warned = true;
-            log::Warn("Skin: se leyó ({}x{}) pero no se pudo guardar el PNG.", image.width, image.height);
+            log::Warn("Skin: read ({}x{}) but the PNG couldn't be saved.", image.width, image.height);
         }
         return;
     }
@@ -186,10 +186,10 @@ void CheckSkin() {
     json["height"] = image.height;
     json["id"] = image.id;
     WriteJson(paths::DataDir() / L"skin.json", json);
-    log::Info("Skin: guardada para el launcher ({}x{}).", image.width, image.height);
+    log::Info("Skin: saved for the launcher ({}x{}).", image.width, image.height);
 }
 
-// La carpeta del juego (para que el launcher encuentre su letra pixelada).
+// The game folder (so the launcher can find its pixel font).
 void SaveGameDir() {
     wchar_t exe[MAX_PATH * 2];
     const DWORD length = GetModuleFileNameW(nullptr, exe, static_cast<DWORD>(std::size(exe)));
@@ -208,7 +208,7 @@ void Begin() {
     g_begun = true;
     Save();
     SaveGameDir();
-    // Tu cara para el menú desde la última skin guardada (antes de entrar a un mundo).
+    // Your face for the menu from the last saved skin (before joining a world).
     render::skinheads::LoadOwnFromFile((paths::DataDir() / L"skin.png").native());
 }
 

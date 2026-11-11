@@ -1,22 +1,22 @@
 // =============================================================================
-//  logger.h - Registro de mensajes (log) de Luma
+//  logger.h - Luma's message log
 // =============================================================================
-//  El log es un archivo de texto donde Luma anota lo que va haciendo:
-//  "cargado", "hook instalado", "firma no encontrada", etc. Es nuestra
-//  herramienta principal para entender qué pasó si algo falla dentro del
-//  juego, donde no podemos usar un depurador fácilmente.
+//  The log is a text file where Luma writes down what it's doing:
+//  "loaded", "hook installed", "signature not found", etc. It's our main
+//  tool to understand what happened if something fails inside the game,
+//  where we can't easily use a debugger.
 //
-//  Uso:
-//      luma::log::Info("Luma {} cargado", luma::kVersion);
-//      luma::log::Warn("No se encontró la firma {}", nombre);
-//      luma::log::Error("Fallo al crear el hook: {}", codigo);
+//  Usage:
+//      luma::log::Info("Luma {} loaded", luma::kVersion);
+//      luma::log::Warn("Signature {} not found", name);
+//      luma::log::Error("Failed to create the hook: {}", code);
 //
-//  Las llaves {} se reemplazan por los valores que vienen después, en orden
-//  (esto lo hace std::format, parte de C++20).
+//  The {} braces are replaced by the values that follow, in order
+//  (std::format does this, part of C++20).
 //
-//  RENDIMIENTO: cada mensaje arma un texto y lo escribe en disco al instante.
-//  Eso cuesta del orden de microsegundos: está bien para eventos (cargar,
-//  descargar, errores), pero NUNCA debe llamarse en cada frame o en cada tick.
+//  PERFORMANCE: every message builds a text and writes it to disk right away.
+//  That costs on the order of microseconds: fine for events (load, unload,
+//  errors), but it must NEVER be called every frame or every tick.
 // =============================================================================
 #pragma once
 
@@ -27,31 +27,31 @@
 
 namespace luma::log {
 
-// "enum class" = una lista cerrada de opciones con nombre.
+// "enum class" = a closed list of named options.
 enum class Level { Info, Warn, Error };
 
-// Abre un archivo de log nuevo en "logDir" (creando la carpeta si hace
-// falta) y borra los más viejos para que nunca haya más de 10.
-// Si "withConsole" es true, también abre una ventana de consola donde se ve
-// el log en vivo.
-// Devuelve false si no pudo abrir el archivo (Luma sigue funcionando igual,
-// solo que sin log en disco).
+// Opens a new log file in "logDir" (creating the folder if needed) and
+// deletes the oldest ones so there are never more than 10.
+// If "withConsole" is true, it also opens a console window showing the
+// log live.
+// Returns false if it couldn't open the file (Luma keeps working the same,
+// just without a log on disk).
 bool Init(const std::filesystem::path& logDir, bool withConsole);
 
-// Cierra el archivo y la consola. Después de esto, los mensajes se ignoran.
+// Closes the file and the console. After this, messages are ignored.
 void Shutdown();
 
-// Escribe una línea ya armada. Normalmente se usan Info/Warn/Error de abajo.
+// Writes an already built line. Normally the Info/Warn/Error below are used.
 void Write(Level level, std::string_view message);
 
-// Ruta del archivo de log actual (vacía si no hay).
+// Path of the current log file (empty if there's none).
 const std::filesystem::path& CurrentFile();
 
-// --- Atajos con formato -------------------------------------------------------
-// "template" permite que una misma función acepte argumentos de cualquier
-// tipo y cantidad. std::format_string además revisa EN TIEMPO DE COMPILACIÓN
-// que la cantidad de {} coincida con la de argumentos: un error ahí no llega
-// nunca al juego.
+// --- Formatting shortcuts -----------------------------------------------------
+// "template" lets a single function accept arguments of any type and
+// count. std::format_string also checks AT COMPILE TIME that the number of
+// {} matches the number of arguments: a mistake there never reaches
+// the game.
 template <class... Args>
 void Info(std::format_string<Args...> fmt, Args&&... args) {
     Write(Level::Info, std::format(fmt, std::forward<Args>(args)...));

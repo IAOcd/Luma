@@ -1,5 +1,5 @@
 // =============================================================================
-//  keys.cpp - Nombres de teclas
+//  keys.cpp - Key names
 // =============================================================================
 #include "core/keys.h"
 #include "core/tr.h"
@@ -14,7 +14,7 @@ std::string Name(int vk) {
     if (vk == kNone) {
         return Tr("None");
     }
-    // Letras y números: su código coincide con el carácter ASCII.
+    // Letters and numbers: their code matches the ASCII character.
     if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) {
         return std::string(1, static_cast<char>(vk));
     }

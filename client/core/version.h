@@ -1,22 +1,22 @@
 // =============================================================================
-//  version.h - Datos básicos de Luma
+//  version.h - Basic Luma data
 // =============================================================================
-//  Un archivo ".h" (header o cabecera) contiene declaraciones que otros
-//  archivos pueden incluir con #include. Aquí guardamos el nombre y la versión
-//  para no escribirlos a mano en varios lugares.
+//  A ".h" file (header) holds declarations other files can include with
+//  #include. Here we keep the name and the version so we don't type them by
+//  hand in several places.
 // =============================================================================
 
-// "#pragma once" evita que este archivo se incluya dos veces en la misma
-// compilación (lo que causaría errores de "definido dos veces").
+// "#pragma once" stops this file from being included twice in the same
+// compilation (which would cause "defined twice" errors).
 #pragma once
 
-// Un "namespace" agrupa nombres bajo un prefijo. Todo lo nuestro vive dentro
-// de "luma", así que esto se usa como luma::kName y nunca choca con nombres
-// de Windows o de otras bibliotecas.
+// A "namespace" groups names under a prefix. Everything of ours lives inside
+// "luma", so this is used as luma::kName and never clashes with names from
+// Windows or other libraries.
 namespace luma {
 
-// "inline constexpr" = una constante conocida al compilar, sin costo en
-// tiempo de ejecución. La "k" inicial es una convención para constantes.
+// "inline constexpr" = a constant known at compile time, with no runtime
+// cost. The leading "k" is a convention for constants.
 inline constexpr const char* kName = "Luma";
 inline constexpr const char* kVersion = "0.3.0";
 

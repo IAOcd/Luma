@@ -1,33 +1,33 @@
 // =============================================================================
-//  benchmark.h - Modo benchmark: medir FPS de forma comparable
+//  benchmark.h - Benchmark mode: measuring FPS in a comparable way
 // =============================================================================
-//  Graba el frametime de CADA frame durante un tiempo fijo y calcula:
+//  Records the frametime of EVERY frame for a fixed time and calculates:
 //
-//    - FPS promedio: frames / segundos.
-//    - 1% low: el FPS "de los peores momentos". Se toman el 1% de frames
-//      más lentos, se promedia su frametime y se pasa a FPS. Si el promedio
-//      es 120 pero el 1% low es 40, el juego da tirones aunque el promedio
-//      se vea bien. (0.1% low: lo mismo con el 0,1% peor.)
-//    - Frametime promedio, percentil 99 (el 99% de los frames tardó menos
-//      que esto) y máximo.
-//    - Costo de Luma promedio por frame.
+//    - Average FPS: frames / seconds.
+//    - 1% low: the FPS "of the worst moments". It takes the slowest 1% of
+//      frames, averages their frametime and turns it into FPS. If the average
+//      is 120 but the 1% low is 40, the game stutters even though the average
+//      looks good. (0.1% low: the same with the worst 0.1%.)
+//    - Average frametime, 99th percentile (99% of the frames took less than
+//      this) and max.
+//    - Average Luma cost per frame.
 //
-//  Y lo exporta a %APPDATA%\Luma\benchmarks\:
-//    - <fecha>_<nombre>.csv : un renglón por frame (para graficar).
-//    - resumen.csv          : un renglón por prueba (para comparar).
-//  Los CSV usan el separador y la coma decimal de TU Windows, así Excel los
-//  abre bien a la primera.
+//  And exports it to %APPDATA%\Luma\benchmarks\:
+//    - <date>_<name>.csv : one row per frame (to chart).
+//    - summary.csv       : one row per test (to compare).
+//  The CSVs use YOUR Windows list separator and decimal comma, so Excel
+//  opens them right the first time.
 //
-//  Para que los números sean comparables:
-//    - La grabación empieza tras una cuenta regresiva (para que cierres el
-//      menú y no haya avisos en pantalla, que cuestan).
-//    - Si abres el menú durante la prueba, se cancela.
-//    - Modo "Luma en reposo": durante la prueba Luma no dibuja nada (ni el
-//      HUD). Su costo baja a ~0,001 ms por frame: es lo más parecido a "sin
-//      Luma" que se puede medir desde dentro del juego.
+//  So the numbers are comparable:
+//    - Recording starts after a countdown (so you close the menu and there
+//      are no toasts on screen, which cost something).
+//    - If you open the menu during the test, it's canceled.
+//    - "Luma idle" mode: during the test Luma draws nothing (not even the
+//      HUD). Its cost drops to ~0.001 ms per frame: it's the closest thing to
+//      "without Luma" that can be measured from inside the game.
 //
-//  HILOS: OnFrame en el hilo de render; Poll en el hilo principal de Luma;
-//  el resto desde el menú.
+//  THREADS: OnFrame on the render thread; Poll on Luma's main thread;
+//  the rest from the menu.
 // =============================================================================
 #pragma once
 
@@ -43,8 +43,8 @@ enum class Mode { WithHud = 0, Resting = 1 };
 struct Result {
     std::string label;
     std::string date;            // "2026-11-09 15:30:12"
-    std::string mode;            // "con HUD" / "en reposo"
-    std::string optimizations;   // optimizaciones activas durante la prueba
+    std::string mode;            // "with HUD" / "idle"
+    std::string optimizations;   // optimizations active during the test
     double seconds = 0.0;
     std::uint64_t frames = 0;
     double averageFps = 0.0;
@@ -57,27 +57,27 @@ struct Result {
     std::string csvPath;
 };
 
-// Empieza una prueba de "seconds" segundos tras "countdown" segundos.
-// Devuelve false si ya hay una en curso.
+// Starts a test of "seconds" seconds after "countdown" seconds.
+// Returns false if one is already running.
 bool Start(double seconds, double countdown, std::string label, Mode mode, std::string optimizations);
 void Cancel(const char* reason);
 
 State GetState();
-// Segundos que faltan (de la cuenta regresiva o de la grabación).
+// Seconds left (of the countdown or of the recording).
 double SecondsLeft();
 
-// ¿Luma debe dejar de dibujar? (modo "en reposo" durante la prueba). Barato:
-// una lectura atómica, se consulta en el camino rápido del overlay.
+// Should Luma stop drawing? ("idle" mode during the test). Cheap:
+// one atomic read, checked on the overlay's fast path.
 bool SuppressDrawing();
 
-// Un frame (hilo de render, desde perf::RecordFrame). No pide memoria.
+// One frame (render thread, from perf::RecordFrame). Doesn't allocate memory.
 void OnFrame(std::int64_t frameStart, float frameMs, float costUs);
 
-// Hilo principal de Luma, cada 50 ms: termina las pruebas (cálculos y CSV
-// fuera del hilo de render) y cancela si se abrió el menú.
+// Luma's main thread, every 50 ms: finishes the tests (calculations and CSV
+// outside the render thread) and cancels if the menu was opened.
 void Poll();
 
-// Las pruebas de esta sesión (la más nueva al final).
+// This session's tests (the newest last).
 std::vector<Result> Results();
 
 }  // namespace luma::perf::benchmark

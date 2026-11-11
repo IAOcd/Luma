@@ -1,5 +1,5 @@
 // =============================================================================
-//  benchmark.cpp - Implementación del modo benchmark
+//  benchmark.cpp - Benchmark mode implementation
 // =============================================================================
 #include "perf/benchmark.h"
 
@@ -24,23 +24,23 @@ namespace luma::perf::benchmark {
 
 namespace {
 
-// Tope de frames por segundo que podemos guardar (de sobra: 2000 FPS).
+// Cap on frames per second we can store (plenty: 2000 FPS).
 constexpr double kMaxFps = 2000.0;
 constexpr double kMaxSeconds = 600.0;
 
 std::atomic<State> g_state{State::Idle};
 std::atomic<bool> g_suppress{false};
 
-// Los datos de la prueba. Se reserva la memoria al EMPEZAR (en el hilo del
-// menú); el hilo de render solo escribe en lo ya reservado.
+// The test's data. The memory is reserved when it STARTS (on the menu's
+// thread); the render thread only writes into what's already reserved.
 std::vector<float> g_frameMs;
 std::vector<float> g_costUs;
 std::atomic<std::size_t> g_count{0};
 std::atomic<bool> g_writing{false};
-std::atomic<std::int64_t> g_recordStart{0};  // cuándo empieza a grabar (ticks)
-std::atomic<std::int64_t> g_recordEnd{0};    // cuándo termina
+std::atomic<std::int64_t> g_recordStart{0};  // when recording starts (ticks)
+std::atomic<std::int64_t> g_recordEnd{0};    // when it ends
 
-// Datos de la prueba en curso (los toca solo el menú y el hilo principal).
+// Data of the test in progress (only the menu and the main thread touch it).
 std::mutex g_mutex;
 std::string g_label;
 std::string g_optimizations;
@@ -57,8 +57,8 @@ std::string NowText(const char* format) {
     return buffer;
 }
 
-// Separador de listas y separador decimal del Windows del usuario (los que
-// usa Excel). En español suele ser ";" y ",".
+// List separator and decimal separator of the user's Windows (the ones
+// Excel uses). In Spanish they're usually ";" and ",".
 struct CsvFormat {
     char list = ',';
     char decimal = '.';
@@ -87,7 +87,7 @@ std::string Num(double value, int decimals, const CsvFormat& f) {
     return s;
 }
 
-// Un texto para un nombre de archivo: solo letras, números, '-' y '_'.
+// A text for a file name: only letters, numbers, '-' and '_'.
 std::string SafeFileName(const std::string& text) {
     std::string out;
     for (unsigned char c : text) {
@@ -100,7 +100,7 @@ std::string SafeFileName(const std::string& text) {
     return out.empty() ? "prueba" : out.substr(0, 40);
 }
 
-// Un texto para el CSV: entre comillas si tiene el separador o comillas.
+// A text for the CSV: in quotes if it has the separator or quotes.
 std::string CsvText(const std::string& text, const CsvFormat& f) {
     if (text.find(f.list) == std::string::npos && text.find('"') == std::string::npos) {
         return text;
@@ -153,15 +153,15 @@ void WriteFiles(Result& r, std::size_t count) {
     std::filesystem::create_directories(dir, ec);
     const CsvFormat f = UserCsvFormat();
     const char sep = f.list;
-    const char* bom = "\xEF\xBB\xBF";  // marca UTF-8: así Excel muestra bien las tildes
+    const char* bom = "\xEF\xBB\xBF";  // UTF-8 mark: so Excel shows accented characters correctly
 
-    // 1. Un renglón por frame.
+    // 1. One row per frame.
     const std::filesystem::path framesPath =
         dir / std::filesystem::path(paths::ToUtf8(std::filesystem::path(NowText("%Y-%m-%d_%H-%M-%S"))) + "_" +
                                     SafeFileName(r.label) + ".csv");
     {
         std::ofstream out(framesPath, std::ios::binary);
-        out << bom << "frame" << sep << "tiempo_s" << sep << "frametime_ms" << sep << "fps" << sep << "costo_luma_ms\n";
+        out << bom << "frame" << sep << "time_s" << sep << "frametime_ms" << sep << "fps" << sep << "luma_cost_ms\n";
         double elapsed = 0.0;
         for (std::size_t i = 0; i < count; ++i) {
             elapsed += g_frameMs[i] / 1000.0;
@@ -171,18 +171,18 @@ void WriteFiles(Result& r, std::size_t count) {
         }
         r.csvPath = paths::ToUtf8(framesPath);
         if (!out) {
-            log::Warn("Benchmark: no se pudo escribir {}.", r.csvPath);
+            log::Warn("Benchmark: couldn't write {}.", r.csvPath);
         }
     }
 
-    // 2. Una línea en el resumen (con encabezado si el archivo es nuevo).
-    const std::filesystem::path summaryPath = dir / L"resumen.csv";
+    // 2. One line in the summary (with a header if the file is new).
+    const std::filesystem::path summaryPath = dir / L"summary.csv";
     const bool isNew = !std::filesystem::exists(summaryPath, ec);
     std::ofstream out(summaryPath, std::ios::binary | std::ios::app);
     if (isNew) {
-        out << bom << "fecha" << sep << "nombre" << sep << "modo" << sep << "optimizaciones" << sep << "segundos" << sep
-            << "frames" << sep << "fps_promedio" << sep << "1%_low" << sep << "0.1%_low" << sep << "frametime_ms" << sep
-            << "p99_ms" << sep << "max_ms" << sep << "costo_luma_ms\n";
+        out << bom << "date" << sep << "name" << sep << "mode" << sep << "optimizations" << sep << "seconds" << sep
+            << "frames" << sep << "average_fps" << sep << "1%_low" << sep << "0.1%_low" << sep << "frametime_ms" << sep
+            << "p99_ms" << sep << "max_ms" << sep << "luma_cost_ms\n";
     }
     out << r.date << sep << CsvText(r.label, f) << sep << r.mode << sep << CsvText(r.optimizations, f) << sep
         << Num(r.seconds, 1, f) << sep << r.frames << sep << Num(r.averageFps, 1, f) << sep << Num(r.low1Fps, 1, f)
@@ -197,22 +197,22 @@ void Finish() {
         std::lock_guard lock(g_mutex);
         r.label = g_label;
         r.optimizations = g_optimizations.empty() ? "none" : g_optimizations;
-        r.mode = g_mode == Mode::Resting ? "en reposo" : "con HUD";
+        r.mode = g_mode == Mode::Resting ? "idle" : "with HUD";
     }
     r.date = NowText("%Y-%m-%d %H:%M:%S");
     if (count < 10) {
-        notify::Push(notify::Kind::Warning, "Benchmark: muy pocos frames, no se guardó");
+        notify::Push(notify::Kind::Warning, "Benchmark: too few frames, not saved");
     } else {
         WriteFiles(r, count);
         log::Info("Benchmark \"{}\" ({}): {:.1f} FPS promedio, 1% low {:.1f}, 0.1% low {:.1f}, frametime {:.3f} ms, "
-                  "costo de Luma {:.4f} ms. CSV: {}",
+                  "Luma cost {:.4f} ms. CSV: {}",
                   r.label, r.mode, r.averageFps, r.low1Fps, r.low01Fps, r.averageMs, r.lumaCostMs, r.csvPath);
         notify::Push(notify::Kind::Success,
-                     std::format("Benchmark listo: {:.0f} FPS · 1% low {:.0f}", r.averageFps, r.low1Fps));
+                     std::format("Benchmark done: {:.0f} FPS · 1% low {:.0f}", r.averageFps, r.low1Fps));
         std::lock_guard lock(g_mutex);
         g_results.push_back(std::move(r));
     }
-    // Liberar la memoria de la prueba.
+    // Free the test's memory.
     std::vector<float>().swap(g_frameMs);
     std::vector<float>().swap(g_costUs);
     g_suppress.store(false);
@@ -226,17 +226,17 @@ bool Start(double seconds, double countdown, std::string label, Mode mode, std::
         return false;
     }
     while (g_writing.load()) {
-        YieldProcessor();  // el hilo de render está terminando de escribir un frame
+        YieldProcessor();  // the render thread is finishing writing a frame
     }
     seconds = std::clamp(seconds, 5.0, kMaxSeconds);
     const auto capacity = static_cast<std::size_t>(seconds * kMaxFps);
-    // Reservar ANTES de que el hilo de render empiece a escribir.
+    // Reserve BEFORE the render thread starts writing.
     g_frameMs.assign(capacity, 0.0f);
     g_costUs.assign(capacity, 0.0f);
     g_count.store(0);
     {
         std::lock_guard lock(g_mutex);
-        g_label = label.empty() ? std::format("Prueba {}", g_results.size() + 1) : std::move(label);
+        g_label = label.empty() ? std::format("Test {}", g_results.size() + 1) : std::move(label);
         g_optimizations = std::move(optimizations);
         g_mode = mode;
         g_seconds = seconds;
@@ -247,8 +247,8 @@ bool Start(double seconds, double countdown, std::string label, Mode mode, std::
     g_recordEnd.store(start + static_cast<std::int64_t>(seconds * static_cast<double>(g_ticksPerSecond)));
     g_suppress.store(mode == Mode::Resting);
     g_state.store(State::Countdown);
-    log::Info("Benchmark: empieza en {:.0f} s y dura {:.0f} s (modo {}).", countdown, seconds,
-              mode == Mode::Resting ? "en reposo" : "con HUD");
+    log::Info("Benchmark: starts in {:.0f} s and lasts {:.0f} s (mode {}).", countdown, seconds,
+              mode == Mode::Resting ? "idle" : "with HUD");
     return true;
 }
 
@@ -259,8 +259,8 @@ void Cancel(const char* reason) {
     }
     g_state.store(State::Idle);
     g_suppress.store(false);
-    log::Info("Benchmark cancelado: {}.", reason);
-    notify::Push(notify::Kind::Warning, std::format("Benchmark cancelado: {}", reason));
+    log::Info("Benchmark canceled: {}.", reason);
+    notify::Push(notify::Kind::Warning, std::format("Benchmark canceled: {}", reason));
 }
 
 State GetState() {
@@ -287,15 +287,15 @@ void OnFrame(std::int64_t frameStart, float frameMs, float costUs) {
             return;
         }
         g_state.store(State::Recording);
-        return;  // el primer frame de la grabación empieza a contar desde aquí
+        return;  // the recording's first frame starts counting from here
     }
     if (state != State::Recording) {
         return;
     }
-    // "Estoy escribiendo": Start espera a que termine antes de cambiar los
-    // arreglos (por si una prueba se cancela y empieza otra justo ahora).
-    // Primero se marca y DESPUÉS se vuelve a mirar el estado: así nunca se
-    // escribe en un arreglo que otro hilo está reemplazando.
+    // "I'm writing": Start waits for it to finish before changing the
+    // arrays (in case a test is canceled and another one starts right now).
+    // First it's marked and THEN the state is checked again: that way it never
+    // writes into an array another thread is replacing.
     g_writing.store(true);
     if (g_state.load() == State::Recording) {
         const std::size_t i = g_count.load(std::memory_order_relaxed);
@@ -313,9 +313,9 @@ void OnFrame(std::int64_t frameStart, float frameMs, float costUs) {
 void Poll() {
     const State state = g_state.load();
     if ((state == State::Countdown || state == State::Recording) && render::overlay::IsMenuOpen()) {
-        // Se permite abrir el menú durante la cuenta regresiva, no grabando.
+        // Opening the menu is allowed during the countdown, not while recording.
         if (state == State::Recording) {
-            Cancel("se abrió el menú");
+            Cancel("the menu was opened");
         }
         return;
     }

@@ -1,22 +1,22 @@
 // =============================================================================
-//  state.h - El candado del estado de Luma
+//  state.h - The lock for Luma's state
 // =============================================================================
-//  Varios hilos del juego tocan datos de Luma:
-//    - el hilo de render (dibuja el menú y el HUD),
-//    - el hilo de la ventana (teclas, mouse),
-//    - el hilo principal de Luma (guarda la configuración).
+//  Several game threads touch Luma's data:
+//    - the render thread (draws the menu and the HUD),
+//    - the window thread (keys, mouse),
+//    - Luma's main thread (saves the configuration).
 //
-//  Para que nunca lean algo a medio escribir, TODO acceso a módulos,
-//  configuración e ImGui se hace con este candado tomado:
+//  So they never read something half written, EVERY access to modules,
+//  configuration and ImGui is done with this lock held:
 //
 //      std::lock_guard lock(luma::StateMutex());
-//      ...leer o cambiar módulos/config...
+//      ...read or change modules/config...
 //
-//  Es "recursive" para que el mismo hilo pueda tomarlo más de una vez (por
-//  ejemplo, una función que lo toma llama a otra que también lo toma).
+//  It's "recursive" so the same thread can take it more than once (for
+//  example, a function that takes it calls another one that also takes it).
 //
-//  Regla para evitar bloqueos: nunca tenerlo tomado mientras se llama a una
-//  función ORIGINAL del juego o de DirectX.
+//  Rule to avoid deadlocks: never hold it while calling an ORIGINAL
+//  function of the game or of DirectX.
 // =============================================================================
 #pragma once
 

@@ -1,12 +1,12 @@
 // =============================================================================
-//  keys.h - Nombres de teclas
+//  keys.h - Key names
 // =============================================================================
-//  Windows identifica cada tecla con un "virtual key code" (VK): un número.
-//  Por ejemplo 'L' = 0x4C, VK_END (Fin) = 0x23. Aquí los traducimos a un
-//  nombre legible para mostrarlo en el menú.
+//  Windows identifies every key with a "virtual key code" (VK): a number.
+//  For example 'L' = 0x4C, VK_END = 0x23. Here we turn them into a readable
+//  name to show in the menu.
 //
-//  En la configuración guardamos el número (no el nombre): así funciona igual
-//  sin importar el idioma del teclado.
+//  The configuration stores the number (not the name): that way it works the
+//  same no matter the keyboard language.
 // =============================================================================
 #pragma once
 
@@ -14,13 +14,13 @@
 
 namespace luma::keys {
 
-// 0 significa "sin tecla asignada".
+// 0 means "no key assigned".
 constexpr int kNone = 0;
 
-// Nombre de la tecla, por ejemplo "L", "F5", "Insert", "Fin".
+// The key's name, for example "L", "F5", "Insert", "End".
 std::string Name(int virtualKey);
 
-// ¿Se puede asignar esta tecla? (Esc no: se usa para cancelar.)
+// Can this key be assigned? (Esc can't: it's used to cancel.)
 bool IsBindable(int virtualKey);
 
 }  // namespace luma::keys

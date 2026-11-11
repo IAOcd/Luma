@@ -1,15 +1,15 @@
 // =============================================================================
-//  luma.cpp - Ciclo de vida de Luma
+//  luma.cpp - Luma's lifecycle
 // =============================================================================
-//  Orden de vida de Luma dentro del juego:
+//  The order of Luma's life inside the game:
 //
-//    1. Startup()      -> abrir el log, (Fase 2+) instalar hooks, etc.
-//    2. WaitForUnload()-> esperar a que el usuario pulse la tecla de descarga.
-//    3. Shutdown()     -> deshacer TODO lo del paso 1, en orden inverso.
+//    1. Startup()      -> open the log, install hooks, etc.
+//    2. WaitForUnload()-> wait for the user to press the unload key.
+//    3. Shutdown()     -> undo EVERYTHING from step 1, in reverse order.
 //
-//  La regla de oro: todo lo que se instala en Startup se quita en Shutdown.
-//  Si dejáramos un hook puesto y luego la DLL desaparece de la memoria, el
-//  juego saltaría a código que ya no existe y crashearía.
+//  The golden rule: everything installed in Startup is removed in Shutdown.
+//  If we left a hook in place and then the DLL disappeared from memory, the
+//  game would jump to code that no longer exists and crash.
 // =============================================================================
 #include "core/luma.h"
 
@@ -66,43 +66,43 @@ namespace luma {
 
 namespace {
 
-// La tecla para descargar Luma (por defecto Fin/End) está en
-// config::g_unloadKey y se cambia desde Ajustes.
+// The key to unload Luma (End by default) is in config::g_unloadKey and
+// is changed from Settings.
 
-// Cada cuánto revisamos la tecla. 50 ms es imperceptible para una persona y
-// prácticamente no gasta CPU (el hilo pasa el 99,9% del tiempo dormido).
+// How often we check the key. 50 ms is unnoticeable for a person and
+// uses practically no CPU (the thread spends 99.9% of the time asleep).
 constexpr DWORD kPollIntervalMs = 50;
 
-// En Debug abrimos una consola para ver el log en vivo. En Release no.
-// NDEBUG es una "macro" que el compilador define solo en Release.
+// In Debug we open a console to see the log live. Not in Release.
+// NDEBUG is a "macro" the compiler only defines in Release.
 #ifdef NDEBUG
 constexpr bool kOpenConsole = false;
 #else
 constexpr bool kOpenConsole = true;
 #endif
 
-// Candado con nombre a nivel de Windows (un "mutex" con nombre). Sirve para
-// detectar si otra copia de Luma ya está corriendo dentro de este mismo juego.
+// A named lock at the Windows level (a named "mutex"). It's used to detect
+// whether another copy of Luma is already running inside this same game.
 HANDLE g_instanceMutex = nullptr;
 
-// ¿Se instalaron bien los hooks de DirectX?
+// Were the DirectX hooks installed correctly?
 bool g_hooksReady = false;
 
-// ¿Se cargó la config? (Si no, al descargar NO se guarda, para no pisar el
-// archivo con valores vacíos.)
+// Was the config loaded? (If not, it is NOT saved when unloading, so the
+// file isn't overwritten with empty values.)
 bool g_configLoaded = false;
 
-// Intenta "reservar" el nombre Luma para este proceso.
-// Devuelve false si otra copia de Luma ya lo tenía.
+// Tries to "reserve" the Luma name for this process.
+// Returns false if another copy of Luma already had it.
 bool AcquireInstance() {
-    // El nombre incluye el ID del proceso (PID), así dos juegos abiertos a la
-    // vez no se bloquean entre sí. "Local\" = solo en esta sesión de Windows.
+    // The name includes the process ID (PID), so two games open at the same
+    // time don't block each other. "Local\" = only in this Windows session.
     wchar_t name[64];
     std::swprintf(name, std::size(name), L"Local\\Luma_Instance_%lu", GetCurrentProcessId());
 
     g_instanceMutex = CreateMutexW(nullptr, FALSE, name);
     if (g_instanceMutex == nullptr) {
-        return true;  // No pudimos comprobarlo; seguimos (no es motivo para no cargar).
+        return true;  // We couldn't check; we carry on (it's no reason not to load).
     }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         CloseHandle(g_instanceMutex);
@@ -119,9 +119,9 @@ void ReleaseInstance() {
     }
 }
 
-// ¿La ventana que tiene el foco ahora mismo pertenece a este proceso (el juego)?
-// Así la tecla de descarga no se activa si pulsas "Fin" escribiendo en otro
-// programa con Minecraft minimizado.
+// Does the window that has focus right now belong to this process (the game)?
+// That way the unload key doesn't trigger if you press "End" while typing in
+// another program with Minecraft minimized.
 bool IsGameWindowFocused() {
     HWND foreground = GetForegroundWindow();
     if (foreground == nullptr) {
@@ -132,7 +132,7 @@ bool IsGameWindowFocused() {
     return pid == GetCurrentProcessId();
 }
 
-// Ruta del ejecutable del juego, solo para anotarla en el log.
+// Path of the game's executable, only to write it in the log.
 std::string GameExePath() {
     wchar_t buffer[MAX_PATH * 2];
     const DWORD length = GetModuleFileNameW(nullptr, buffer, static_cast<DWORD>(std::size(buffer)));
@@ -141,51 +141,51 @@ std::string GameExePath() {
 
 bool Startup(HMODULE module) {
     log::Init(paths::LogsDir(), kOpenConsole);
-    log::Info("{} {} cargado (DLL en 0x{:X})", kName, kVersion,
+    log::Info("{} {} loaded (DLL at 0x{:X})", kName, kVersion,
               reinterpret_cast<std::uintptr_t>(module));
-    log::Info("Juego: {} (PID {})", GameExePath(), GetCurrentProcessId());
+    log::Info("Game: {} (PID {})", GameExePath(), GetCurrentProcessId());
     log::Info("Log: {}", paths::ToUtf8(log::CurrentFile()));
 
     if (!AcquireInstance()) {
-        log::Warn("Ya hay otra copia de Luma activa en este juego; esta copia no hará nada.");
+        log::Warn("Another copy of Luma is already active in this game; this copy will do nothing.");
         return false;
     }
 
-    // --- Overlay (Fase 2) ---------------------------------------------------
-    // Si algo de esto falla, Luma sigue cargado sin overlay: lo importante es
-    // no crashear el juego. El motivo queda en el log.
+    // --- Overlay (Phase 2) ---------------------------------------------------
+    // If any of this fails, Luma stays loaded without the overlay: what matters
+    // is not crashing the game. The reason ends up in the log.
     perf::Init();
     if (hooks::Init()) {
         const bool dx12 = render::dx12::CreateHooks();
-        // Sin estos hooks el menú funciona, pero el juego seguiría moviendo la
-        // cámara con el menú abierto. No es motivo para no cargar.
+        // Without these hooks the menu works, but the game would keep moving the
+        // camera with the menu open. It's no reason not to load.
         if (!render::input::CreateHooks()) {
-            log::Warn("Hooks de input no disponibles: con el menú abierto, el mouse moverá la cámara.");
+            log::Warn("Input hooks unavailable: with the menu open, the mouse will move the camera.");
         }
         g_hooksReady = dx12 && hooks::EnableAll();
     }
     if (g_hooksReady) {
-        log::Info("Hooks de DirectX 12 activos. Esperando el primer frame...");
+        log::Info("DirectX 12 hooks active. Waiting for the first frame...");
     } else {
-        log::Warn("El overlay no se pudo activar; Luma sigue cargado sin él.");
+        log::Warn("The overlay couldn't be enabled; Luma stays loaded without it.");
     }
 
-    // Desde aquí, la pantalla de carga muestra cada paso (el overlay ya
-    // dibuja en cuanto llega el primer frame, en paralelo con este hilo).
+    // From here on, the loading screen shows each step (the overlay already
+    // draws as soon as the first frame arrives, in parallel with this thread).
     render::loading::Begin();
-    render::assets::Decode();  // el logo (se sube a la GPU en el próximo frame)
+    render::assets::Decode();  // the logo (uploaded to the GPU on the next frame)
     render::loading::SetStep(Tr("Loading settings..."), 0.10f);
 
-    // --- Módulos y configuración (Fase 3) --------------------------------------
-    // Primero se crean los módulos (todos desactivados) y después la config
-    // activa los que estaban activos y les pone sus opciones y teclas.
+    // --- Modules and configuration (Phase 3) --------------------------------------
+    // First the modules are created (all turned off) and then the config turns
+    // on the ones that were on and gives them their options and keys.
     {
         std::lock_guard lock(StateMutex());
         modules::Manager::RegisterAll();
     }
     config::LoadAtStartup();
     g_configLoaded = true;
-    // Idioma: el que elegiste en el launcher (los dos usan las mismas traducciones).
+    // Language: the one you picked in the launcher (both use the same translations).
     {
         std::ifstream file(paths::DataDir() / L"launcher.json");
         const nlohmann::json json = file ? nlohmann::json::parse(file, nullptr, false) : nlohmann::json();
@@ -193,13 +193,13 @@ bool Startup(HMODULE module) {
             i18n::SetLanguage(i18n::LanguageFromCode(json.value("language", std::string("en")).c_str()));
         }
     }
-    sound::Init();  // después de la config: usa el volumen guardado
-    log::Info("{} módulos registrados. Perfil activo: {}.", modules::Manager::All().size(),
+    sound::Init();  // after the config: it uses the saved volume
+    log::Info("{} modules registered. Active profile: {}.", modules::Manager::All().size(),
               config::ActiveProfile());
 
-    // --- SDK (memoria del juego) -------------------------------------------------
-    // Las funciones con las que el juego agarra y suelta el mouse. Si no se
-    // encuentran, solo se pierde el bloqueo de la cámara con el menú abierto.
+    // --- SDK (game memory) -------------------------------------------------------
+    // The functions the game uses to grab and release the mouse. If they aren't
+    // found, only the camera blocking with the menu open is lost.
     if (g_hooksReady) {
         sdk::mouse::Init([](int step, int total) {
             static const char* const kSteps[] = {"Finding game functions (1/5)...",
@@ -212,121 +212,121 @@ bool Startup(HMODULE module) {
                                      0.2f + 0.7f * static_cast<float>(step) / static_cast<float>(total));
         });
     }
-    // La cola de acciones del mouse: lo que de verdad le impide al juego
-    // recibir clics y movimiento con el menú abierto (ver sdk/mouse_queue.h).
+    // The mouse action queue: what really stops the game from receiving
+    // clicks and movement with the menu open (see sdk/mouse_queue.h).
     if (g_hooksReady) {
         render::loading::SetStep(Tr("Connecting to the game's mouse..."), 0.95f);
         sdk::mousequeue::Init();
-        // El jugador local (Fase 6): se captura al mover el mouse en un mundo.
+        // The local player (Phase 6): captured when the mouse moves in a world.
         sdk::player::Init();
-        sdk::network::Init();  // ping y detección de servidor
-        sdk::camera::Init();   // brillo, perspectiva, cámara (Fase 8)
-        sdk::draw3d::Init();   // dibujar dentro del mundo (contorno, hitboxes)
-        sdk::paperdoll::Init();  // mover el muñeco del HUD del juego
-        sdk::hudui::Init();      // scoreboard movible sin titilar (UIControl::updatePos)
-        sdk::skinapply::Init();  // Equipar cambia la skin al instante
-        sdk::gamecrosshair::Init();  // esconder la mira del juego (módulo de mira)
+        sdk::network::Init();  // ping and server detection
+        sdk::camera::Init();   // gamma, perspective, camera (Phase 8)
+        sdk::draw3d::Init();   // drawing inside the world (outline, hitboxes)
+        sdk::paperdoll::Init();  // moving the game's HUD paper doll
+        sdk::hudui::Init();      // movable scoreboard without flicker (UIControl::updatePos)
+        sdk::skinapply::Init();  // Equip changes the skin instantly
+        sdk::gamecrosshair::Init();  // hiding the game's crosshair (crosshair module)
         std::lock_guard lock(StateMutex());
         modules::Manager::DisableUnavailable();
     }
     render::loading::Finish();
-    stats::Begin();  // una sesión más (para el launcher)
-    cloud::Start();  // "estoy usando Luma" + quién más lo usa (en su propio hilo)
+    stats::Begin();  // one more session (for the launcher)
+    cloud::Start();  // "I'm using Luma" + who else uses it (on its own thread)
 
     const std::string menuKey = keys::Name(config::g_menuKey.load());
     notify::Push(notify::Kind::Info, TrFormat("{} loaded · press {} to open the menu", kName, menuKey));
-    log::Info("Listo. Menú: {}. Descargar: {} (con el juego en primer plano).", menuKey,
+    log::Info("Ready. Menu: {}. Unload: {} (with the game in the foreground).", menuKey,
               keys::Name(config::g_unloadKey.load()));
     return true;
 }
 
-// Escribe en el log el resumen de rendimiento de los últimos 30 s.
-// Corre en ESTE hilo (no en el de render), así escribir en disco no le
-// agrega ningún tirón al juego.
+// Writes the performance summary of the last 30 s to the log.
+// Runs on THIS thread (not the render one), so writing to disk doesn't
+// add any stutter to the game.
 void LogPerformanceSummary() {
     const perf::Summary s = perf::TakeSummary();
     if (!s.valid) {
         return;
     }
     if (s.closedFrames > 0) {
-        log::Info("Rendimiento ({:.0f} s): {:.0f} FPS promedio | costo de Luma con el menú cerrado: "
-                  "{:.4f} ms promedio, {:.4f} ms máximo ({} frames)",
+        log::Info("Performance ({:.0f} s): {:.0f} average FPS | Luma cost with the menu closed:"
+                  "{:.4f} ms average, {:.4f} ms max ({} frames)",
                   s.seconds, s.averageFps, s.averageCostUs / 1000.0, s.maxCostUs / 1000.0,
                   s.closedFrames);
     } else {
-        log::Info("Rendimiento ({:.0f} s): {:.0f} FPS promedio (menú abierto todo el período)",
+        log::Info("Performance ({:.0f} s): {:.0f} average FPS (menu open the whole period)",
                   s.seconds, s.averageFps);
     }
 }
 
 void WaitForUnload() {
     constexpr ULONGLONG kSummaryEveryMs = 30'000;
-    perf::TakeSummary();  // Empezar a contar desde ahora.
-    // Usamos el reloj real (GetTickCount64) en vez de sumar "50 ms" por vuelta:
-    // Sleep(50) en Windows suele durar algo más (~62 ms), y el error se acumula.
+    perf::TakeSummary();  // Start counting from now.
+    // We use the real clock (GetTickCount64) instead of adding "50 ms" per loop:
+    // Sleep(50) on Windows usually lasts a bit longer (~62 ms), and the error adds up.
     ULONGLONG lastSummary = GetTickCount64();
 
     bool windowLocated = !g_hooksReady;
 
-    // GetAsyncKeyState devuelve un número cuyo bit más alto (0x8000) vale 1
-    // si la tecla está apretada en este momento. La tecla de descarga se lee
-    // de la config en cada vuelta (se puede cambiar desde Ajustes).
+    // GetAsyncKeyState returns a number whose highest bit (0x8000) is 1 if the
+    // key is pressed right now. The unload key is read from the config on
+    // every loop (it can be changed from Settings).
     while (!(IsGameWindowFocused() &&
              (GetAsyncKeyState(config::g_unloadKey.load(std::memory_order_relaxed)) & 0x8000))) {
         Sleep(kPollIntervalMs);
-        // Encontrar el objeto de la ventana del juego en cuanto el juego esté
-        // en primer plano (así el menú bloquea la cámara desde el principio).
+        // Find the game window's object as soon as the game is in the
+        // foreground (so the menu blocks the camera from the start).
         if (!windowLocated && IsGameWindowFocused()) {
             windowLocated = sdk::mouse::LocateWindow(GetForegroundWindow()) || !sdk::mouse::Available();
         }
-        config::SaveIfDirty();  // guardado automático (solo si hubo cambios)
-        render::input::PollHolds();             // toggle sprint/sneak: menús del juego y foco
+        config::SaveIfDirty();  // autosave (only if something changed)
+        render::input::PollHolds();             // toggle sprint/sneak: game menus and focus
         perf::benchmark::Poll();
-        sdk::network::Poll();                   // ping de la conexión con el servidor
+        sdk::network::Poll();                   // ping of the connection to the server
         stats::Poll();
-        sdk::skinapply::Poll();                 // ¿equipaste otra skin? (lee su PNG)
-        render::skinheads::Poll();              // caras de skins pedidas por el menú (Closet)                          // tiempo jugado y nombre del jugador (para el launcher)
-        render::icons_items::Poll();            // íconos de ítems pedidos por el HUD                // terminar pruebas (cálculos y CSV fuera del render)
-        modules::performance::PollRenderThread();  // prioridad del hilo de render
+        sdk::skinapply::Poll();                 // did you equip another skin? (reads its PNG)
+        render::skinheads::Poll();              // skin faces requested by the menu (Closet)                          // time played and player name (for the launcher)
+        render::icons_items::Poll();            // item icons requested by the HUD                // finish tests (calculations and CSV outside the render)
+        modules::performance::PollRenderThread();  // render thread priority
         {
             std::lock_guard lock(StateMutex());
-            modules::Manager::Tick();  // módulos que revisan algo cada 50 ms (aviso de durabilidad...)
+            modules::Manager::Tick();  // modules that check something every 50 ms (durability warning...)
         }
         if (GetTickCount64() - lastSummary >= kSummaryEveryMs) {
             lastSummary = GetTickCount64();
             LogPerformanceSummary();
         }
     }
-    log::Info("Tecla de descarga pulsada.");
+    log::Info("Unload key pressed.");
 }
 
 void Shutdown() {
-    // Orden INVERSO al de Startup. Cada paso depende del anterior:
+    // REVERSE order of Startup. Each step depends on the previous one:
     //
-    //  1. BeginUnload: los detours dejan de tocar nuestro estado y solo
-    //     llaman a la función original.
-    //  2. DisableAll: MinHook restaura las funciones originales; ya no entra
-    //     nadie nuevo a nuestros detours.
-    //  3. WaitForActiveCalls: esperar a que salgan los que ya estaban dentro.
-    //  4. input::Uninstall: devolver la WndProc original del juego, y esperar
-    //     otra vez por si un mensaje estaba pasando por la nuestra.
-    //  5. overlay::Shutdown: ya nadie usa ImGui ni DX12 desde el juego; ahora
-    //     sí es seguro liberarlos.
-    //  6. hooks::Shutdown: liberar MinHook.
-    //  7. Módulos: desactivarlos y borrarlos (ya nadie los dibuja).
+    //  1. BeginUnload: the detours stop touching our state and only
+    //     call the original function.
+    //  2. DisableAll: MinHook restores the original functions; nobody new
+    //     enters our detours anymore.
+    //  3. WaitForActiveCalls: wait for the ones already inside to leave.
+    //  4. input::Uninstall: give the game back its original WndProc, and wait
+    //     again in case a message was going through ours.
+    //  5. overlay::Shutdown: nobody uses ImGui or DX12 from the game anymore; now
+    //     it's safe to release them.
+    //  6. hooks::Shutdown: release MinHook.
+    //  7. Modules: turn them off and delete them (nobody draws them anymore).
     //
-    //  Antes de todo, guardamos la config (por si había cambios pendientes).
+    //  Before all that, we save the config (in case there were pending changes).
     if (g_configLoaded) {
         config::SaveNow();
     }
     stats::End();
     cloud::Stop();
     sdk::camera::BeginUnload();
-    sdk::paperdoll::BeginUnload();  // el muñeco vuelve a su lugar
+    sdk::paperdoll::BeginUnload();  // the paper doll goes back to its place
     sdk::network::BeginUnload();
     sdk::player::BeginUnload();
     sdk::mousequeue::BeginUnload();
-    sdk::mouse::BeginUnload();  // si el menú estaba abierto, devolverle el mouse al juego
+    sdk::mouse::BeginUnload();  // if the menu was open, give the mouse back to the game
     render::dx12::BeginUnload();
     hooks::DisableAll();
     hooks::WaitForActiveCalls();
@@ -335,7 +335,7 @@ void Shutdown() {
     render::overlay::Shutdown();
     hooks::Shutdown();
     if (g_hooksReady) {
-        log::Info("Overlay y hooks liberados.");
+        log::Info("Overlay and hooks released.");
     }
     {
         std::lock_guard lock(StateMutex());
@@ -345,8 +345,8 @@ void Shutdown() {
     sound::Shutdown();
 
     ReleaseInstance();
-    log::Info("{} descargado correctamente.", kName);
-    log::Shutdown();  // Siempre lo último: así todo lo anterior queda en el log.
+    log::Info("{} unloaded cleanly.", kName);
+    log::Shutdown();  // Always last: that way everything before it ends up in the log.
 }
 
 }  // namespace

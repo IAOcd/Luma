@@ -1,10 +1,10 @@
 // =============================================================================
-//  tr_menu.inc - Traducciones del menú de Luma (render/menu.cpp)
+//  tr_menu.inc - Translations of the Luma menu (render/menu.cpp)
 // =============================================================================
-//  Mismo formato que tr_table.inc: {"español", "English", "Português"}.
+//  Same format as tr_table.inc: {"Español", "English", "Português"}.
 // =============================================================================
 
-// --- Módulos -----------------------------------------------------------------------
+// --- Modules -----------------------------------------------------------------------
 {"Pulsa una tecla...", "Press a key...", "Aperte uma tecla..."},
 {"Clic: cambiar la tecla. Clic derecho: quitarla.\nMientras espera: Esc cancela, Retroceso la quita.", "Click: change the key. Right click: remove it.\nWhile waiting: Esc cancels, Backspace removes it.", "Clique: mudar a tecla. Clique direito: tirar.\nEnquanto espera: Esc cancela, Backspace tira."},
 {"Buscar módulos...", "Search modules...", "Buscar módulos..."},
@@ -36,7 +36,7 @@
 {"Ajustes", "Settings", "Configurações"},
 {"Esa tecla también abre el menú", "That key also opens the menu", "Essa tecla também abre o menu"},
 
-// --- Apariencia ---------------------------------------------------------------------
+// --- Appearance ---------------------------------------------------------------------
 {"Apariencia", "Appearance", "Aparência"},
 {"El aspecto de Luma: colores, vidrio, forma y sonido.", "How Luma looks: colors, glass, shape and sound.", "A aparência do Luma: cores, vidro, forma e som."},
 {"Vidrio", "Glass", "Vidro"},
@@ -68,7 +68,7 @@
 {"Apagar", "Turn off", "Desligar"},
 {"Restablecer tema", "Reset appearance", "Restaurar aparência"},
 
-// --- Perfiles -------------------------------------------------------------------------
+// --- Profiles -------------------------------------------------------------------------
 {"Perfiles", "Profiles", "Perfis"},
 {"Un perfil guarda TODA la configuración: módulos, opciones, teclas y tema.", "A profile saves ALL the settings: modules, options, keys and appearance.", "Um perfil guarda TODA a configuração: módulos, opções, teclas e aparência."},
 {"Tus perfiles", "Your profiles", "Seus perfis"},
@@ -84,7 +84,7 @@
 {"Sí, restablecer", "Yes, reset", "Sim, restaurar"},
 {"Cancelar", "Cancel", "Cancelar"},
 
-// --- Ajustes --------------------------------------------------------------------------
+// --- Settings -------------------------------------------------------------------------
 {"Teclas de Luma", "Luma keys", "Teclas do Luma"},
 {"Abrir / cerrar el menú", "Open / close the menu", "Abrir / fechar o menu"},
 {"Descargar Luma", "Unload Luma", "Descarregar o Luma"},
@@ -115,7 +115,7 @@
 {"Resultados de esta sesión", "Results from this session", "Resultados desta sessão"},
 {"Todavía no hiciste ninguna prueba.", "You haven't run any test yet.", "Você ainda não fez nenhum teste."},
 {"Abrir la carpeta de benchmarks", "Open the benchmarks folder", "Abrir a pasta de benchmarks"},
-{"resumen.csv = una fila por prueba; un .csv por prueba con cada frame.", "resumen.csv = one row per test; one .csv per test with every frame.", "resumen.csv = uma linha por teste; um .csv por teste com cada quadro."},
+{"summary.csv = una fila por prueba; un .csv por prueba con cada frame.", "summary.csv = one row per test; one .csv per test with every frame.", "summary.csv = uma linha por teste; um .csv por teste com cada quadro."},
 {"Consejos de Windows", "Windows tips", "Dicas do Windows"},
 {"Luma solo te muestra cómo están estas opciones: nunca las cambia por su cuenta. Prueba cada una con el benchmark.", "Luma only shows you how these options are set: it never changes them by itself. Test each one with the benchmark.", "O Luma só mostra como estão essas opções: nunca as muda sozinho. Teste cada uma com o benchmark."},
 {"Modo de juego", "Game Mode", "Modo de jogo"},
@@ -137,7 +137,7 @@
 {"Volver a leer", "Read again", "Ler de novo"},
 {"Nada de \"limpiadores de RAM\" ni trucos de registro: no tienen evidencia.", "No \"RAM cleaners\" or registry tricks: there's no evidence they work.", "Nada de \"limpadores de RAM\" nem truques de registro: não há evidência."},
 
-// --- Diagnóstico ----------------------------------------------------------------------
+// --- Diagnostics ----------------------------------------------------------------------
 {"Diagnóstico", "Diagnostics", "Diagnóstico"},
 {"Rendimiento del juego y costo de Luma.", "Game performance and Luma's cost.", "Desempenho do jogo e custo do Luma."},
 {"Ahora", "Now", "Agora"},
@@ -156,7 +156,7 @@
 {"En un servidor", "On a server", "Em um servidor"},
 {"Mundo local (o menú)", "Local world (or menu)", "Mundo local (ou menu)"},
 
-// --- Carga ---------------------------------------------------------------------------------
+// --- Loading ---------------------------------------------------------------------------------
 {"Cargando la configuración...", "Loading settings...", "Carregando a configuração..."},
 {"Buscando funciones del juego (1/5)...", "Finding game functions (1/5)...", "Procurando funções do jogo (1/5)..."},
 {"Buscando funciones del juego (2/5)...", "Finding game functions (2/5)...", "Procurando funções do jogo (2/5)..."},
@@ -167,7 +167,7 @@
 {"Conectando con el mouse del juego...", "Connecting to the game's mouse...", "Conectando ao mouse do jogo..."},
 {"{} cargado · pulsa {} para abrir el menú", "{} loaded · press {} to open the menu", "{} carregado · aperte {} para abrir o menu"},
 
-// --- Skin al instante -----------------------------------------------------------------
+// --- Instant skin ---------------------------------------------------------------------
 {"Skin al instante: entra a un mundo primero", "Instant skin: join a world first", "Skin instantânea: entre em um mundo primeiro"},
 {"Skin al instante: usa el Vestidor una vez en este mundo y vuelve a Equipar", "Instant skin: use the Dressing Room once in this world, then Equip again", "Skin instantânea: use o Provador uma vez neste mundo e equipe de novo"},
 {"Skin al instante: esa skin tiene otro tamaño que la actual", "Instant skin: that skin is a different size from the current one", "Skin instantânea: essa skin tem outro tamanho que a atual"},

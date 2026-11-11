@@ -1,16 +1,16 @@
 // =============================================================================
-//  clicks.h - Registro de clics del mouse (para CPS y keystrokes)
+//  clicks.h - Mouse click log (for CPS and keystrokes)
 // =============================================================================
-//  CPS = "clics por segundo". Guardamos el momento de cada clic en un
-//  "ring buffer" (arreglo fijo que se va pisando) y contamos cuántos hay en
-//  el último segundo. Sin pedir memoria y sin candados (variables atómicas).
+//  CPS = "clicks per second". We store the time of each click in a
+//  "ring buffer" (a fixed array that keeps getting overwritten) and count how
+//  many fall in the last second. No memory allocation and no locks (atomics).
 //
-//  ¿De dónde salen los clics? Del mismo lugar donde los lee el juego: su cola
-//  de acciones del mouse (sdk/mouse_queue). Si esa firma no se encontrara,
-//  de los mensajes de Windows (WM_LBUTTONDOWN...) como respaldo.
+//  Where do the clicks come from? From the same place the game reads them:
+//  its mouse action queue (sdk/mouse_queue). If that signature isn't found,
+//  from Windows messages (WM_LBUTTONDOWN...) as a fallback.
 //
-//  RENDIMIENTO: solo se registran clics si algún módulo activo los usa
-//  (Acquire/Release). Si no, el hook de la cola ni mira los clics.
+//  PERFORMANCE: clicks are only recorded if some active module uses them
+//  (Acquire/Release). Otherwise the queue hook doesn't even look at clicks.
 // =============================================================================
 #pragma once
 
@@ -18,16 +18,16 @@ namespace luma::clicks {
 
 enum class Button { Left = 0, Right = 1 };
 
-// Un módulo que necesita los clics llama a Acquire al activarse y a Release
-// al desactivarse.
+// A module that needs the clicks calls Acquire when it turns on and Release
+// when it turns off.
 void Acquire();
 void Release();
 bool Wanted();
 
-// Un clic (botón apretado). Desde cualquier hilo.
+// A click (button pressed). From any thread.
 void Record(Button button);
 
-// Clics en el último segundo.
+// Clicks in the last second.
 int PerSecond(Button button);
 
 }  // namespace luma::clicks

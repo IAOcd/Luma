@@ -1,23 +1,24 @@
 // =============================================================================
-//  tr.h - Traducir los textos del juego escritos en español
+//  tr.h - Translating Luma's in-game texts
 // =============================================================================
-//  El launcher usa claves ("home.play" -> "PLAY"), ver shared/i18n.h. En la DLL
-//  hay cientos de textos repartidos por los módulos ("Mostrar el nombre",
-//  "Color del texto"...), y ponerle una clave a cada uno haría el código
-//  difícil de leer. Por eso aquí la "clave" ES el texto en español:
+//  The launcher uses keys ("home.play" -> "PLAY"), see shared/i18n.h. The DLL
+//  has hundreds of texts spread across the modules ("Show the name",
+//  "Text color"...), and giving each one a key would make the code hard to
+//  read. So here the "key" IS the text itself, written in English:
 //
-//      ui::Toggle(Tr("Mostrar el nombre"), &showName_);
+//      ui::Toggle(Tr("Show the name"), &showName_);
 //
-//  Tr() busca ese texto en la tabla (core/tr_table.inc, una línea por texto
-//  con español, inglés y portugués) y devuelve el del idioma elegido. Si no
-//  está en la tabla, devuelve el mismo texto en español (así nunca se rompe
-//  nada: a lo sumo se ve un texto sin traducir).
+//  Tr() looks that text up in the table (core/tr_table.inc, one line per text
+//  with Spanish, English and Portuguese) and returns the one for the chosen
+//  language. A row can be found by its English OR its Spanish text. If it's
+//  not in the table, it returns the same text (so nothing ever breaks: at
+//  worst you see an untranslated text).
 //
-//  Los controles de render/ui.h ya llaman a Tr() solos, así que las opciones
-//  de los módulos se traducen sin tocar cada módulo.
+//  The controls in render/ui.h already call Tr() by themselves, so the
+//  modules' options get translated without touching each module.
 //
-//  Costo: una búsqueda en una tabla hash (texto corto). Solo con el menú
-//  abierto o para unos pocos textos del HUD: nada en el hot path.
+//  Cost: one lookup in a hash table (short text). Only with the menu open or
+//  for a few HUD texts: nothing in the hot path.
 // =============================================================================
 #pragma once
 
@@ -26,13 +27,13 @@
 
 namespace luma {
 
-const char* Tr(const char* spanish);
+const char* Tr(const char* text);
 
-// Igual que std::format, pero traduciendo primero el formato:
-//     TrFormat("Perfil creado: {}", name)
+// Like std::format, but translating the format first:
+//     TrFormat("Profile created: {}", name)
 template <typename... Args>
-std::string TrFormat(const char* spanishFormat, Args&&... args) {
-    return std::vformat(Tr(spanishFormat), std::make_format_args(args...));
+std::string TrFormat(const char* format, Args&&... args) {
+    return std::vformat(Tr(format), std::make_format_args(args...));
 }
 
 }  // namespace luma

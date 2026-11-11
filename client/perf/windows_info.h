@@ -1,17 +1,17 @@
 // =============================================================================
-//  windows_info.h - Leer (SOLO leer) configuraciones de Windows útiles para jugar
+//  windows_info.h - Reading (ONLY reading) Windows settings useful for gaming
 // =============================================================================
-//  Para la sección de ayuda del menú: Luma te muestra cómo están estas
-//  opciones y cómo cambiarlas, pero NUNCA las cambia por su cuenta.
+//  For the menu's help section: Luma shows you how these options are set
+//  and how to change them, but NEVER changes them by itself.
 //
-//  Todas se leen del registro de Windows o con funciones oficiales:
-//    - Modo de juego:   HKCU\Software\Microsoft\GameBar, AutoGameModeEnabled
-//    - Programación de GPU acelerada por hardware ("HAGS"):
-//                       HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers, HwSchMode (2 = sí)
-//    - Plan de energía: PowerGetActiveScheme + su nombre
-//    - GPU preferida para Minecraft:
-//                       HKCU\Software\Microsoft\DirectX\UserGpuPreferences, valor = ruta del .exe
-//    - Optimizaciones para juegos en ventana: el mismo lugar, "DirectXUserGlobalSettings"
+//  They're all read from the Windows registry or with official functions:
+//    - Game Mode:       HKCU\Software\Microsoft\GameBar, AutoGameModeEnabled
+//    - Hardware-accelerated GPU scheduling ("HAGS"):
+//                       HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers, HwSchMode (2 = yes)
+//    - Power plan:      PowerGetActiveScheme + its name
+//    - Preferred GPU for Minecraft:
+//                       HKCU\Software\Microsoft\DirectX\UserGpuPreferences, value = path of the .exe
+//    - Optimizations for windowed games: the same place, "DirectXUserGlobalSettings"
 // =============================================================================
 #pragma once
 
@@ -25,12 +25,12 @@ struct Info {
     Status gameMode = Status::Unknown;
     Status gpuScheduling = Status::Unknown;
     Status windowedOptimizations = Status::Unknown;
-    std::string powerPlan;          // nombre del plan activo ("Equilibrado"...)
+    std::string powerPlan;          // name of the active plan ("Balanced"...)
     bool powerPlanIsHighPerformance = false;
-    std::string gpuPreference;      // "Alto rendimiento", "Ahorro de energía", "Lo decide Windows"
+    std::string gpuPreference;      // "High performance", "Power saving", "Windows decides"
 };
 
-// Lee todo (unos pocos milisegundos: llamarlo al abrir la página, no por frame).
+// Reads everything (a few milliseconds: call it when opening the page, not per frame).
 Info Read();
 
 }  // namespace luma::perf::windows

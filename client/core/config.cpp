@@ -1,5 +1,5 @@
 // =============================================================================
-//  config.cpp - Implementación de la configuración
+//  config.cpp - Configuration implementation
 // =============================================================================
 #include "core/config.h"
 #include "core/tr.h"
@@ -52,7 +52,7 @@ fs::path ProfilesDir() {
     return dir.empty() ? fs::path{} : dir / L"profiles";
 }
 
-// Convierte texto UTF-8 (como guardamos los nombres) a ruta de Windows.
+// Converts UTF-8 text (how we store the names) to a Windows path.
 fs::path FromUtf8(const std::string& text) {
     const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
                                          nullptr, 0);
@@ -65,9 +65,9 @@ fs::path ProfilePath(const std::string& name) {
     return ProfilesDir() / FromUtf8(name + ".json");
 }
 
-// --- Leer y escribir archivos --------------------------------------------------
+// --- Reading and writing files -------------------------------------------------
 
-// Lee un JSON. Devuelve false si no existe; "corrupt" = existe pero está dañado.
+// Reads a JSON. Returns false if it doesn't exist; "corrupt" = it exists but is damaged.
 bool ReadJson(const fs::path& path, json& out, bool& corrupt) {
     corrupt = false;
     std::ifstream file(path, std::ios::binary);
@@ -76,8 +76,8 @@ bool ReadJson(const fs::path& path, json& out, bool& corrupt) {
     }
     std::stringstream buffer;
     buffer << file.rdbuf();
-    // parse(texto, nullptr, false): la versión que NO lanza excepciones; si el
-    // texto no es JSON válido devuelve un valor "discarded".
+    // parse(text, nullptr, false): the version that does NOT throw exceptions; if
+    // the text isn't valid JSON it returns a "discarded" value.
     out = json::parse(buffer.str(), nullptr, false);
     if (out.is_discarded() || !out.is_object()) {
         corrupt = true;
@@ -86,7 +86,7 @@ bool ReadJson(const fs::path& path, json& out, bool& corrupt) {
     return true;
 }
 
-// Escribe un JSON de forma segura: a un .tmp y después lo reemplaza.
+// Writes a JSON safely: to a .tmp and then replaces the real file.
 bool WriteJsonAtomic(const fs::path& path, const json& data) {
     std::error_code ec;
     fs::create_directories(path.parent_path(), ec);
@@ -96,25 +96,25 @@ bool WriteJsonAtomic(const fs::path& path, const json& data) {
         if (!file) {
             return false;
         }
-        // dump(4) = texto con sangría de 4 espacios (legible si lo abres).
+        // dump(4) = text indented with 4 spaces (readable if you open it).
         file << data.dump(4);
         if (!file) {
             return false;
         }
     }
-    // MoveFileEx con REPLACE_EXISTING reemplaza el archivo en un solo paso.
+    // MoveFileEx with REPLACE_EXISTING replaces the file in a single step.
     return MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
 }
 
 void BackupCorrupt(const fs::path& path) {
     std::error_code ec;
     fs::path backup = path;
-    backup.replace_extension(L".corrupto.json");
+    backup.replace_extension(L".corrupt.json");
     fs::copy_file(path, backup, fs::copy_options::overwrite_existing, ec);
-    log::Warn("Config dañada: {}. Copia guardada en {}.", paths::ToUtf8(path), paths::ToUtf8(backup));
+    log::Warn("Damaged config: {}. Copy saved to {}.", paths::ToUtf8(path), paths::ToUtf8(backup));
 }
 
-// --- Perfil <-> JSON (con el candado tomado) -----------------------------------
+// --- Profile <-> JSON (with the lock held) ---------------------------------------
 
 json BuildProfileJson() {
     json data;
@@ -127,8 +127,8 @@ json BuildProfileJson() {
     return data;
 }
 
-// Aplica un JSON de perfil. Si algo tiene un tipo inesperado, nlohmann lanza
-// una excepción: la atrapamos y aplicamos los valores de fábrica.
+// Applies a profile JSON. If something has an unexpected type, nlohmann throws
+// an exception: we catch it and apply the defaults.
 bool ApplyProfileJson(const json& data) {
     try {
         g_menuKey.store(data.value("menuKey", static_cast<int>('L')));
@@ -138,7 +138,7 @@ bool ApplyProfileJson(const json& data) {
         modules::Manager::Load(data);
         return true;
     } catch (const std::exception& e) {
-        log::Warn("Valores inválidos en la config ({}); se usan los de fábrica.", e.what());
+        log::Warn("Invalid values in the config ({}); using the defaults.", e.what());
         const json empty = json::object();
         g_menuKey.store('L');
         g_unloadKey.store(VK_END);
@@ -149,7 +149,7 @@ bool ApplyProfileJson(const json& data) {
     }
 }
 
-// Carga el perfil "name" en memoria (con el candado tomado).
+// Loads the profile "name" into memory (with the lock held).
 void LoadProfile(const std::string& name) {
     json data = json::object();
     bool corrupt = false;
@@ -158,14 +158,14 @@ void LoadProfile(const std::string& name) {
         if (!ApplyProfileJson(data)) {
             notify::Push(notify::Kind::Warning, Tr("The config had invalid values: defaults were used"));
         }
-        log::Info("Perfil cargado: {}", name);
+        log::Info("Profile loaded: {}", name);
     } else {
         if (corrupt) {
             BackupCorrupt(path);
             notify::Push(notify::Kind::Warning, Tr("Config was damaged: defaults were used (a copy was kept)"));
         }
         ApplyProfileJson(json::object());
-        log::Info("Perfil {} sin archivo: valores de fábrica.", name);
+        log::Info("Profile {} has no file: defaults.", name);
     }
     g_activeProfile = name;
 }
@@ -177,7 +177,7 @@ bool WriteActiveProfileName() {
     return WriteJsonAtomic(ConfigDir() / L"luma.json", root);
 }
 
-// Escribe el perfil activo. Arma el JSON con el candado y escribe sin él.
+// Writes the active profile. Builds the JSON with the lock and writes without it.
 bool WriteActiveProfile() {
     json data;
     std::string name;
@@ -187,7 +187,7 @@ bool WriteActiveProfile() {
         name = g_activeProfile;
     }
     if (!WriteJsonAtomic(ProfilePath(name), data)) {
-        log::Error("No se pudo guardar el perfil {}.", name);
+        log::Error("Couldn't save profile {}.", name);
         return false;
     }
     return true;
@@ -197,7 +197,7 @@ bool WriteActiveProfile() {
 
 void LoadAtStartup() {
     if (ConfigDir().empty()) {
-        log::Warn("Sin carpeta de datos: la config no se guardará.");
+        log::Warn("No data folder: the config won't be saved.");
         return;
     }
     std::string active = kDefaultProfile;
@@ -210,7 +210,7 @@ void LoadAtStartup() {
                 active = saved;
             }
         } catch (const std::exception&) {
-            // Nombre con tipo inválido: nos quedamos con "default".
+            // Name with an invalid type: we keep "default".
         }
     }
     std::lock_guard lock(StateMutex());
@@ -249,12 +249,12 @@ std::vector<std::string> ListProfiles() {
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(ProfilesDir(), ec)) {
         if (entry.path().extension() == L".json" &&
-            entry.path().stem().extension().empty()) {  // excluye *.corrupto.json
+            entry.path().stem().extension().empty()) {  // skips *.corrupt.json
             names.push_back(paths::ToUtf8(entry.path().stem()));
         }
     }
     if (std::find(names.begin(), names.end(), g_activeProfile) == names.end()) {
-        names.push_back(g_activeProfile);  // el activo aunque todavía no se haya guardado
+        names.push_back(g_activeProfile);  // the active one even if it hasn't been saved yet
     }
     std::sort(names.begin(), names.end());
     return names;
@@ -274,8 +274,8 @@ bool SwitchProfile(const std::string& name) {
     if (!IsValidProfileName(name) || name == g_activeProfile) {
         return false;
     }
-    // Guardar el actual antes de cambiar (con el candado: el JSON se arma
-    // rápido; la escritura del archivo es lo único que tarda, unos ms).
+    // Save the current one before switching (with the lock: the JSON is built
+    // quickly; writing the file is the only slow part, a few ms).
     WriteJsonAtomic(ProfilePath(g_activeProfile), BuildProfileJson());
     LoadProfile(name);
     WriteActiveProfileName();
@@ -293,7 +293,7 @@ bool CreateProfile(const std::string& name) {
         return false;
     }
     WriteJsonAtomic(ProfilePath(g_activeProfile), BuildProfileJson());
-    // El nuevo perfil empieza como copia del actual.
+    // The new profile starts as a copy of the current one.
     if (!WriteJsonAtomic(ProfilePath(name), BuildProfileJson())) {
         notify::Push(notify::Kind::Error, Tr("Couldn't create the profile"));
         return false;

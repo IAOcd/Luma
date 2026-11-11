@@ -1,13 +1,13 @@
 // =============================================================================
-//  timer.h - Reloj de alta precisión
+//  timer.h - High-precision clock
 // =============================================================================
-//  QueryPerformanceCounter (QPC) es el reloj más preciso de Windows: mide en
-//  "ticks", normalmente de 100 nanosegundos (0,0001 ms). Leerlo cuesta unos
-//  20-30 nanosegundos, así que se puede usar en cada frame sin problema.
+//  QueryPerformanceCounter (QPC) is Windows' most precise clock: it measures
+//  in "ticks", usually of 100 nanoseconds (0.0001 ms). Reading it costs about
+//  20-30 nanoseconds, so it can be used every frame without problems.
 //
-//  Uso:
+//  Usage:
 //      const std::int64_t start = perf::Now();
-//      ...algo...
+//      ...something...
 //      const double ms = perf::TicksToMs(perf::Now() - start);
 // =============================================================================
 #pragma once
@@ -18,8 +18,8 @@
 
 namespace luma::perf {
 
-// Cuántos ticks hay en un segundo. Windows lo fija al arrancar la PC y no
-// cambia, así que lo leemos una sola vez (en Init).
+// How many ticks there are in a second. Windows sets it when the PC boots and
+// it doesn't change, so we read it only once (in Init).
 inline std::int64_t g_ticksPerSecond = 1;
 
 inline void Init() {
@@ -28,8 +28,8 @@ inline void Init() {
     g_ticksPerSecond = frequency.QuadPart;
 }
 
-// "inline" en funciones tan cortas le permite al compilador copiarlas en el
-// lugar donde se usan, sin el costo de una llamada.
+// "inline" on such short functions lets the compiler copy them into the
+// place where they're used, without the cost of a call.
 inline std::int64_t Now() {
     LARGE_INTEGER counter;
     QueryPerformanceCounter(&counter);

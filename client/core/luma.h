@@ -1,5 +1,5 @@
 // =============================================================================
-//  luma.h - Ciclo de vida de Luma (arrancar, esperar, descargar)
+//  luma.h - Luma's lifecycle (start, wait, unload)
 // =============================================================================
 #pragma once
 
@@ -7,12 +7,12 @@
 
 namespace luma {
 
-// Corre todo Luma: arranca los sistemas, espera hasta que el usuario pulse la
-// tecla de descarga y luego apaga todo en orden. Se ejecuta en el hilo propio
-// de Luma (ver dllmain.cpp), nunca dentro de DllMain.
+// Runs all of Luma: starts the systems, waits until the user presses the
+// unload key and then shuts everything down in order. It runs on Luma's own
+// thread (see dllmain.cpp), never inside DllMain.
 //
-// Cuando esta función termina, ya no queda NADA de Luma activo en el juego
-// (ni hooks, ni hilos, ni ventanas), y es seguro quitar la DLL de la memoria.
+// When this function returns, NOTHING of Luma is active in the game anymore
+// (no hooks, no threads, no windows), and it's safe to remove the DLL from memory.
 void Run(HMODULE module);
 
 }  // namespace luma

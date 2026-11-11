@@ -42,4 +42,12 @@ inline bool LooksLikePointer(std::uintptr_t value) {
     return value > 0x10000 && value < 0x00007FFFFFFFFFFF && (value & 0x7) == 0;
 }
 
+// Igual, pero para punteros a datos que son solo floats o ints (por ejemplo
+// la posición del jugador): el juego puede guardarlos en una dirección
+// múltiplo de 4, no necesariamente de 8. Exigir 8 los descartaba a veces
+// (dependía de dónde caían en memoria en cada partida).
+inline bool LooksLikeDataPointer(std::uintptr_t value) {
+    return value > 0x10000 && value < 0x00007FFFFFFFFFFF && (value & 0x3) == 0;
+}
+
 }  // namespace luma::sdk

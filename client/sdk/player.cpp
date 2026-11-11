@@ -4,6 +4,7 @@
 #include "sdk/player.h"
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 
 #include "core/hooks.h"
@@ -43,7 +44,7 @@ std::atomic<float> g_followStrength{1.0f};
 
 // Lee un puntero del jugador a uno de sus componentes.
 bool Component(std::uintptr_t player, std::uintptr_t offset, std::uintptr_t& out) {
-    return SafeRead(player + offset, out) && LooksLikePointer(out);
+    return SafeRead(player + offset, out) && LooksLikeDataPointer(out);
 }
 
 // ¿Los offsets tienen sentido para ESTE objeto? La caja de un jugador mide
@@ -129,13 +130,27 @@ std::uintptr_t LocalPlayer() {
     return g_player.load(std::memory_order_relaxed);
 }
 
+// Diagnóstico: si la lectura falla, decir en el log en qué paso (una vez
+// cada 5 segundos como mucho, para no llenar el archivo).
+void ReadFailed(int step) {
+    static std::atomic<long long> last{0};
+    const long long now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (now - last.load(std::memory_order_relaxed) < 5000) {
+        return;
+    }
+    last.store(now, std::memory_order_relaxed);
+    log::Warn("SDK: no se pudo leer al jugador (paso {}, jugador 0x{:X}, hook {}, offsets malos {}).", step,
+              g_player.load(), g_hooked.load(), g_offsetsBad.load());
+}
+
 bool Read(Snapshot& out) {
     if (!Available()) {
-        return false;
+        return false;  // (normal en el primer segundo: todavía no se encontró al jugador)
     }
     const std::uintptr_t player = g_player.load(std::memory_order_relaxed);
     std::uintptr_t vtable = 0;
     if (player == 0 || !SafeRead(player, vtable) || vtable != g_vtable.load(std::memory_order_relaxed)) {
+        ReadFailed(1);
         return false;  // no hay jugador, o esa memoria ya es otra cosa
     }
     std::uintptr_t state = 0;
@@ -143,9 +158,14 @@ bool Read(Snapshot& out) {
     std::uintptr_t rotation = 0;
     float rot[2]{};
     if (!Component(player, offsets::kActorStateVector, state) || !Component(player, offsets::kActorAabb, aabb) ||
-        !Component(player, offsets::kActorRotation, rotation) || !SafeRead(state + offsets::kStatePos, out.eye) || !SafeRead(state + offsets::kStatePosOld, out.eyeOld) ||
+        !Component(player, offsets::kActorRotation, rotation)) {
+        ReadFailed(2);
+        return false;
+    }
+    if (!SafeRead(state + offsets::kStatePos, out.eye) || !SafeRead(state + offsets::kStatePosOld, out.eyeOld) ||
         !SafeRead(state + offsets::kStateVelocity, out.velocity) || !SafeRead(aabb + offsets::kAabbMin, out.feet) ||
         !SafeRead(rotation + offsets::kRotPitch, rot)) {
+        ReadFailed(3);
         return false;
     }
     // Los pies: x y z del centro (como los muestra el juego), y la altura
@@ -158,7 +178,11 @@ bool Read(Snapshot& out) {
     out.pitch = rot[0];
     out.yaw = rot[1];
     SafeRead(player + offsets::kActorTicksExisted, out.ticks);
-    return std::isfinite(out.eye[0]) && std::isfinite(out.eye[1]) && std::isfinite(out.eye[2]);
+    if (!(std::isfinite(out.eye[0]) && std::isfinite(out.eye[1]) && std::isfinite(out.eye[2]))) {
+        ReadFailed(4);
+        return false;
+    }
+    return true;
 }
 
 void SetZoomSensitivityFollow(bool follow, float strength) {

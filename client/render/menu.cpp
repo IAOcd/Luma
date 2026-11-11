@@ -31,6 +31,7 @@
 #include <shellapi.h>  // ShellExecuteW: abrir la carpeta de Luma
 
 #include <algorithm>
+#include <cstdint>
 #include <array>
 #include <atomic>
 #include <cctype>
@@ -190,6 +191,113 @@ float Animate(ImGuiID id, float target, float speed = 14.0f) {
     return value;
 }
 
+// --- Reactive buttons --------------------------------------------------------------
+// Every button reacts to the touch like a real one:
+//   - pressed, it sinks a little (it shrinks to ~96%);
+//   - released, it springs back with a tiny bounce (a spring that overshoots
+//     a hair and settles);
+//   - a click leaves a soft ripple of light that spreads from the mouse and
+//     fades in half a second.
+// Cheap: the button is drawn as always and then its corners are moved
+// (scaled around its center); the ripple is one circle for half a second.
+// With "animations" off in the theme, nothing of this happens.
+struct Press {
+    ImGuiID id = 0;
+    int firstVertex = 0;
+    ImVec2 min, max;
+    float scale = 1.0f;
+};
+
+// Call right after the button's InvisibleButton, BEFORE drawing it.
+Press BeginPress(ImVec2 min, ImVec2 max, float depth = 0.04f) {
+    Press pr;
+    pr.id = ImGui::GetItemID();
+    pr.min = min;
+    pr.max = max;
+    pr.firstVertex = ImGui::GetWindowDrawList()->VtxBuffer.Size;
+    if (!theme::Get().animations) return pr;
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    const ImGuiID kScale = pr.id ^ 0x51A7E001u, kSpeed = pr.id ^ 0x51A7E002u;
+    const ImGuiID kTime = pr.id ^ 0x51A7E003u, kX = pr.id ^ 0x51A7E004u, kY = pr.id ^ 0x51A7E005u;
+    const bool held = ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    float x = st->GetFloat(kScale, 1.0f);
+    float v = st->GetFloat(kSpeed, 0.0f);
+    const float target = held ? 1.0f - depth : 1.0f;
+    // A slightly bouncy spring (damping 0.45 of "critical": it overshoots a
+    // little on release). Two small steps per frame keep it stable.
+    constexpr float kStiffness = 420.0f;
+    const float damping = 2.0f * 0.45f * std::sqrt(kStiffness);
+    const float dt = std::min(ImGui::GetIO().DeltaTime, 1.0f / 30.0f) * 0.5f;
+    for (int i = 0; i < 2; ++i) {
+        v += (kStiffness * (target - x) - damping * v) * dt;
+        x += v * dt;
+    }
+    if (std::fabs(x - target) < 0.0004f && std::fabs(v) < 0.002f) {
+        x = target;
+        v = 0.0f;
+    }
+    st->SetFloat(kScale, x);
+    st->SetFloat(kSpeed, v);
+    pr.scale = x;
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        st->SetFloat(kTime, static_cast<float>(ImGui::GetTime()));
+        st->SetFloat(kX, ImGui::GetIO().MousePos.x - min.x);
+        st->SetFloat(kY, ImGui::GetIO().MousePos.y - min.y);
+    }
+    return pr;
+}
+
+// Call AFTER drawing the button: draws the ripple and applies the press.
+// "round" = a round button (the ripple grows from its center, inside it).
+void EndPress(const Press& pr, ImVec4 rippleColor, bool ripple = true, bool round = false) {
+    if (!theme::Get().animations) return;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    const float started = st->GetFloat(pr.id ^ 0x51A7E003u, -100.0f);
+    const float age = static_cast<float>(ImGui::GetTime()) - started;
+    constexpr float kRipple = 0.55f;
+    if (ripple && age >= 0.0f && age < kRipple) {
+        const float t = age / kRipple;
+        const float grow = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);  // fast, then slow
+        const float fade = (1.0f - t) * (1.0f - t);
+        const ImVec2 size(pr.max.x - pr.min.x, pr.max.y - pr.min.y);
+        if (round) {
+            const ImVec2 c(pr.min.x + size.x * 0.5f, pr.min.y + size.y * 0.5f);
+            draw->AddCircleFilled(c, size.x * 0.5f * grow, Col(theme::WithAlpha(rippleColor, rippleColor.w * fade)), 40);
+        } else {
+            const ImVec2 at(pr.min.x + st->GetFloat(pr.id ^ 0x51A7E004u, size.x * 0.5f),
+                            pr.min.y + st->GetFloat(pr.id ^ 0x51A7E005u, size.y * 0.5f));
+            // Far enough to reach the farthest corner.
+            const float dx = std::max(at.x - pr.min.x, pr.max.x - at.x), dy = std::max(at.y - pr.min.y, pr.max.y - at.y);
+            draw->PushClipRect(pr.min, pr.max, true);
+            draw->AddCircleFilled(at, std::sqrt(dx * dx + dy * dy) * grow, Col(theme::WithAlpha(rippleColor, rippleColor.w * fade)), 48);
+            draw->PopClipRect();
+        }
+    }
+    if (std::fabs(pr.scale - 1.0f) > 0.0003f) {
+        const ImVec2 c((pr.min.x + pr.max.x) * 0.5f, (pr.min.y + pr.max.y) * 0.5f);
+        for (int i = pr.firstVertex; i < draw->VtxBuffer.Size; ++i) {
+            ImVec2& v = draw->VtxBuffer[i].pos;
+            v.x = c.x + (v.x - c.x) * pr.scale;
+            v.y = c.y + (v.y - c.y) * pr.scale;
+        }
+    }
+}
+
+// An icon that changes (play <-> pause) pops in instead of switching at once.
+// Returns 0..1: how far into its entrance the current icon is.
+float IconPop(ImGuiID id, const char* icon) {
+    if (!theme::Get().animations) return 1.0f;
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    const int key = static_cast<int>(reinterpret_cast<std::uintptr_t>(icon) & 0x7FFFFFFF);
+    const ImGuiID kIcon = id ^ 0x1C0A0001u, kTime = id ^ 0x1C0A0002u;
+    const int last = st->GetInt(kIcon, key);
+    if (last != key) st->SetFloat(kTime, static_cast<float>(ImGui::GetTime()));
+    st->SetInt(kIcon, key);
+    const float age = static_cast<float>(ImGui::GetTime()) - st->GetFloat(kTime, -100.0f);
+    return std::clamp(age / 0.22f, 0.0f, 1.0f);
+}
+
 void OnNavigate() {
     g_pageChangedAt = perf::Now();
     sound::Play(sound::Effect::Click);
@@ -332,6 +440,7 @@ bool Toggle(const char* id, bool* value, float height) {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 pos(start.x, std::floor(start.y + (height - h) * 0.5f));
     const ImVec2 max(pos.x + width, pos.y + h);
+    const Press press = BeginPress(pos, max, 0.08f);
     // El brillo alrededor (solo encendido).
     if (t > 0.01f) {
         const float g = h * 0.22f;
@@ -346,6 +455,7 @@ bool Toggle(const char* id, bool* value, float height) {
     const float cx = pos.x + pad + r + t * (width - (pad + r) * 2.0f);
     const float cy = pos.y + h * 0.5f;
     draw->AddCircleFilled(ImVec2(cx, cy), r, Col(Mix(p.knob, p.onAccentText, t)), 24);
+    EndPress(press, ImVec4(0, 0, 0, 0), /*ripple=*/false);
     return clicked;
 }
 
@@ -373,6 +483,7 @@ bool GlassButton(const char* label, const char* icon, ImVec2 size, bool primary 
     HoverFeedback(hovered && !disabled);
     const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 18.0f);
     const ImVec2 max(pos.x + size.x, pos.y + size.y);
+    const Press press = BeginPress(pos, max, disabled ? 0.0f : 0.045f);
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const float r = std::min(size.y * 0.5f, Rounding() * 0.55f);
     const float alpha = disabled ? 0.45f : 1.0f;
@@ -396,6 +507,7 @@ bool GlassButton(const char* label, const char* icon, ImVec2 size, bool primary 
     if (hasText) {
         draw->AddText(ImVec2(x, pos.y + (size.y - textSize.y) * 0.5f), Col(textColor, alpha), label);
     }
+    EndPress(press, theme::WithAlpha(textColor, 0.16f), !disabled);
     if (clicked && !disabled) {
         sound::Play(sound::Effect::Click);
     }
@@ -715,6 +827,7 @@ void ModuleCard(Module& module, float width, float height, int index) {
     const ImVec2 cMin(pos.x, pos.y + enterOffset);
     const ImVec2 cMax(pos.x + width, pos.y + height + enterOffset);
     const float alpha = enter;
+    const Press press = BeginPress(cMin, cMax, 0.025f);
     ModuleBackground(draw, cMin, cMax, r, hover, on, g_detail == &module, alpha);
 
     const float pad = fs * 0.95f;
@@ -760,6 +873,7 @@ void ModuleCard(Module& module, float width, float height, int index) {
         icons::Draw(draw, icons::kSettings, gc, gear * 0.62f, Col(theme::WithAlpha(p.text, 0.45f + 0.55f * std::max(gh, hover * 0.6f)), alpha));
     }
 
+    EndPress(press, theme::WithAlpha(p.text, 0.08f), !overGear && !overToggle);
     if (overGear) {
         ImGui::SetTooltip("%s", Tr("Options and key"));
     } else if (hovered && !overToggle) {
@@ -801,6 +915,7 @@ void ModuleRow(Module& module, float width, int index) {
     const ImVec2 cMin(pos.x + enterOffset, pos.y);
     const ImVec2 cMax(pos.x + width + enterOffset, pos.y + height);
     const float alpha = enter;
+    const Press press = BeginPress(cMin, cMax, 0.015f);
     ModuleBackground(draw, cMin, cMax, r, hover, on, g_detail == &module, alpha);
 
     const float pad = fs * 0.75f;
@@ -845,6 +960,7 @@ void ModuleRow(Module& module, float width, int index) {
     draw->AddText(ImVec2(textX, textY + medium->FontSize + fs * 0.05f), Col(p.textDim, alpha), second);
     draw->PopClipRect();
 
+    EndPress(press, theme::WithAlpha(p.text, 0.08f), !overGear && !overToggle);
     if (overGear) {
         ImGui::SetTooltip("%s", Tr("Options and key"));
     } else if (hovered && !overToggle) {
@@ -940,11 +1056,13 @@ bool IconToggle(const char* id, const char* icon, bool selected, const char* too
     const float sel = Animate(ImGui::GetItemID() + 1, selected ? 1.0f : 0.0f, 16.0f);
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 max(pos.x + size, pos.y + size);
+    const Press press = BeginPress(pos, max, 0.08f);
     const float r = std::min(size * 0.5f, Rounding() * 0.55f);
     draw->AddRectFilled(pos, max, Col(Mix(theme::WithAlpha(p.field, 1.0f + 0.8f * hover), theme::Accent(0.22f), sel)), r);
     draw->AddRect(pos, max, Col(Mix(theme::WithAlpha(p.border, 0.55f), theme::Accent(0.8f), sel)), r, 0, 1.0f);
     icons::Draw(draw, icon, ImVec2(pos.x + size * 0.5f, pos.y + size * 0.5f), size * 0.5f,
                 Col(Mix(theme::WithAlpha(p.text, 0.7f), theme::Accent(1.0f), sel)));
+    EndPress(press, theme::WithAlpha(p.text, 0.14f));
     if (hovered && tooltip != nullptr) ImGui::SetTooltip("%s", Tr(tooltip));
     if (clicked) sound::Play(sound::Effect::Click);
     return clicked;
@@ -967,15 +1085,17 @@ void CategoryPills() {
         const bool clicked = ImGui::InvisibleButton("##pill", size);
         const bool hovered = ImGui::IsItemHovered();
         const float on = Animate(ImGui::GetItemID(), g_categoryFilter == c ? 1.0f : 0.0f, 16.0f);
+        const ImVec2 max(pos.x + size.x, pos.y + size.y);
+        const Press press = BeginPress(pos, max, 0.06f);
         ImGui::PopID();
         HoverFeedback(hovered);
-        const ImVec2 max(pos.x + size.x, pos.y + size.y);
         const float r = size.y * 0.5f;
         draw->AddRectFilled(pos, max, Col(Mix(theme::WithAlpha(p.field, hovered ? 1.6f : 1.0f), theme::Accent(1.0f), on)), r);
         if (on < 0.99f) {
             draw->AddRect(pos, max, Col(p.border, 0.55f * (1.0f - on)), r, 0, 1.0f);
         }
         CenteredText(draw, ImGui::GetFont(), pos, max, Col(Mix(p.text, p.onAccentText, on)), label);
+        EndPress(press, theme::WithAlpha(Mix(p.text, p.onAccentText, on), 0.18f));
         if (clicked && g_categoryFilter != c) {
             g_categoryFilter = c;
             g_pageChangedAt = perf::Now();
@@ -1804,18 +1924,26 @@ bool MusicButton(const char* id, ImVec2 center, float radius, const char* icon, 
     const bool clicked = ImGui::InvisibleButton("##b", ImVec2(radius * 2.0f, radius * 2.0f)) && enabled;
     const bool hovered = enabled && ImGui::IsItemHovered();
     const float h = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 16.0f);
+    const float pop = IconPop(ImGui::GetItemID(), icon);
+    const Press press = BeginPress(ImVec2(center.x - radius, center.y - radius), ImVec2(center.x + radius, center.y + radius),
+                                   enabled ? 0.1f : 0.0f);
     ImGui::PopID();
     HoverFeedback(hovered);
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const float r = radius * (1.0f + 0.06f * h);
     const float alpha = enabled ? 1.0f : 0.35f;
+    // The icon pops in when it changes (play <-> pause): it grows from 70%
+    // with a little overshoot, and fades in.
+    const float popScale = 0.7f + 0.3f * pop + 0.12f * std::sin(pop * 3.14159f);
+    const float popAlpha = 0.35f + 0.65f * pop;
     if (primary) {
         draw->AddCircleFilled(center, r, Col(color, alpha), 40);
-        icons::Draw(draw, icon, center, r * 1.05f, Col(theme::kCharcoal, alpha));
+        icons::Draw(draw, icon, center, r * 1.05f * popScale, Col(theme::kCharcoal, alpha * popAlpha));
     } else {
         draw->AddCircleFilled(center, r, Col(p.surface, (0.7f + 0.3f * h) * alpha), 40);
-        icons::Draw(draw, icon, center, r * 0.95f, Col(Mix(p.text, color, h), alpha));
+        icons::Draw(draw, icon, center, r * 0.95f * popScale, Col(Mix(p.text, color, h), alpha * popAlpha));
     }
+    EndPress(press, primary ? ImVec4(0.0f, 0.0f, 0.0f, 0.18f) : theme::WithAlpha(color, 0.22f), enabled, /*round=*/true);
     if (clicked) {
         sound::Play(sound::Effect::Click);
     }
@@ -1927,16 +2055,21 @@ void DrawMusicPage() {
         ImGui::PushID(id);
         const bool clicked = ImGui::InvisibleButton("##t", ImVec2(fs * 1.9f, fs * 1.9f)) && enabled;
         const bool hovered = enabled && ImGui::IsItemHovered();
+        // Turning it on or off: the dot below grows in / shrinks out.
+        const float lit = Animate(ImGui::GetItemID() + 3, on ? 1.0f : 0.0f, 14.0f);
+        const Press press = BeginPress(ImVec2(at.x - fs * 0.95f, at.y - fs * 0.95f), ImVec2(at.x + fs * 0.95f, at.y + fs * 0.95f),
+                                       enabled ? 0.12f : 0.0f);
         ImGui::PopID();
         HoverFeedback(hovered);
         const float alpha = enabled ? 1.0f : 0.3f;
-        const ImVec4 color = on ? accent : theme::WithAlpha(p.text, hovered ? 0.95f : 0.6f);
+        const ImVec4 color = Mix(theme::WithAlpha(p.text, hovered ? 0.95f : 0.6f), accent, lit);
         icons::Draw(draw, icon, at, fs * 1.15f, Col(color, alpha));
-        if (on) draw->AddCircleFilled(ImVec2(at.x, at.y + fs * 0.9f), fs * 0.12f, Col(accent, alpha), 10);
+        if (lit > 0.01f) draw->AddCircleFilled(ImVec2(at.x, at.y + fs * 0.9f), fs * 0.12f * lit, Col(accent, alpha * lit), 10);
         if (badge != nullptr) {
             ImFont* tiny = theme::GetFonts().regular;
             draw->AddText(tiny, tiny->FontSize * 0.72f, ImVec2(at.x + fs * 0.35f, at.y - fs * 0.75f), Col(color, alpha), badge);
         }
+        EndPress(press, theme::WithAlpha(accent, 0.2f), enabled, /*round=*/true);
         if (clicked) sound::Play(sound::Effect::Click);
         return clicked;
     };
@@ -2370,6 +2503,7 @@ bool NavItem(const char* label, const char* icon, bool selected, int count = -1)
     HoverFeedback(hovered);
     const float hover = Animate(ImGui::GetItemID(), hovered && !selected ? 1.0f : 0.0f, 18.0f);
     const float active = Animate(ImGui::GetItemID() + 1, selected ? 1.0f : 0.0f, 14.0f);
+    const Press press = BeginPress(pos, ImVec2(pos.x + width, pos.y + height), 0.03f);
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const float r = Rounding() * 0.55f;
     if (hover > 0.01f) {
@@ -2389,6 +2523,7 @@ bool NavItem(const char* label, const char* icon, bool selected, int count = -1)
         const ImVec2 cs = ImGui::CalcTextSize(buffer);
         draw->AddText(ImVec2(pos.x + width - Fs() * 0.7f - cs.x, pos.y + (height - cs.y) * 0.5f), Col(p.textDim), buffer);
     }
+    EndPress(press, theme::WithAlpha(p.text, 0.1f));
     return clicked;
 }
 

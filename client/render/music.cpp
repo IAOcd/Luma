@@ -541,7 +541,52 @@ const lyrics::Result& CurrentLyrics() {
 }
 
 int LyricsMs(const media::Track& track) {
-    return static_cast<int>((track.position - static_cast<double>(Get().lyricsOffset)) * 1000.0);
+    const int raw = static_cast<int>((track.position - static_cast<double>(Get().lyricsOffset)) * 1000.0);
+    // A STEADY CLOCK: the app corrects the song's position now and then, and
+    // the correction can step back a few milliseconds. A lit word would then
+    // go out and on again (a "stutter"). While the song plays, small steps
+    // back (under 0.4 s) are ignored and the clock catches up smoothly; a
+    // bigger jump (a seek) or a new song is taken at once.
+    static int shown = 0;
+    static std::uint32_t lastTrack = 0;
+    static int frame = -1;
+    if (frame == ImGui::GetFrameCount() && lastTrack == track.trackId) return shown;  // once per frame
+    frame = ImGui::GetFrameCount();
+    if (track.trackId != lastTrack || !track.playing || raw > shown + 400 || raw < shown - 400) {
+        shown = raw;
+    } else if (raw > shown) {
+        shown = raw;
+    }
+    lastTrack = track.trackId;
+    return shown;
+}
+
+float WordProgress(const lyrics::Result& ly, int line, std::size_t word, int ms) {
+    if (line < 0 || line >= static_cast<int>(ly.lines.size())) return 0.0f;
+    const lyrics::Line& l = ly.lines[static_cast<std::size_t>(line)];
+    if (word >= l.words.size()) return 0.0f;
+    const int start = l.words[word].ms;
+    int end;
+    if (word + 1 < l.words.size()) {
+        end = l.words[word + 1].ms;
+    } else {
+        const int nextLine = line + 1 < static_cast<int>(ly.lines.size()) ? ly.lines[static_cast<std::size_t>(line + 1)].ms
+                                                                            : start + 1500;
+        end = std::min(nextLine, start + 1500);
+    }
+    // At least 120 ms: a word that comes "instantly" still gets a quick sweep.
+    const int duration = std::max(120, end - start);
+    return std::clamp(static_cast<float>(ms - start) / static_cast<float>(duration), 0.0f, 1.0f);
+}
+
+void FeatherRight(ImDrawList* draw, int firstVertex, float edgeX, float feather) {
+    feather = std::max(feather, 1.0f);
+    for (int i = firstVertex; i < draw->VtxBuffer.Size; ++i) {
+        ImDrawVert& v = draw->VtxBuffer[i];
+        const float k = std::clamp((edgeX - v.pos.x) / feather + 0.5f, 0.0f, 1.0f);
+        const ImU32 a = (v.col >> IM_COL32_A_SHIFT) & 0xFF;
+        v.col = (v.col & ~IM_COL32_A_MASK) | (static_cast<ImU32>(static_cast<float>(a) * k + 0.5f) << IM_COL32_A_SHIFT);
+    }
 }
 
 namespace {
@@ -641,14 +686,27 @@ void DrawLyrics(ImVec2 min, ImVec2 max) {
         const int ms = LyricsMs(t);
         const int current = lyrics::LineAt(ly, ms);
         const int n = static_cast<int>(ly.lines.size());
+        // The list glides to the line being sung with a spring: it starts
+        // gently, speeds up and settles without bouncing (critically damped).
         static float scroll = 0.0f;
+        static float scrollSpeed = 0.0f;
         static std::uint32_t lastTrack = 0;
         const float target = static_cast<float>(std::max(0, current));
         if (lastTrack != t.trackId) {
             lastTrack = t.trackId;
             scroll = target;
+            scrollSpeed = 0.0f;
         }
-        scroll = ImLerp(scroll, target, std::min(1.0f, ImGui::GetIO().DeltaTime * 6.0f));
+        {
+            const float dt = std::min(ImGui::GetIO().DeltaTime, 1.0f / 30.0f);
+            constexpr float kStiffness = 70.0f;
+            const float damping = 2.0f * std::sqrt(kStiffness);
+            scrollSpeed += (kStiffness * (target - scroll) - damping * scrollSpeed) * dt;
+            scroll += scrollSpeed * dt;
+            if (std::fabs(target - scroll) > 6.0f) {  // a big jump (seek): don't fly through the whole song
+                scroll = target - std::copysign(6.0f, target - scroll);
+            }
+        }
         auto isPause = [&](int i) {
             const std::string& text = ly.lines[static_cast<std::size_t>(i)].text;
             return text.find_first_not_of(" \t") == std::string::npos;
@@ -679,6 +737,12 @@ void DrawLyrics(ImVec2 min, ImVec2 max) {
             const float dist = std::fabs(static_cast<float>(i) - scroll);
             const float soft = std::clamp(0.34f - (dist - 1.0f) * 0.03f, 0.14f, 0.34f);
             const bool isCurrent = i == current;
+            // Lines light up and go out gradually (by the song's clock, so a
+            // pause freezes them too): 0.25 s in, 0.45 s out.
+            const float lineOn = isCurrent ? SmoothStep(static_cast<float>(ms - line.ms) / 250.0f) : 0.0f;
+            const float lineOff = (i == current - 1 && i + 1 < n)
+                                      ? 1.0f - SmoothStep(static_cast<float>(ms - ly.lines[static_cast<std::size_t>(i + 1)].ms) / 450.0f)
+                                      : 0.0f;
             // Hover: a line can be clicked to jump to it.
             const bool hovered = t.canSeek && mouse.x >= min.x && mouse.x <= max.x && mouse.y >= y &&
                                  mouse.y < y + h - gapH * 0.5f && ImGui::IsWindowHovered();
@@ -694,24 +758,49 @@ void DrawLyrics(ImVec2 min, ImVec2 max) {
                 icons::Draw(draw, kNoteIcon, ImVec2(min.x + size * 0.45f, y + size * 0.5f), size * (0.85f + 0.1f * pulse),
                             U(p.text, isCurrent ? 0.6f + 0.4f * pulse : soft), size * 0.09f);
             } else if (isCurrent && ly.wordSynced && !line.words.empty()) {
-                // Real word timings: sung words bright, the rest soft.
+                // Real word timings. Each word is drawn twice: dim, and a
+                // bright copy on top whose soft edge sweeps left to right at
+                // the speed the word is sung. The sung word also rises a hair.
+                const float dimAlpha = soft + (0.4f - soft) * lineOn;
+                const float feather = size * 0.55f;
                 float x = min.x, rowY = y;
                 for (std::size_t w = 0; w < line.words.size(); ++w) {
                     const lyrics::Word& word = line.words[w];
                     const ImVec2 ws = f->CalcTextSizeA(size, FLT_MAX, 0.0f, word.text.c_str());
-                    if (x > min.x && x + ws.x > max.x) {
+                    // Wrap whole words (a word may come in syllables: "Elys"+"é"+"es ").
+                    const bool wordStart = w == 0 || line.words[w - 1].text.back() == ' ';
+                    float wordW = 0.0f;
+                    if (wordStart) {
+                        for (std::size_t k = w; k < line.words.size(); ++k) {
+                            const std::string& t2 = line.words[k].text;
+                            std::size_t len = t2.size();
+                            while (len > 0 && t2[len - 1] == ' ') --len;
+                            wordW += f->CalcTextSizeA(size, FLT_MAX, 0.0f, t2.c_str(), t2.c_str() + len).x;
+                            if (len < t2.size()) break;
+                        }
+                    }
+                    if (wordStart && x > min.x && x + wordW > max.x) {
                         x = min.x;
                         rowY += rowH;
                     }
-                    const float on = ms >= word.ms ? 1.0f : 0.38f;
-                    draw->AddText(f, size, ImVec2(x, rowY), U(p.text, on), word.text.c_str());
+                    const float sung = WordProgress(ly, i, w, ms);
+                    const ImVec2 at(x, rowY - size * 0.04f * SmoothStep(sung));
+                    draw->AddText(f, size, at, U(p.text, dimAlpha), word.text.c_str());
+                    if (sung > 0.0f) {
+                        const int firstVertex = draw->VtxBuffer.Size;
+                        draw->AddText(f, size, at, U(p.text, 1.0f), word.text.c_str());
+                        // From fully hidden (edge before the word) to fully lit (edge after it).
+                        FeatherRight(draw, firstVertex, x - feather * 0.5f + sung * (ws.x + feather), feather);
+                    }
                     x += ws.x;
                 }
             } else {
                 const char* starts[8];
                 const char* ends[8];
                 const int rows = WrapRows(f, size, line.text.c_str(), width, starts, ends, 8);
-                const float alpha = isCurrent ? 1.0f : (hovered ? soft + 0.25f : soft);
+                float alpha = isCurrent ? soft + (1.0f - soft) * lineOn : soft;
+                alpha = std::max(alpha, soft + (1.0f - soft) * lineOff);  // the line that just ended fades out
+                if (hovered) alpha = std::max(alpha, soft + 0.25f);
                 for (int r = 0; r < rows; ++r) {
                     draw->AddText(f, size, ImVec2(min.x, y + static_cast<float>(r) * rowH), U(p.text, alpha), starts[r], ends[r]);
                 }
@@ -758,10 +847,16 @@ bool DrawLyricsSettings() {
         lyrics::SetOnline(s.lyricsOnline);
         changed = true;
     }
+    if (ui::Toggle("Advanced source: LiriQo", &s.lyricsLiriqo, "(word by word, third-party service)")) {
+        lyrics::SetLiriqo(s.lyricsLiriqo);
+        changed = true;
+    }
     changed |= ui::Slider("Offset (seconds)", &s.lyricsOffset, -5.0f, 5.0f, "%+.1f");
     changed |= ui::Toggle("Next line on the HUD", &s.lyricsNextLine);
-    ui::Hint("To find the lyrics, the song's title, artist, album and length are sent to LRCLIB (lrclib.net). "
-             "Nothing about you. Found lyrics are saved on your PC, so each song is looked up once.");
+    changed |= ui::Toggle("Smooth word sweep on the HUD", &s.lyricsSweep, "(off: each word lights up at once)");
+    ui::Hint("To find the lyrics, the song's title, artist, album and length are sent to LiriQo (a free service run "
+             "by one developer, which asks Apple Music, NetEase and others) and, if it doesn't have them, to LRCLIB "
+             "(lrclib.net). Nothing about you. Found lyrics are saved on your PC, so each song is looked up once.");
     return changed;
 }
 

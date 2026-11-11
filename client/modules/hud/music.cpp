@@ -180,51 +180,37 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
     // The lyric line being sung (and the next one), with REAL timings only:
     // word by word if the source has word times, otherwise the whole line.
     //
-    // A STEADY SIZE: the box is measured once per song, for its LONGEST line
-    // (so it doesn't grow and shrink with every line). Lines longer than the
-    // max width wrap into two rows, and that room is kept for the whole song.
+    // A FIXED SIZE: the lyrics area is always as wide as "Max width" allows
+    // and always has room for two rows (plus the next line, if it's on). It
+    // never changes with the song or the line: no jumps on screen.
     // A new line fades in and rises a little instead of popping.
     const lyrics::Result& ly = mu::CurrentLyrics();
     const bool haveLyrics = ly.trackId == t.trackId && ly.status == lyrics::Status::Found && ly.synced && !ly.lines.empty();
     const float lyricMaxW = maxTextWidthForLyrics(s, u);
-    if (style == 5 || style == 6) {
-        const std::uint32_t lineCount = haveLyrics ? static_cast<std::uint32_t>(ly.lines.size()) : 0u;
-        if (layoutTrack_ != t.trackId || layoutScale_ != frame.scale || layoutLines_ != lineCount || layoutMaxW_ != lyricMaxW) {
-            layoutTrack_ = t.trackId;
-            layoutScale_ = frame.scale;
-            layoutLines_ = lineCount;
-            layoutMaxW_ = lyricMaxW;
-            float longest = rh::TextSize(m, t.title).x;
-            if (haveLyrics) {
-                longest = 0.0f;
-                for (const lyrics::Line& line : ly.lines) longest = std::max(longest, rh::TextSize(m, line.text.c_str()).x);
-            }
-            layoutTwoRows_ = longest > lyricMaxW;
-            layoutLongest_ = std::min(longest, lyricMaxW);
-        }
-    }
+    const int lyricMs = mu::LyricsMs(t);
     int lineIndex = -1;
+    const lyrics::Line* line = nullptr;  // the line being sung (with its words)
     const char* lineText = t.title;
     const char* nextText = nullptr;
-    int litChars = -1;  // >= 0: only this many letters are bright (word timings)
     if (haveLyrics) {
-        const int ms = mu::LyricsMs(t);
-        lineIndex = lyrics::LineAt(ly, ms);
+        lineIndex = lyrics::LineAt(ly, lyricMs);
         const int n = static_cast<int>(ly.lines.size());
         if (lineIndex >= 0) {
-            const lyrics::Line& line = ly.lines[static_cast<std::size_t>(lineIndex)];
-            lineText = line.text.find_first_not_of(' ') == std::string::npos ? "..." : line.text.c_str();
-            if (!line.words.empty()) {
-                litChars = 0;
-                for (const lyrics::Word& word : line.words) {
-                    if (ms < word.ms) break;
-                    litChars += static_cast<int>(word.text.size());
-                }
+            line = &ly.lines[static_cast<std::size_t>(lineIndex)];
+            if (line->text.find_first_not_of(' ') == std::string::npos) {
+                line = nullptr;
+                lineText = "...";
+            } else {
+                lineText = line->text.c_str();
             }
         } else {
             lineText = "...";
         }
         if (s.lyricsNextLine && lineIndex + 1 < n) nextText = ly.lines[static_cast<std::size_t>(lineIndex + 1)].text.c_str();
+    } else if (style == 6) {
+        // No lyrics (yet): a quiet note in the same place, so the size stays.
+        const bool searching = ly.trackId != t.trackId || ly.status == lyrics::Status::Searching;
+        lineText = searching ? Tr("Looking for the lyrics...") : Tr("No lyrics for this song");
     }
     if (lineIndex != shownLine_) {
         shownLine_ = lineIndex;
@@ -232,8 +218,8 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
     }
     const float lineFade = static_cast<float>(std::clamp((now - lineChangedAt_) / 0.22, 0.0, 1.0));
     const float lineRise = (1.0f - lineFade) * 3.0f * u;
-    const int rows = layoutTwoRows_ ? 2 : 1;
-    const bool reserveNext = s.lyricsNextLine && haveLyrics;
+    constexpr int rows = 2;
+    const bool reserveNext = s.lyricsNextLine;
     const float lyricBlockH = m.capHeight + static_cast<float>(rows - 1) * lineH + (reserveNext ? lineH : 0.0f);
 
     // Splits a text into up to "maxRows" rows of width "w" (word wrap).
@@ -254,39 +240,67 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
         return count;
     };
     auto drawLyric = [&](ImVec2 at, float w) {
-        const char* starts[2];
-        const char* ends[2];
-        const int n = wrap(lineText, w, rows, starts, ends);
-        int lit = litChars;
-        for (int r = 0; r < n; ++r) {
-            char row[256];
-            int len = std::min<int>(static_cast<int>(ends[r] - starts[r]), 250);
-            std::memcpy(row, starts[r], static_cast<std::size_t>(len));
-            row[len] = '\0';
-            // Two rows at most: if the rest doesn't fit in the last one, it ends with "...".
-            if (r == n - 1 && rh::TextSize(m, row).x > w) {
-                while (len > 1 && rh::TextSize(m, row).x + rh::TextSize(m, "...").x > w) {
-                    --len;
-                    while (len > 0 && (static_cast<unsigned char>(row[len]) & 0xC0) == 0x80) --len;  // whole letters
-                    row[len] = '\0';
+        // Everything stays inside its area (a very long line is cut, never spills).
+        draw->PushClipRect(ImVec2(at.x, at.y - m.capHeight), ImVec2(at.x + w, at.y + lyricBlockH + m.capHeight), true);
+        if (line != nullptr && !line->words.empty()) {
+            // WORD BY WORD: each word is placed on its own (wrapping to the
+            // second row when it doesn't fit). Every word is drawn dim, and
+            // the sung part bright on top: with "smooth sweep" the light
+            // fills each word at the speed it's sung; without it, a word
+            // lights up at once when it starts.
+            const float feather = m.capHeight * 1.1f;
+            float x = 0.0f;
+            int row = 0;
+            for (std::size_t i = 0; i < line->words.size(); ++i) {
+                const char* piece = line->words[i].text.c_str();
+                const float pieceW = rh::TextSize(m, piece).x;
+                // Wrap whole WORDS: a word can come in several pieces (syllables:
+                // "Elys"+"é"+"es "). At the start of a word, measure all of its
+                // pieces (without the trailing space, which may hang past the edge).
+                const bool wordStart = i == 0 || line->words[i - 1].text.back() == ' ';
+                float inkW = 0.0f;
+                if (wordStart) {
+                    for (std::size_t k = i; k < line->words.size(); ++k) {
+                        const std::string& t2 = line->words[k].text;
+                        std::size_t len = t2.size();
+                        while (len > 0 && t2[len - 1] == ' ') --len;
+                        inkW += m.font->CalcTextSizeA(m.fontSize, FLT_MAX, 0.0f, t2.c_str(), t2.c_str() + len).x;
+                        if (len < t2.size()) break;  // this piece ends the word
+                    }
                 }
-                std::memcpy(row + len, "...", 4);
+                if (wordStart && x > 0.0f && x + inkW > w && row + 1 < rows) {
+                    x = 0.0f;
+                    ++row;
+                }
+                const ImVec2 pos(at.x + x, at.y + static_cast<float>(row) * lineH + lineRise - m.capTop);
+                const float sung = s.lyricsSweep ? mu::WordProgress(ly, lineIndex, i, lyricMs)
+                                                 : (lyricMs >= line->words[i].ms ? 1.0f : 0.0f);
+                rh::Text(draw, m, pos, piece, WithAlpha(dim, lineFade));
+                if (sung > 0.0f) {
+                    const int firstVertex = draw->VtxBuffer.Size;
+                    rh::Text(draw, m, pos, piece, WithAlpha(bright, lineFade));
+                    if (sung < 1.0f) {
+                        mu::FeatherRight(draw, firstVertex, std::floor(pos.x) - feather * 0.5f + sung * (pieceW + feather), feather);
+                    }
+                }
+                x += pieceW;
             }
-            const ImVec2 pos(at.x, at.y + static_cast<float>(r) * lineH + lineRise);
-            if (lit < 0) {
-                Line(draw, m, pos, w, row, WithAlpha(bright, lineFade), false);
-            } else {
-                Line(draw, m, pos, w, row, WithAlpha(dim, lineFade), false);
-                const int here = std::clamp(lit, 0, len);
-                if (here > 0) {
-                    char sung[256];
-                    std::memcpy(sung, row, static_cast<std::size_t>(here));
-                    sung[here] = '\0';
-                    Line(draw, m, pos, w, sung, WithAlpha(bright, lineFade), false);
-                }
-                lit -= len;
+        } else {
+            // A whole line (no word times, or a title / message): all bright.
+            const char* starts[rows];
+            const char* ends[rows];
+            const int n = wrap(lineText, w, rows, starts, ends);
+            const ImU32 color = haveLyrics ? bright : dim;
+            for (int r = 0; r < n; ++r) {
+                const ImVec2 pos(at.x, at.y + static_cast<float>(r) * lineH + lineRise - m.capTop);
+                char text[256];
+                const int len = std::min<int>(static_cast<int>(ends[r] - starts[r]), 250);
+                std::memcpy(text, starts[r], static_cast<std::size_t>(len));
+                text[len] = '\0';
+                rh::Text(draw, m, pos, text, WithAlpha(color, lineFade));
             }
         }
+        draw->PopClipRect();
         if (nextText != nullptr) {
             const ImVec2 pos(at.x, at.y + static_cast<float>(rows) * lineH + lineRise * 0.5f);
             Line(draw, m, pos, w, nextText, WithAlpha(dim, 0.7f * lineFade), false);
@@ -295,7 +309,7 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
 
     // --- Lyrics: the line being sung and the next one ---
     if (style == 5) {
-        const float w = std::max(layoutLongest_, 60.0f * u);
+        const float w = lyricMaxW;  // fixed: never changes with the song
         const float width = std::floor(pad * 2.0f + w);
         const float height = std::floor(pad * 2.0f + lyricBlockH);
         const ImVec2 o = frame.pos;
@@ -307,11 +321,9 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
     // --- Wide + lyrics: art, song and progress on top, the lyrics under them ---
     if (style == 6) {
         const float artW = s.showArt ? lineH * 3.0f - 4.0f * u : 0.0f;
-        float infoW = std::max(rh::TextSize(m, t.title).x, rh::TextSize(m, second).x);
-        infoW = std::clamp(infoW, 60.0f * u, lyricMaxW - artW - gap);
-        const float innerW = std::min(lyricMaxW, std::max(artW + (artW > 0 ? gap : 0.0f) + infoW, haveLyrics ? layoutLongest_ : 0.0f));
+        const float innerW = lyricMaxW;  // fixed: never changes with the song
         const float topH = std::max(artW, lineH * 3.0f - 4.0f * u);
-        const float lyricH = haveLyrics ? gap + lyricBlockH : 0.0f;
+        const float lyricH = gap + lyricBlockH;  // always (a message when there are no lyrics)
         const float width = std::floor(pad * 2.0f + innerW);
         const float height = std::floor(pad * 2.0f + topH + lyricH);
         const ImVec2 o = frame.pos;
@@ -337,7 +349,7 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
             }
             Bar(draw, ImVec2(x, y + m.capHeight * 0.5f - u), barW, 2.0f * u, frac, accent, fade);
         }
-        if (haveLyrics) {
+        {
             const float lyTop = o.y + pad + topH + gap;
             draw->AddLine(ImVec2(o.x + pad, lyTop - gap * 0.5f), ImVec2(o.x + pad + innerW, lyTop - gap * 0.5f),
                           WithAlpha(dim, 0.25f), std::max(1.0f, u * 0.5f));
@@ -481,6 +493,8 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
     out["haloTitle"] = s.haloTitle;
     out["haloButtons"] = s.haloButtons;
     out["lyricsOnline"] = s.lyricsOnline;
+    out["lyricsLiriqo"] = s.lyricsLiriqo;
+    out["lyricsSweep"] = s.lyricsSweep;
     out["lyricsOffset"] = s.lyricsOffset;
     out["lyricsNextLine"] = s.lyricsNextLine;
     out["hudFollowAlbum"] = s.hudFollowAlbum;
@@ -518,6 +532,8 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
     s.haloTitle = in.value("haloTitle", d.haloTitle);
     s.haloButtons = std::clamp(in.value("haloButtons", d.haloButtons), 0, 2);
     s.lyricsOnline = in.value("lyricsOnline", d.lyricsOnline);
+    s.lyricsLiriqo = in.value("lyricsLiriqo", d.lyricsLiriqo);
+    s.lyricsSweep = in.value("lyricsSweep", d.lyricsSweep);
     s.lyricsOffset = std::clamp(in.value("lyricsOffset", d.lyricsOffset), -5.0f, 5.0f);
     s.lyricsNextLine = in.value("lyricsNextLine", d.lyricsNextLine);
     s.hudFollowAlbum = in.value("hudFollowAlbum", d.hudFollowAlbum);
@@ -526,6 +542,7 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
     s.watermarkAlbum = in.value("watermarkAlbum", d.watermarkAlbum);
     s.menuFollowAlbum = in.value("menuFollowAlbum", d.menuFollowAlbum);
     lyrics::SetOnline(s.lyricsOnline);
+    lyrics::SetLiriqo(s.lyricsLiriqo);
     if (IsEnabled()) {
         OnEnable();
     }

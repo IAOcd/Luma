@@ -11,7 +11,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <future>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -73,12 +76,12 @@ std::string UrlEncode(const std::string& s) {
 }
 
 // One HTTPS GET. Returns the status code (0 = no connection).
-int HttpGet(const wchar_t* host, const std::string& pathAndQuery, std::string& body) {
+int HttpGet(const wchar_t* host, const std::string& pathAndQuery, std::string& body, int timeoutMs = 8000) {
     const std::wstring agent = Widen(std::string("Luma/") + kVersion + " (Minecraft Bedrock client)");
     HINTERNET session = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                                     WINHTTP_NO_PROXY_BYPASS, 0);
     if (session == nullptr) return 0;
-    WinHttpSetTimeouts(session, 6000, 6000, 8000, 8000);
+    WinHttpSetTimeouts(session, 6000, 6000, timeoutMs, timeoutMs);
     HINTERNET connection = WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
     const std::wstring path = Widen(pathAndQuery);
     HINTERNET request = connection != nullptr ? WinHttpOpenRequest(connection, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
@@ -294,14 +297,291 @@ bool FromLrclib(const Query& q, Found& out) {
     return false;
 }
 
-struct LyricsSource {
-    const char* name;
-    bool (*fetch)(const Query&, Found&);
+// --- LiriQo ---------------------------------------------------------------------------------
+// LiriQo (github.com/AlFarrizi-Studio/LiriQo) asks several catalogs at once
+// (Apple Music, NetEase, LRCLIB, YouTube Music...) and returns the best
+// lyrics it found, marked with their real sync level: "syllable"/"word"
+// (karaoke), "line" or "plain". It never makes up word times.
+// It's run by one person on their own server: if it's down or doesn't know
+// the song, the next source (LRCLIB) is asked. It can be turned off.
+
+std::atomic<bool> g_liriqo{true};
+
+std::string FormatLrcTime(int ms) {
+    if (ms < 0) ms = 0;
+    char text[24];
+    std::snprintf(text, sizeof(text), "%02d:%02d.%03d", ms / 60000, (ms / 1000) % 60, ms % 1000);
+    return text;
+}
+
+// The value of attribute "name" inside an XML tag ("<p begin=\"1.5\" ...>").
+std::string XmlAttribute(const std::string& tag, const char* name) {
+    const std::string key = std::string(" ") + name + "=\"";
+    const std::size_t at = tag.find(key);
+    if (at == std::string::npos) return {};
+    const std::size_t start = at + key.size();
+    const std::size_t end = tag.find('"', start);
+    return end == std::string::npos ? std::string() : tag.substr(start, end - start);
+}
+
+// TTML times: "27.395", "1:02.5" or "1:02:03.5" -> milliseconds.
+int TtmlTime(const std::string& t) {
+    if (t.empty()) return -1;
+    double total = 0.0;
+    std::size_t start = 0;
+    for (;;) {
+        const std::size_t colon = t.find(':', start);
+        const double part = std::atof(t.substr(start, colon == std::string::npos ? std::string::npos : colon - start).c_str());
+        total = total * 60.0 + part;
+        if (colon == std::string::npos) break;
+        start = colon + 1;
+    }
+    return static_cast<int>(std::lround(total * 1000.0));
+}
+
+std::string XmlText(std::string s) {
+    const std::pair<const char*, const char*> entities[] = {{"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""},
+                                                            {"&apos;", "'"}, {"&#39;", "'"}};
+    for (const auto& [from, to] : entities) {
+        for (std::size_t at = s.find(from); at != std::string::npos; at = s.find(from, at + 1)) {
+            s.replace(at, std::strlen(from), to);
+        }
+    }
+    return s;
+}
+
+// Apple Music's TTML -> enhanced LRC ("[00:27.395]<00:27.395>I <00:27.549>been ...").
+// TTML is the only place that says whether two pieces are separate words
+// ("long e nough" is really "long" + "e"+"nough", one word in two
+// syllables): a space between two <span> = a new word; no space = the same
+// word. Background vocals (role "x-bg") are left out for now.
+std::string TtmlToLrc(const std::string& ttml) {
+    std::string lrc;
+    std::size_t pos = 0;
+    while ((pos = ttml.find("<p ", pos)) != std::string::npos) {
+        const std::size_t tagEnd = ttml.find('>', pos);
+        const std::size_t close = ttml.find("</p>", pos);
+        if (tagEnd == std::string::npos || close == std::string::npos) break;
+        const int lineMs = TtmlTime(XmlAttribute(ttml.substr(pos, tagEnd - pos), "begin"));
+        std::string line;
+        bool anyWord = false;
+        int depthSkip = 0;  // inside a background-vocals span
+        std::size_t i = tagEnd + 1;
+        while (i < close) {
+            if (ttml[i] != '<') {
+                // Text between spans: a space here separates words.
+                const std::size_t next = ttml.find('<', i);
+                const std::string between = ttml.substr(i, std::min(next, close) - i);
+                if (depthSkip == 0 && anyWord && between.find(' ') != std::string::npos && (line.empty() || line.back() != ' ')) {
+                    line += ' ';
+                }
+                i = std::min(next, close);
+                continue;
+            }
+            const std::size_t end = ttml.find('>', i);
+            if (end == std::string::npos || end > close) break;
+            const std::string tag = ttml.substr(i, end - i + 1);
+            if (tag.compare(0, 6, "<span ") == 0 || tag == "<span>") {
+                if (depthSkip > 0 || tag.find("x-bg") != std::string::npos) {
+                    ++depthSkip;
+                } else {
+                    // A timed piece: "<span begin=.. end=..>text</span>" (no nested tags).
+                    const std::size_t textEnd = ttml.find('<', end + 1);
+                    const int ms = TtmlTime(XmlAttribute(tag, "begin"));
+                    if (textEnd != std::string::npos && ms >= 0 && ttml.compare(textEnd, 7, "</span>") == 0) {
+                        const std::string text = XmlText(ttml.substr(end + 1, textEnd - end - 1));
+                        line += "<" + FormatLrcTime(ms) + ">" + text;
+                        anyWord = true;
+                        i = textEnd + 7;
+                        continue;
+                    }
+                }
+            } else if (tag == "</span>" && depthSkip > 0) {
+                --depthSkip;
+            }
+            i = end + 1;
+        }
+        if (anyWord && lineMs >= 0) {
+            while (!line.empty() && line.back() == ' ') line.pop_back();
+            lrc += "[" + FormatLrcTime(lineMs) + "]" + line + "\n";
+        }
+        pos = close + 4;
+    }
+    return lrc;
+}
+
+// Word times without TTML (NetEase, Kuwo...): the "timed" lines of the JSON.
+//
+// THE PROBLEM: these sources split words into syllables ("Elys" + "é" + "es")
+// and LiriQo gives the pieces without their spaces, so we can't tell
+// "Elys"+"ées" (one word) from "Champs" "Elysées" (two words).
+// THE SOLUTION: LiriQo also brings line-synced versions of the same song
+// (LRCLIB, YouTube Music), whose text HAS the real spaces and punctuation
+// ("Aux Champs-Elysées"). We lay the pieces over that text, letter by
+// letter: each piece takes its letters plus the spaces/punctuation after
+// them. If the letters don't match (another spelling), we fall back to
+// a space between pieces.
+
+struct RefLine {
+    int ms = 0;
+    std::string text;
 };
-// In order of preference. To add a source: write its fetch and add it here.
-constexpr LyricsSource kSources[] = {
-    {"LRCLIB", &FromLrclib},
-};
+
+// The lines (time + text) of every line-synced version LiriQo brought.
+std::vector<RefLine> ReferenceLines(const nlohmann::json& response) {
+    std::vector<RefLine> refs;
+    if (!response.contains("tracks") || !response["tracks"].is_array()) return refs;
+    for (const auto& track : response["tracks"]) {
+        if (!track.is_object() || track.value("syncLevel", std::string()) != "line") continue;
+        if (!track.contains("timed") || !track["timed"].is_array()) continue;
+        for (const auto& line : track["timed"]) {
+            if (!line.is_object()) continue;
+            const std::string text = line.value("text", std::string());
+            if (!text.empty()) refs.push_back(RefLine{line.value("start", 0), text});
+        }
+    }
+    return refs;
+}
+
+char FoldAscii(char c) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+}
+
+// A byte that's part of a word: a letter/number or any non-ASCII byte (é, ü, 日...).
+bool IsWordByte(char c) {
+    const unsigned char u = static_cast<unsigned char>(c);
+    return u >= 0x80 || std::isalnum(u);
+}
+
+// Lays "pieces" over "ref". On success, "out" has each piece with its real
+// spaces and punctuation ("Champs-", "Elys", "é", "es ").
+bool AlignPieces(const std::string& ref, const std::vector<std::string>& pieces, std::vector<std::string>& out) {
+    std::vector<std::size_t> starts;
+    std::size_t r = 0;
+    for (const std::string& piece : pieces) {
+        std::size_t first = std::string::npos;
+        for (char c : piece) {
+            if (c == ' ' || c == '\t') continue;
+            // Skip the reference's spaces and punctuation the piece doesn't have.
+            while (r < ref.size() && FoldAscii(ref[r]) != FoldAscii(c) && !IsWordByte(ref[r])) ++r;
+            if (r >= ref.size() || FoldAscii(ref[r]) != FoldAscii(c)) return false;
+            if (first == std::string::npos) first = r;
+            ++r;
+        }
+        if (first == std::string::npos) return false;
+        starts.push_back(first);
+    }
+    // Only punctuation may be left over (a "!" at the end), not words.
+    for (std::size_t i = r; i < ref.size(); ++i) {
+        if (std::isalnum(static_cast<unsigned char>(ref[i]))) return false;
+    }
+    out.clear();
+    for (std::size_t i = 0; i < starts.size(); ++i) {
+        const std::size_t from = i == 0 ? 0 : starts[i];
+        const std::size_t to = i + 1 < starts.size() ? starts[i + 1] : ref.size();
+        out.push_back(ref.substr(from, to - from));
+    }
+    while (!out.empty() && !out.front().empty() && out.front().front() == ' ') out.front().erase(out.front().begin());
+    return true;
+}
+
+std::string TimedToLrc(const nlohmann::json& timed, const std::vector<RefLine>& refs) {
+    std::string lrc;
+    std::vector<std::string> pieces, aligned;
+    std::vector<int> times;
+    for (const auto& line : timed) {
+        if (!line.is_object() || !line.contains("words") || !line["words"].is_array() || line["words"].empty()) continue;
+        pieces.clear();
+        times.clear();
+        for (const auto& w : line["words"]) {
+            if (!w.is_object() || w.value("isBackground", false)) continue;
+            const std::string piece = w.value("text", std::string());
+            if (piece.empty()) continue;
+            pieces.push_back(piece);
+            times.push_back(w.value("start", 0));
+        }
+        if (pieces.empty()) continue;
+        const int lineMs = line.value("start", times.front());
+        // The reference line: close in time (2.5 s) and whose letters match.
+        bool ok = false;
+        for (const RefLine& ref : refs) {
+            if (std::abs(ref.ms - lineMs) <= 2500 && AlignPieces(ref.text, pieces, aligned)) {
+                ok = true;
+                break;
+            }
+        }
+        if (!ok) {
+            // No reference: a space between pieces (except CJK, which has none).
+            aligned.clear();
+            for (std::size_t i = 0; i < pieces.size(); ++i) {
+                const bool cjk = static_cast<unsigned char>(pieces[i].front()) >= 0xE0;  // 3-byte UTF-8: CJK and the like
+                aligned.push_back(pieces[i] + (i + 1 < pieces.size() && !cjk && pieces[i].back() != ' ' ? " " : ""));
+            }
+        }
+        std::string text;
+        for (std::size_t i = 0; i < aligned.size(); ++i) text += "<" + FormatLrcTime(times[i]) + ">" + aligned[i];
+        lrc += "[" + FormatLrcTime(lineMs) + "]" + text + "\n";
+    }
+    return lrc;
+}
+
+// Do these look like the same song? LiriQo may answer with its closest
+// match; better nothing than the lyrics of another song.
+bool SameSong(const Query& q, const nlohmann::json& track) {
+    const std::string artist = LowerAscii(track.value("artist", std::string()));
+    const std::string title = LowerAscii(track.value("title", std::string()));
+    const std::string wantArtist = LowerAscii(q.artist);
+    const std::string wantTitle = LowerAscii(CleanTitle(q.title));
+    if (title.empty() || wantTitle.empty()) return false;
+    const bool titleOk = title.find(wantTitle) != std::string::npos || wantTitle.find(LowerAscii(CleanTitle(title))) != std::string::npos;
+    // The artist: any word of 3+ letters in common ("The Weeknd" / "The Weeknd, Daft Punk").
+    bool artistOk = wantArtist.empty();
+    std::istringstream words(wantArtist);
+    std::string word;
+    while (!artistOk && words >> word) {
+        if (word.size() >= 3 && word != "the" && artist.find(word) != std::string::npos) artistOk = true;
+    }
+    return titleOk && artistOk;
+}
+
+bool FromLiriqo(const Query& q, Found& out) {
+    if (!g_liriqo.load()) return false;
+    std::string path = "/v1/lyrics?title=" + UrlEncode(q.title) + "&artist=" + UrlEncode(q.artist);
+    if (!q.album.empty()) path += "&album=" + UrlEncode(q.album);
+    if (q.seconds > 0) path += "&duration=" + std::to_string(q.seconds);
+    std::string body;
+    // It asks many catalogs: it can take a few seconds (12 s at most).
+    if (HttpGet(L"api.liriqo-alfarrizi.my.id", path, body, 12000) != 200) return false;
+    const auto j = nlohmann::json::parse(body, nullptr, false);
+    if (!j.is_object() || !j.contains("primary") || !j["primary"].is_object()) return false;
+    const nlohmann::json& p = j["primary"];
+    if (!SameSong(q, p)) {
+        log::Info("Lyrics: LiriQo answered another song (\"{}\"), ignored.", p.value("title", std::string()));
+        return false;
+    }
+    const std::string level = p.value("syncLevel", std::string());
+    std::string synced;
+    if (level == "syllable" || level == "word") {
+        if (p.contains("ttml") && p["ttml"].is_string()) synced = TtmlToLrc(p["ttml"].get<std::string>());
+        if (synced.empty() && p.contains("timed") && p["timed"].is_array()) synced = TimedToLrc(p["timed"], ReferenceLines(j));
+    }
+    if (synced.empty() && (level == "syllable" || level == "word" || level == "line") && p.contains("lrc") &&
+        p["lrc"].is_string()) {
+        synced = p["lrc"].get<std::string>();
+    }
+    std::string plain;
+    if (p.contains("plain") && p["plain"].is_string()) plain = p["plain"].get<std::string>();
+    if (synced.empty() && plain.empty()) return false;
+    // A plain-text answer: maybe LRCLIB has it synced, so keep looking (it's
+    // only used if nothing better appears).
+    std::string upstream = p.value("upstreamProvider", p.value("source", std::string()));
+    out.source = upstream.empty() ? "LiriQo" : upstream + " (LiriQo)";
+    out.synced = synced;
+    out.plain = plain;
+    out.instrumental = false;
+    return !synced.empty();
+}
+
 
 // --- Disk cache ----------------------------------------------------------------------------
 std::filesystem::path CachePath(const Query& q) {
@@ -333,6 +613,14 @@ bool LoadCache(const Query& q, Found& out) {
     out.synced = j.value("synced", std::string());
     out.plain = j.value("plain", std::string());
     out.instrumental = j.value("instrumental", false);
+    // Saved before LiriQo existed (or with it off) and without word times:
+    // ask again, LiriQo may have them word by word.
+    // Saved by an older Luma that joined syllables badly ("Elysé es"): ask again.
+    if (out.source.find("(LiriQo)") != std::string::npos && j.value("format", 1) < 2) return false;
+    if (g_liriqo.load() && !j.value("liriqo", false) && !out.instrumental &&
+        out.synced.find('<') == std::string::npos) {
+        return false;
+    }
     return true;
 }
 
@@ -342,7 +630,7 @@ void SaveCache(const Query& q, const Found& f) {
     std::filesystem::create_directories(path.parent_path(), ec);
     const nlohmann::json j = {{"source", f.source}, {"title", q.title}, {"artist", q.artist},
                               {"synced", f.synced}, {"plain", f.plain}, {"instrumental", f.instrumental},
-                              {"time", NowSeconds()}};
+                              {"time", NowSeconds()}, {"liriqo", g_liriqo.load()}, {"format", 2}};
     std::ofstream out(path, std::ios::binary);
     out << j.dump();
 }
@@ -443,11 +731,52 @@ void ThreadMain() {
             ok = LoadCache(q, found);
             if (!ok && g_online.load()) {
                 g_reached.store(false);
-                for (const LyricsSource& source : kSources) {
-                    if (source.fetch(q, found)) {
-                        ok = true;
-                        break;
-                    }
+                // BOTH SOURCES AT ONCE: LiriQo asks many catalogs and can take
+                // 5-15 s; LRCLIB answers in 1-2 s. So LiriQo runs on a second
+                // thread while we ask LRCLIB: LRCLIB's lyrics are shown right
+                // away, and if LiriQo brings them word by word, they replace
+                // them when they arrive.
+                std::future<std::pair<bool, Found>> liriqo;
+                if (g_liriqo.load()) {
+                    liriqo = std::async(std::launch::async, [q]() {
+                        Found f;
+                        bool r = false;
+                        try {
+                            r = FromLiriqo(q, f);
+                        } catch (...) {
+                        }
+                        return std::make_pair(r, f);
+                    });
+                }
+                Found lrclib;
+                bool lrclibOk = false;
+                try {
+                    lrclibOk = FromLrclib(q, lrclib);
+                } catch (...) {
+                }
+                if (lrclibOk && liriqo.valid() && media::Current().trackId == t.trackId) {
+                    Result early = ToResult(lrclib, t.trackId);
+                    log::Info("Lyrics: \"{}\" -> {} lines from LRCLIB first (waiting for LiriQo).", t.title, early.lines.size());
+                    Publish(std::move(early));
+                }
+                Found best;
+                bool bestOk = false;
+                if (liriqo.valid()) {
+                    // (It always finishes: its request gives up after 12 s.)
+                    auto [r, f] = liriqo.get();
+                    bestOk = r;
+                    best = std::move(f);
+                }
+                const bool liriqoWords = bestOk && best.synced.find('<') != std::string::npos;
+                if (liriqoWords || (bestOk && !lrclibOk)) {
+                    found = best;  // word by word (or LRCLIB had nothing)
+                    ok = true;
+                } else if (lrclibOk) {
+                    found = lrclib;
+                    ok = true;
+                } else if (!best.plain.empty()) {
+                    found = best;  // only plain text, from LiriQo
+                    ok = true;
                 }
                 // Remember "not found" too (for 3 days), but only if a source
                 // really answered: without internet, nothing is saved.
@@ -489,6 +818,10 @@ void Want(Source source, bool want) {
 
 void SetOnline(bool online) {
     g_online.store(online);
+}
+
+void SetLiriqo(bool on) {
+    g_liriqo.store(on);
 }
 
 void SetHdCovers(bool on) {

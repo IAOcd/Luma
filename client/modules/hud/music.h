@@ -35,12 +35,6 @@ private:
     unsigned int shownTrack_ = 0;  // to fade in a new song
     double changedAt_ = 0.0;
     // Lyrics styles: the size is measured once per song (its longest line).
-    unsigned int layoutTrack_ = 0;
-    float layoutScale_ = 0.0f;
-    unsigned int layoutLines_ = 0;
-    float layoutMaxW_ = 0.0f;
-    float layoutLongest_ = 0.0f;
-    bool layoutTwoRows_ = false;
     int shownLine_ = -2;           // to fade in a new lyric line
     double lineChangedAt_ = 0.0;
 };

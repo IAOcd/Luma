@@ -7,12 +7,15 @@
 //    2. line by line (each line with its time: "synced"),
 //    3. plain text (no times).
 //
-//  Sources today: LRCLIB (lrclib.net: free, no account, synced lyrics; some
-//  songs also have word timings in "enhanced LRC"). The list is built so more
-//  sources can be added (see lyrics.cpp, kSources).
+//  Sources, in order (see lyrics.cpp, kSources):
+//    1. LiriQo (github.com/AlFarrizi-Studio/LiriQo): asks Apple Music,
+//       NetEase, LRCLIB and others at once; often word by word (karaoke).
+//       A third-party service: it can be turned off.
+//    2. LRCLIB (lrclib.net: free, no account, synced lyrics).
+//  If a source only has plain text, the next one is asked for synced lyrics.
 //
 //  PRIVACY: to look a song up, its title, artist, album and length are sent
-//  to the source. That's all: nothing about you or your PC. It can be turned
+//  to the sources. That's all: nothing about you or your PC. It can be turned
 //  off in the music settings ("Search lyrics online").
 //  Found lyrics are kept in %APPDATA%\Luma\lyrics\, so a song is only looked
 //  up once.
@@ -45,7 +48,7 @@ struct Result {
     std::uint32_t trackId = 0;   // the media trackId these lyrics belong to
     bool synced = false;         // lines have times
     bool wordSynced = false;     // words have times too
-    std::string source;          // "LRCLIB"
+    std::string source;          // "LRCLIB", "Apple Music (LiriQo)"...
     std::vector<Line> lines;
 };
 
@@ -59,6 +62,9 @@ void Want(Source source, bool want);
 
 // Look songs up online (off = only the ones already saved).
 void SetOnline(bool online);
+
+// Ask LiriQo first (on by default). Off = only LRCLIB.
+void SetLiriqo(bool on);
 
 // HD COVERS: when the app gives Windows a small album art (Liner gives
 // 150x150), this thread also looks the song up in Apple's iTunes catalog

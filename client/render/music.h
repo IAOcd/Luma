@@ -60,8 +60,10 @@ struct Settings {
     int haloButtons = 0;          // 0 under the ring, 1 around it, 2 none
     // --- Lyrics ---
     bool lyricsOnline = true;     // look songs up online (core/lyrics.h)
+    bool lyricsLiriqo = true;     // ask LiriQo first (word by word, third-party service)
     float lyricsOffset = 0.0f;    // seconds: + = lyrics later, - = earlier
     bool lyricsNextLine = true;   // HUD lyrics: show the next line too
+    bool lyricsSweep = true;      // HUD lyrics: the light fills each word smoothly
     bool hdCovers = true;         // look up a sharp album art online when the app's is small
     // --- Album colors everywhere ---
     bool hudFollowAlbum = false;  // every HUD module's text takes the album color
@@ -129,6 +131,24 @@ const lyrics::Result& CurrentLyrics();
 
 // The song position for the lyrics, in ms (with the user's offset).
 int LyricsMs(const media::Track& track);
+
+// How much of word "word" of line "line" is already sung, 0..1. Each word
+// lasts until the next one starts; the last word of a line, until the next
+// line (1.5 s at most). This makes the light FILL each word at the speed it's
+// sung (a long held note fills slowly), instead of switching it on at once.
+float WordProgress(const lyrics::Result& ly, int line, std::size_t word, int ms);
+
+// Soft edge: the text drawn since vertex "firstVertex" fades out to the right
+// of "edgeX", over "feather" pixels. Drawing a bright copy of a word on top
+// of a dim one and moving the edge = a smooth sweep of light.
+// (It changes the transparency of the letters' corners: no extra drawing.)
+void FeatherRight(ImDrawList* draw, int firstVertex, float edgeX, float feather);
+
+// 0..1 -> 0..1, slow at the start and the end (for animations).
+inline float SmoothStep(float x) {
+    x = x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x);
+    return x * x * (3.0f - 2.0f * x);
+}
 
 // The lyrics panel of the Music page: synced lyrics scroll by themselves.
 // Draws in the current ImGui window, inside min..max.

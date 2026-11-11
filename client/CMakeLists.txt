@@ -41,6 +41,7 @@ add_library(Luma SHARED
     modules/visual/world_draw.cpp
     perf/benchmark.cpp
     perf/frame_stats.cpp
+    perf/gpu_timer.cpp
     perf/windows_info.cpp
     render/assets.cpp
     render/cinematic.cpp

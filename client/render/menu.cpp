@@ -1439,7 +1439,7 @@ void DrawBenchmarkPage() {
     } else {
         constexpr ImGuiTableFlags kTable = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
                                            ImGuiTableFlags_BordersInnerH;
-        if (ImGui::BeginTable("##results", 7, kTable)) {
+        if (ImGui::BeginTable("##results", 8, kTable)) {
             ImGui::TableSetupColumn(Tr("Name"), ImGuiTableColumnFlags_WidthStretch, 2.2f);
             ImGui::TableSetupColumn(Tr("Mode"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
             ImGui::TableSetupColumn(Tr("Optimizations"), ImGuiTableColumnFlags_WidthStretch, 2.4f);
@@ -1447,6 +1447,7 @@ void DrawBenchmarkPage() {
             ImGui::TableSetupColumn(Tr("1% low"), ImGuiTableColumnFlags_WidthStretch, 0.9f);
             ImGui::TableSetupColumn(Tr("Frametime"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
             ImGui::TableSetupColumn(Tr("Luma"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn(Tr("GPU"), ImGuiTableColumnFlags_WidthStretch, 1.3f);
             ImGui::TableHeadersRow();
             for (auto it = results.rbegin(); it != results.rend(); ++it) {
                 ImGui::TableNextRow();
@@ -1457,6 +1458,13 @@ void DrawBenchmarkPage() {
                 ImGui::TableNextColumn(); ImGui::Text(Tr("%.1f"), it->low1Fps);
                 ImGui::TableNextColumn(); ImGui::Text(Tr("%.2f ms"), it->averageMs);
                 ImGui::TableNextColumn(); ImGui::Text(Tr("%.3f ms"), it->lumaCostMs);
+                ImGui::TableNextColumn();
+                if (it->gpuMs >= 0.0) {
+                    // GPU busy time and how much of the frame it is (near 100% = GPU-limited).
+                    ImGui::Text("%.2f ms (%.0f%%)", it->gpuMs, it->gpuPercent);
+                } else {
+                    ImGui::TextDisabled("-");
+                }
             }
             ImGui::EndTable();
         }

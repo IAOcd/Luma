@@ -16,6 +16,7 @@
 
 #include "core/logger.h"
 #include "core/paths.h"
+#include "perf/gpu_timer.h"
 #include "perf/timer.h"
 #include "render/notifications.h"
 #include "render/overlay.h"
@@ -35,6 +36,7 @@ std::atomic<bool> g_suppress{false};
 // thread); the render thread only writes into what's already reserved.
 std::vector<float> g_frameMs;
 std::vector<float> g_costUs;
+std::vector<float> g_gpuMs;  // GPU busy time of a recent frame (negative = no measurement)
 std::atomic<std::size_t> g_count{0};
 std::atomic<bool> g_writing{false};
 std::atomic<std::int64_t> g_recordStart{0};  // when recording starts (ticks)
@@ -120,9 +122,15 @@ Result Compute(std::size_t count) {
     std::vector<float> sorted(g_frameMs.begin(), g_frameMs.begin() + static_cast<std::ptrdiff_t>(count));
     double totalMs = 0.0;
     double costSum = 0.0;
+    double gpuSum = 0.0;
+    std::size_t gpuFrames = 0;
     for (std::size_t i = 0; i < count; ++i) {
         totalMs += g_frameMs[i];
         costSum += g_costUs[i];
+        if (g_gpuMs[i] >= 0.0f) {
+            gpuSum += g_gpuMs[i];
+            ++gpuFrames;
+        }
     }
     std::sort(sorted.begin(), sorted.end());
     auto worstAverage = [&](std::size_t n) {
@@ -144,6 +152,11 @@ Result Compute(std::size_t count) {
     r.p99Ms = sorted[std::min(count - 1, (count * 99) / 100)];
     r.maxMs = sorted[count - 1];
     r.lumaCostMs = costSum / static_cast<double>(count) / 1000.0;
+    // The GPU numbers only count if most frames were measured.
+    if (gpuFrames * 2 >= count) {
+        r.gpuMs = gpuSum / static_cast<double>(gpuFrames);
+        r.gpuPercent = r.averageMs > 0.0 ? std::min(100.0, r.gpuMs / r.averageMs * 100.0) : 0.0;
+    }
     return r;
 }
 
@@ -161,13 +174,15 @@ void WriteFiles(Result& r, std::size_t count) {
                                     SafeFileName(r.label) + ".csv");
     {
         std::ofstream out(framesPath, std::ios::binary);
-        out << bom << "frame" << sep << "time_s" << sep << "frametime_ms" << sep << "fps" << sep << "luma_cost_ms\n";
+        out << bom << "frame" << sep << "time_s" << sep << "frametime_ms" << sep << "fps" << sep << "luma_cost_ms" << sep
+            << "gpu_ms\n";
         double elapsed = 0.0;
         for (std::size_t i = 0; i < count; ++i) {
             elapsed += g_frameMs[i] / 1000.0;
             const double fps = g_frameMs[i] > 0.0f ? 1000.0 / g_frameMs[i] : 0.0;
             out << (i + 1) << sep << Num(elapsed, 4, f) << sep << Num(g_frameMs[i], 3, f) << sep << Num(fps, 1, f)
-                << sep << Num(g_costUs[i] / 1000.0, 4, f) << '\n';
+                << sep << Num(g_costUs[i] / 1000.0, 4, f) << sep
+                << (g_gpuMs[i] >= 0.0f ? Num(g_gpuMs[i], 3, f) : std::string()) << '\n';
         }
         r.csvPath = paths::ToUtf8(framesPath);
         if (!out) {
@@ -182,12 +197,14 @@ void WriteFiles(Result& r, std::size_t count) {
     if (isNew) {
         out << bom << "date" << sep << "name" << sep << "mode" << sep << "optimizations" << sep << "seconds" << sep
             << "frames" << sep << "average_fps" << sep << "1%_low" << sep << "0.1%_low" << sep << "frametime_ms" << sep
-            << "p99_ms" << sep << "max_ms" << sep << "luma_cost_ms\n";
+            << "p99_ms" << sep << "max_ms" << sep << "luma_cost_ms" << sep << "gpu_ms" << sep << "gpu_percent\n";
     }
     out << r.date << sep << CsvText(r.label, f) << sep << r.mode << sep << CsvText(r.optimizations, f) << sep
         << Num(r.seconds, 1, f) << sep << r.frames << sep << Num(r.averageFps, 1, f) << sep << Num(r.low1Fps, 1, f)
         << sep << Num(r.low01Fps, 1, f) << sep << Num(r.averageMs, 3, f) << sep << Num(r.p99Ms, 3, f) << sep
-        << Num(r.maxMs, 3, f) << sep << Num(r.lumaCostMs, 4, f) << '\n';
+        << Num(r.maxMs, 3, f) << sep << Num(r.lumaCostMs, 4, f) << sep
+        << (r.gpuMs >= 0.0 ? Num(r.gpuMs, 3, f) : std::string()) << sep
+        << (r.gpuMs >= 0.0 ? Num(r.gpuPercent, 1, f) : std::string()) << '\n';
 }
 
 void Finish() {
@@ -205,8 +222,9 @@ void Finish() {
     } else {
         WriteFiles(r, count);
         log::Info("Benchmark \"{}\" ({}): {:.1f} FPS promedio, 1% low {:.1f}, 0.1% low {:.1f}, frametime {:.3f} ms, "
-                  "Luma cost {:.4f} ms. CSV: {}",
-                  r.label, r.mode, r.averageFps, r.low1Fps, r.low01Fps, r.averageMs, r.lumaCostMs, r.csvPath);
+                  "Luma cost {:.4f} ms, GPU {:.2f} ms ({:.0f}% of the frame). CSV: {}",
+                  r.label, r.mode, r.averageFps, r.low1Fps, r.low01Fps, r.averageMs, r.lumaCostMs, r.gpuMs,
+                  r.gpuPercent, r.csvPath);
         notify::Push(notify::Kind::Success,
                      std::format("Benchmark done: {:.0f} FPS · 1% low {:.0f}", r.averageFps, r.low1Fps));
         std::lock_guard lock(g_mutex);
@@ -215,6 +233,8 @@ void Finish() {
     // Free the test's memory.
     std::vector<float>().swap(g_frameMs);
     std::vector<float>().swap(g_costUs);
+    std::vector<float>().swap(g_gpuMs);
+    gputimer::Want(gputimer::kBenchmark, false);
     g_suppress.store(false);
     g_state.store(State::Idle);
 }
@@ -233,6 +253,7 @@ bool Start(double seconds, double countdown, std::string label, Mode mode, std::
     // Reserve BEFORE the render thread starts writing.
     g_frameMs.assign(capacity, 0.0f);
     g_costUs.assign(capacity, 0.0f);
+    g_gpuMs.assign(capacity, -1.0f);
     g_count.store(0);
     {
         std::lock_guard lock(g_mutex);
@@ -246,6 +267,9 @@ bool Start(double seconds, double countdown, std::string label, Mode mode, std::
     g_recordStart.store(start);
     g_recordEnd.store(start + static_cast<std::int64_t>(seconds * static_cast<double>(g_ticksPerSecond)));
     g_suppress.store(mode == Mode::Resting);
+    // Measure the GPU too (it starts during the countdown, so it's warm when
+    // the recording begins).
+    gputimer::Want(gputimer::kBenchmark, true);
     g_state.store(State::Countdown);
     log::Info("Benchmark: starts in {:.0f} s and lasts {:.0f} s (mode {}).", countdown, seconds,
               mode == Mode::Resting ? "idle" : "with HUD");
@@ -259,6 +283,7 @@ void Cancel(const char* reason) {
     }
     g_state.store(State::Idle);
     g_suppress.store(false);
+    gputimer::Want(gputimer::kBenchmark, false);
     log::Info("Benchmark canceled: {}.", reason);
     notify::Push(notify::Kind::Warning, std::format("Benchmark canceled: {}", reason));
 }
@@ -304,6 +329,7 @@ void OnFrame(std::int64_t frameStart, float frameMs, float costUs) {
         } else {
             g_frameMs[i] = frameMs;
             g_costUs[i] = costUs;
+            g_gpuMs[i] = gputimer::LastFrameMs();
             g_count.store(i + 1, std::memory_order_release);
         }
     }

@@ -11,6 +11,8 @@
 //    - Average frametime, 99th percentile (99% of the frames took less than
 //      this) and max.
 //    - Average Luma cost per frame.
+//    - Average GPU busy time per frame (perf/gpu_timer.h): tells whether the
+//      GPU or the CPU is the limit.
 //
 //  And exports it to %APPDATA%\Luma\benchmarks\:
 //    - <date>_<name>.csv : one row per frame (to chart).
@@ -54,6 +56,8 @@ struct Result {
     double p99Ms = 0.0;
     double maxMs = 0.0;
     double lumaCostMs = 0.0;
+    double gpuMs = -1.0;       // average GPU busy time per frame (-1 = not measured)
+    double gpuPercent = 0.0;   // gpuMs / frametime: near 100% = the GPU is the limit
     std::string csvPath;
 };
 

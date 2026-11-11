@@ -45,6 +45,7 @@
 #include "core/state.h"
 #include "modules/module_manager.h"
 #include "perf/benchmark.h"
+#include "perf/gpu_timer.h"
 #include "render/assets.h"
 #include "render/cinematic.h"
 #include "render/gpu.h"
@@ -358,6 +359,9 @@ bool Initialize(IDXGISwapChain* swapchain) {
         g_state.store(State::Failed);
         return false;
     }
+    // The GPU timer measures this same queue (it only creates anything when
+    // someone turns it on).
+    perf::gputimer::Attach(device.Get(), queue);
 
     // Necesitamos el alto de la imagen antes de crear ImGui (para la escala).
     DXGI_SWAP_CHAIN_DESC1 desc{};
@@ -675,6 +679,7 @@ void Shutdown() {
     g_menuOpen.store(false);
 
     DestroyDeviceResources();
+    perf::gputimer::Shutdown();  // (it waits for its own work on the GPU)
     gpu::Shutdown();
     if (g_r.win32Backend) {
         ImGui_ImplWin32_Shutdown();

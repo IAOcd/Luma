@@ -231,6 +231,8 @@
 {"Alto del gráfico", "Graph height", "Altura do gráfico"},
 {"Frames en el gráfico", "Frames in the graph", "Quadros no gráfico"},
 {"Con un elemento del HUD activo, Luma dibuja cada frame y su costo sube un poco.", "With a HUD element on, Luma draws every frame and its cost goes up a little.", "Com um elemento do HUD ativo, o Luma desenha cada quadro e o custo sobe um pouco."},
+{"Tiempo de GPU", "GPU time", "Tempo de GPU"},
+{"Tiempo de GPU: cuánto trabajó la tarjeta gráfica en el frame. Cerca del 100% significa que el límite es la GPU; mucho menos, que es el procesador (o un límite de FPS / vsync).", "GPU time: how long the graphics card worked in the frame. Close to 100% means the GPU is the limit; much lower means the CPU is (or an FPS cap / vsync).", "Tempo de GPU: quanto a placa de vídeo trabalhou no quadro. Perto de 100% significa que o limite é a GPU; bem menos, que é o processador (ou um limite de FPS / vsync)."},
 
 // --- Optimizations -----------------------------------------------------------------------
 {"Prioridad del proceso", "Process priority", "Prioridade do processo"},

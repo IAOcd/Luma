@@ -11,6 +11,7 @@
 #include <cstdio>
 
 #include "perf/frame_stats.h"
+#include "perf/gpu_timer.h"
 #include "perf/timer.h"
 #include "render/hud.h"
 #include "render/icons.h"
@@ -43,6 +44,14 @@ const char* PerfOverlay::IconSvg() const {
     return render::icons::kChart;
 }
 
+void PerfOverlay::OnEnable() {
+    perf::gputimer::Want(perf::gputimer::kOverlay, showGpu_);
+}
+
+void PerfOverlay::OnDisable() {
+    perf::gputimer::Want(perf::gputimer::kOverlay, false);
+}
+
 ImVec2 PerfOverlay::OnRenderHud(const HudFrame& frame) {
     const perf::History& history = perf::GetHistory();
     const std::int64_t now = perf::Now();
@@ -52,16 +61,32 @@ ImVec2 PerfOverlay::OnRenderHud(const HudFrame& frame) {
         frameMs_ = recent.frameMs;
         fps_ = recent.frameMs > 0.0 ? 1000.0 / recent.frameMs : 0.0;
         costMs_ = recent.costUs / 1000.0;
+        // GPU: how long the GPU was busy in a recent frame. Smoothed a little
+        // so the number can be read.
+        const float gpu = perf::gputimer::LastFrameMs();
+        gpuMs_ = gpu < 0.0f ? -1.0 : (gpuMs_ < 0.0 ? gpu : gpuMs_ * 0.5 + gpu * 0.5);
     }
 
     const rh::Metrics m = rh::Measure(frame.scale);
     const float u = m.px;
     const float pad = 5.0f * u;
     const float line = m.capHeight + 4.0f * u;  // alto de cada renglón
-    char lines[2][48];
-    std::snprintf(lines[0], sizeof(lines[0]), "%.0f FPS  %.2f ms", fps_, frameMs_);
-    std::snprintf(lines[1], sizeof(lines[1]), "Luma: %.3f ms", costMs_);
-    const int count = showLumaCost_ ? 2 : 1;
+    char lines[3][48];
+    int count = 0;
+    std::snprintf(lines[count++], sizeof(lines[0]), "%.0f FPS  %.2f ms", fps_, frameMs_);
+    if (showLumaCost_) {
+        std::snprintf(lines[count++], sizeof(lines[0]), "Luma: %.3f ms", costMs_);
+    }
+    if (showGpu_) {
+        // "GPU: 7.40 ms (45%)" = the GPU worked 45% of the frame. Near 100%,
+        // the GPU is the limit; much lower, it's the CPU (or an FPS cap).
+        if (gpuMs_ >= 0.0 && frameMs_ > 0.0) {
+            std::snprintf(lines[count++], sizeof(lines[0]), "GPU: %.2f ms (%.0f%%)", gpuMs_,
+                          std::min(100.0, gpuMs_ / frameMs_ * 100.0));
+        } else {
+            std::snprintf(lines[count++], sizeof(lines[0]), "GPU: ...");
+        }
+    }
 
     float width = 70.0f * u;
     for (int i = 0; i < count; ++i) {
@@ -110,18 +135,25 @@ ImVec2 PerfOverlay::OnRenderHud(const HudFrame& frame) {
 bool PerfOverlay::DrawSettings() {
     bool changed = false;
     changed |= ui::Toggle("Luma's cost", &showLumaCost_, "(ms por frame)");
+    if (ui::Toggle("GPU time", &showGpu_, "(ms per frame)")) {
+        perf::gputimer::Want(perf::gputimer::kOverlay, showGpu_ && IsEnabled());
+        changed = true;
+    }
     changed |= ui::Toggle("Frametime graph", &showGraph_);
     if (showGraph_) {
         changed |= ui::SliderInt("Graph height", &graphHeight_, 10, 50, "%d");
         changed |= ui::SliderInt("Frames in the graph", &graphFrames_, 30, 240, "%d");
     }
     ui::Hint("With a HUD element on, Luma draws every frame and its cost goes up a little.");
+    ui::Hint("GPU time: how long the graphics card worked in the frame. Close to 100% means the GPU is the "
+             "limit; much lower means the CPU is (or an FPS cap / vsync).");
     return changed;
 }
 
 void PerfOverlay::SaveSettings(nlohmann::json& out) const {
     out["showGraph"] = showGraph_;
     out["showLumaCost"] = showLumaCost_;
+    out["showGpu"] = showGpu_;
     out["graphHeight"] = graphHeight_;
     out["graphFrames"] = graphFrames_;
 }
@@ -129,6 +161,10 @@ void PerfOverlay::SaveSettings(nlohmann::json& out) const {
 void PerfOverlay::LoadSettings(const nlohmann::json& in) {
     showGraph_ = in.value("showGraph", true);
     showLumaCost_ = in.value("showLumaCost", true);
+    showGpu_ = in.value("showGpu", true);
+    if (IsEnabled()) {
+        perf::gputimer::Want(perf::gputimer::kOverlay, showGpu_);
+    }
     graphHeight_ = std::clamp(in.value("graphHeight", 20), 10, 50);
     graphFrames_ = std::clamp(in.value("graphFrames", 120), 30, 240);
 }

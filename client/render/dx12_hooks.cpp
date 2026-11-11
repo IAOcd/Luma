@@ -30,6 +30,7 @@
 #include "core/hooks.h"
 #include "core/logger.h"
 #include "perf/frame_stats.h"
+#include "perf/gpu_timer.h"
 #include "perf/timer.h"
 #include "render/overlay.h"
 
@@ -89,6 +90,8 @@ void HandlePresent(IDXGISwapChain* swapchain, UINT flags) {
     // nanosegundos.)
     const std::int64_t start = perf::Now();
     const bool initialized = overlay::OnPresent(swapchain);
+    // Closes this frame's GPU measurement (does nothing when it's off).
+    perf::gputimer::OnPresent(g_originalExecuteCommandLists);
     const std::int64_t end = perf::Now();
     perf::RecordFrame(start, end, overlay::IsMenuOpen(), initialized);
     if (initialized) {
@@ -157,6 +160,10 @@ void STDMETHODCALLTYPE ExecuteCommandListsDetour(ID3D12CommandQueue* queue, UINT
         // Esto se llama muchas veces por frame. Una vez que la cola está
         // capturada, CaptureQueue solo hace una comparación y vuelve.
         overlay::CaptureQueue(queue);
+        // With the GPU timer on, wraps the game's lists in two timestamps.
+        // Off, it just calls the original (one atomic read).
+        perf::gputimer::Execute(queue, count, lists, g_originalExecuteCommandLists);
+        return;
     }
     g_originalExecuteCommandLists(queue, count, lists);
 }

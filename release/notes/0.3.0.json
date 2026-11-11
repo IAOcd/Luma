@@ -1,0 +1,35 @@
+{
+  "date": "10.11.2026",
+  "notes": {
+    "en": [
+      {"title": "New in-game menu", "body": "One glass window with a sidebar, modules as blocks or as a list, smooth scrolling and the ivory color of the logo."},
+      {"title": "Languages in game", "body": "The in-game menu now speaks English, Spanish and Portuguese, like the launcher."},
+      {"title": "Instant skins", "body": "Change your skin from the launcher or from Luma and it changes in game right away, no Dressing Room needed. Your skin also shows in 3D in the launcher."},
+      {"title": "Paint your crosshair", "body": "The Crosshair module hides the game's one and lets you paint your own at 8x8, 16x16, 32x32 or 64x64, with rainbow colors."},
+      {"title": "Rainbow everywhere", "body": "Rainbow color options for the HUD, block outline, hitboxes and chunk borders."},
+      {"title": "Player list and scoreboard", "body": "A new Tab player list in Java-style columns, and a Movable Scoreboard module."},
+      {"title": "Radial menu and more", "body": "Radial menu, Closet, chunk borders, exact speed, ping from the connection and an option to hide the game's coordinates."},
+      {"title": "Fixes", "body": "Coordinates, speed and freelook no longer disappear, your own hitbox no longer shows while falling, and the game's crosshair no longer vanishes when looking at the sky."}
+    ],
+    "es": [
+      {"title": "Menú nuevo en el juego", "body": "Una sola ventana de vidrio con barra lateral, módulos en bloques o en lista, scroll suave y el color marfil del logo."},
+      {"title": "Idiomas en el juego", "body": "El menú del juego ahora está en inglés, español y portugués, como el launcher."},
+      {"title": "Skins al instante", "body": "Cambia tu skin desde el launcher o desde Luma y cambia en el juego al momento, sin pasar por el vestidor. Tu skin también se ve en 3D en el launcher."},
+      {"title": "Pinta tu mira", "body": "El módulo de mira esconde la del juego y te deja pintar la tuya en 8x8, 16x16, 32x32 o 64x64, con colores rainbow."},
+      {"title": "Rainbow en todo", "body": "Opciones de color rainbow para el HUD, el contorno de bloque, las hitboxes y los bordes de chunk."},
+      {"title": "Lista de jugadores y scoreboard", "body": "Una lista de jugadores nueva con Tab, en columnas como en Java, y el módulo Scoreboard movible."},
+      {"title": "Menú radial y más", "body": "Menú radial, Closet, bordes de chunk, velocidad exacta, ping desde la conexión y la opción de ocultar las coordenadas del juego."},
+      {"title": "Arreglos", "body": "Las coordenadas, la velocidad y el freelook ya no desaparecen, tu propia hitbox ya no se ve al caer y la mira del juego ya no se pierde al mirar al cielo."}
+    ],
+    "pt": [
+      {"title": "Menu novo no jogo", "body": "Uma só janela de vidro com barra lateral, módulos em blocos ou em lista, rolagem suave e a cor marfim do logo."},
+      {"title": "Idiomas no jogo", "body": "O menu do jogo agora está em inglês, espanhol e português, como o launcher."},
+      {"title": "Skins na hora", "body": "Troque sua skin pelo launcher ou pelo Luma e ela muda no jogo na hora, sem passar pelo provador. Sua skin também aparece em 3D no launcher."},
+      {"title": "Pinte sua mira", "body": "O módulo de mira esconde a do jogo e deixa você pintar a sua em 8x8, 16x16, 32x32 ou 64x64, com cores rainbow."},
+      {"title": "Rainbow em tudo", "body": "Opções de cor rainbow para o HUD, o contorno de bloco, as hitboxes e as bordas de chunk."},
+      {"title": "Lista de jogadores e scoreboard", "body": "Uma nova lista de jogadores com Tab, em colunas como no Java, e o módulo Scoreboard móvel."},
+      {"title": "Menu radial e mais", "body": "Menu radial, Closet, bordas de chunk, velocidade exata, ping pela conexão e a opção de esconder as coordenadas do jogo."},
+      {"title": "Correções", "body": "As coordenadas, a velocidade e o freelook não somem mais, sua própria hitbox não aparece mais ao cair e a mira do jogo não some mais ao olhar para o céu."}
+    ]
+  }
+}

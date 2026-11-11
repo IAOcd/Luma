@@ -11,6 +11,8 @@ Luma **no** incluye nada que dé ventaja en multijugador: nada de killaura, fly,
 > - **Rendimiento:** overlay de frametime, benchmark exportable a CSV y optimizaciones del proceso, cada una por separado y medible.
 > - **Launcher:** ventana con temas oscuro y claro, botón PLAY que abre el juego e inyecta Luma, estadísticas, noticias, ajustes en inglés, español y portugués, e inicio de sesión opcional con Microsoft/Xbox.
 > - **Menú:** se abre con **L**. **Fin (End)** descarga Luma sin cerrar el juego.
+>
+> **Novedades de la 0.3.0:** menú nuevo en el juego (en inglés, español y portugués), skins que cambian al instante sin pasar por el vestidor, mira pintada a mano (8x8 a 64x64), colores rainbow, lista de jugadores con Tab, scoreboard movible, menú radial y Closet. Las notas completas están en `release/notes/0.3.0.json`.
 
 ---
 
@@ -57,7 +59,7 @@ Si algo se rompe raro, borra la carpeta `build/` y vuelve a ejecutar los dos com
 5. Para quitar Luma sin cerrar el juego: pulsa **Fin (End)** con la ventana de Minecraft en primer plano. También se puede cambiar en *Ajustes*.
 
 ### El menú
-- **Estilo "liquid glass":** dos paneles de vidrio que desenfocan el juego de verdad: se copia el frame y se le pasa un desenfoque gaussiano en la GPU (`client/render/gpu.cpp`). Tiene estilo oscuro y claro, con los colores de Luma (carbón `#25282B` y marfil `#E9E6DF`).
+- **Estilo "liquid glass":** una sola ventana de vidrio que desenfoca el juego de verdad: se copia el frame y se le pasa un desenfoque gaussiano en la GPU (`client/render/gpu.cpp`). Tiene estilo oscuro y claro, con los colores de Luma (carbón `#25282B` y marfil `#E9E6DF`).
 - **Barra lateral:**
   - el logo;
   - las categorías de módulos: Todos, HUD, Visual, Utilidad, Mundo y Rendimiento;
@@ -107,7 +109,11 @@ Sobre el CPS:
 - Medimos que el juego no siempre vacía esa cola tras procesarla. Para no contar un clic dos veces, Luma marca cada clic contado en un byte de **relleno** de la acción: el byte +11, que no usa nadie.
 - Si la firma de la cola no se encuentra, usa los mensajes `WM_LBUTTONDOWN` de Windows como respaldo.
 
-**Mira personalizada:** se dibuja encima de la del juego, que sigue debajo. Esconder la original requiere tocar el render del juego (Fase 8) o un paquete de recursos. Se esconde sola en los menús del juego.
+**Mira personalizada** (`modules/visual/crosshair.cpp`):
+- **Esconde la del juego:** la mira original la dibuja una función propia de la interfaz del juego. Luma la encuentra por el texto "cross_hair" (`sdk/game_crosshair.cpp`) y no la deja dibujar mientras el módulo está activo.
+- **Dos tipos:** una forma (cruz, punto, círculo) o una mira **pintada** píxel por píxel en un editor de 8x8, 16x16, 32x32 o 64x64, con espejo y paleta.
+- **Colores:** los originales, *Rainbow* o *Rainbow en onda*. Para que sea barata, la mira pintada se dibuja como tiras de píxeles iguales, calculadas al editar y no en cada frame.
+- Se esconde sola en los menús del juego.
 
 **Toggle sprint / sneak** (`render/input.h`, "teclas sostenidas"):
 - **Cómo mantiene la tecla:** el juego lleva la cuenta de las teclas apretadas con los mensajes de la ventana. Luma le manda un `WM_KEYDOWN` de Ctrl (o Shift) y se guarda el `WM_KEYUP` real; además, `GetAsyncKeyState` responde "apretada".
@@ -409,8 +415,8 @@ Avance:
 3. Si cambió la versión de Minecraft soportada, actualiza `release/minecraft.json`.
 4. Haz commit y sube los cambios. Después crea la etiqueta y súbela:
    ```
-   git tag v0.2.1
-   git push origin v0.2.1
+   git tag v0.3.0
+   git push origin v0.3.0
    ```
 5. GitHub Actions (`.github/workflows/release.yml`) compila, arma y firma `latest.json`, y crea la Release. Lo ves en la pestaña **Actions** del repo.
 

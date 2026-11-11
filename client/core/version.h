@@ -18,6 +18,6 @@ namespace luma {
 // "inline constexpr" = una constante conocida al compilar, sin costo en
 // tiempo de ejecución. La "k" inicial es una convención para constantes.
 inline constexpr const char* kName = "Luma";
-inline constexpr const char* kVersion = "0.2.1";
+inline constexpr const char* kVersion = "0.3.0";
 
 }  // namespace luma

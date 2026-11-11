@@ -149,7 +149,10 @@ bool Read(Snapshot& out) {
     }
     const std::uintptr_t player = g_player.load(std::memory_order_relaxed);
     std::uintptr_t vtable = 0;
-    if (player == 0 || !SafeRead(player, vtable) || vtable != g_vtable.load(std::memory_order_relaxed)) {
+    if (player == 0) {
+        return false;  // todavía no se encontró al jugador (menú, pausa o cargando): es normal
+    }
+    if (!SafeRead(player, vtable) || vtable != g_vtable.load(std::memory_order_relaxed)) {
         ReadFailed(1);
         return false;  // no hay jugador, o esa memoria ya es otra cosa
     }

@@ -3,6 +3,8 @@
 // =============================================================================
 #include "modules/hud/debug_screen.h"
 
+#include "render/icons.h"
+
 #include <windows.h>
 
 #include <imgui.h>
@@ -77,8 +79,7 @@ DebugScreen::DebugScreen()
 }
 
 const char* DebugScreen::IconSvg() const {
-    // A small terminal: a box with a prompt and lines.
-    return "M3 5H21V19H3Z M6 9L9 12L6 15 M11 15H17";
+    return render::icons::kTerminal;
 }
 
 void DebugScreen::OnEnable() {

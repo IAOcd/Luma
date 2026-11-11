@@ -26,7 +26,7 @@ Luma does **not** include anything that gives an advantage in multiplayer: no ki
 | **CMake** 3.24 or newer | Reads the `CMakeLists.txt` "recipes" and generates the Visual Studio project | `winget install Kitware.CMake`, or in the Visual Studio installer: "C++ CMake tools for Windows" |
 | **Git** | Keeps the project's change history | `winget install Git.Git` |
 
-You **don't need to install** the external libraries (MinHook, Dear ImGui, nlohmann/json): CMake downloads them by itself the first time you configure the project. That's why you need internet that first time.
+You **don't need to install** the external libraries (MinHook, Dear ImGui, nlohmann/json, nanosvg): CMake downloads them by itself the first time you configure the project. That's why you need internet that first time.
 
 ## How to build
 
@@ -273,6 +273,7 @@ Every library has a **pinned version** in `cmake/Dependencies.cmake`, so a third
 | [MinHook](https://github.com/TsudaKageyu/minhook) | 1.3.4 | BSD-2-Clause | Intercepting functions (hooks) |
 | [Dear ImGui](https://github.com/ocornut/imgui) | 1.91.5 | MIT | Menu and HUD interface |
 | [nlohmann/json](https://github.com/nlohmann/json) | 3.11.3 | MIT | Configuration files |
+| [nanosvg](https://github.com/memononen/nanosvg) | commit 239e102 | zlib | Drawing the SVG icons with smooth edges |
 
 ### Static C++ runtime (`/MT`)
 The C++ support code stays inside `Luma.dll`. That way the DLL doesn't depend on external files or clash with the runtime version the game uses.
@@ -436,6 +437,9 @@ Third-party libraries, downloaded at build time, have their own licenses:
 - [MinHook](https://github.com/TsudaKageyu/minhook) (BSD-2-Clause)
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT)
 - [nlohmann/json](https://github.com/nlohmann/json) (MIT)
+- [nanosvg](https://github.com/memononen/nanosvg) (zlib)
+
+Most icons are from [Lucide](https://lucide.dev) (ISC license, © Lucide Contributors), embedded in `client/render/lucide_icons.inc`.
 
 The ideas of how some of the game's internals work were studied in open-source clients such as Latite and Flarial. Luma's code is written from scratch.
 

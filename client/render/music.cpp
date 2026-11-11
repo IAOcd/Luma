@@ -25,11 +25,11 @@ namespace {
 constexpr float kPi = 3.14159265f;
 
 // Icons (24x24 SVG paths; "F" at the start = filled).
-constexpr const char* kPlayIcon = "FM8 5.5V18.5L18.5 12Z";
-constexpr const char* kPauseIcon = "FM7 5H10.5V19H7Z M13.5 5H17V19H13.5Z";
-constexpr const char* kNextIcon = "FM6 6V18L14.5 12Z M16 6H18.2V18H16Z";
-constexpr const char* kPrevIcon = "FM18 6V18L9.5 12Z M5.8 6H8V18H5.8Z";
-constexpr const char* kNoteIcon = "M9 18V6L19 4V16 M9 18C9 19.38 7.88 20.5 6.5 20.5C5.12 20.5 4 19.38 4 18C4 16.62 5.12 15.5 6.5 15.5C7.88 15.5 9 16.62 9 18Z M19 16C19 17.38 17.88 18.5 16.5 18.5C15.12 18.5 14 17.38 14 16C14 14.62 15.12 13.5 16.5 13.5C17.88 13.5 19 14.62 19 16Z";
+constexpr const char* kPlayIcon = icons::kPlayFilled;
+constexpr const char* kPauseIcon = icons::kPauseFilled;
+constexpr const char* kNextIcon = icons::kSkipForwardFilled;
+constexpr const char* kPrevIcon = icons::kSkipBackFilled;
+constexpr const char* kNoteIcon = icons::kMusic;
 
 ImU32 U(ImVec4 c, float alpha) {
     c.w *= alpha * ImGui::GetStyle().Alpha;

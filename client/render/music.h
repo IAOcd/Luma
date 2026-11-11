@@ -16,20 +16,18 @@
 
 #include "core/lyrics.h"
 #include "core/media.h"
+#include "render/icons.h"
 
 namespace luma::render::music {
 
-// The control icons (24x24 SVG paths, "F" = filled), shared with the Music page.
-inline constexpr const char* kIconPlay = "FM8 5.5V18.5L18.5 12Z";
-inline constexpr const char* kIconPause = "FM7 5H10.5V19H7Z M13.5 5H17V19H13.5Z";
-inline constexpr const char* kIconNext = "FM6 6V18L14.5 12Z M16 6H18.2V18H16Z";
-inline constexpr const char* kIconPrev = "FM18 6V18L9.5 12Z M5.8 6H8V18H5.8Z";
-inline constexpr const char* kIconShuffle =
-    "M3 7H7C10.5 7 11.5 17 15 17H20 M3 17H7C8.6 17 9.6 15 10.5 13 M15 7H20 M17.5 4.5L20 7L17.5 9.5 M17.5 14.5L20 17L17.5 19.5";
-inline constexpr const char* kIconRepeat =
-    "M4 11V9.5C4 8.1 5.1 7 6.5 7H19 M16.5 4.5L19 7L16.5 9.5 M20 13V14.5C20 15.9 18.9 17 17.5 17H5 M7.5 14.5L5 17L7.5 19.5";
-inline constexpr const char* kIconVolume =
-    "M4 9.5H7.5L12 6V18L7.5 14.5H4Z M15.5 9.5C16.6 10.8 16.6 13.2 15.5 14.5 M18 7C20.4 9.6 20.4 14.4 18 17";
+// The control icons (Lucide, see render/icons.h; "Filled" = solid), shared with the Music page.
+inline constexpr const char* kIconPlay = icons::kPlayFilled;
+inline constexpr const char* kIconPause = icons::kPauseFilled;
+inline constexpr const char* kIconNext = icons::kSkipForwardFilled;
+inline constexpr const char* kIconPrev = icons::kSkipBackFilled;
+inline constexpr const char* kIconShuffle = icons::kShuffle;
+inline constexpr const char* kIconRepeat = icons::kRepeat;
+inline constexpr const char* kIconVolume = icons::kVolume;
 
 // Every look the user can change. Defaults = the "Halo" design.
 struct Settings {

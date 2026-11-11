@@ -3,6 +3,8 @@
 // =============================================================================
 #include "modules/visual/dynamic_lights.h"
 
+#include "render/icons.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -92,10 +94,7 @@ DynamicLights::DynamicLights()
              Category::Visual) {}
 
 const char* DynamicLights::IconSvg() const {
-    // A small torch with rays.
-    // (Absolute commands only: render/icons.cpp reads M L H V C S Q Z.)
-    return "M10 10H14L13 21H11Z M12 3C13.7 4.5 14 6 13.2 7.5C12.8 8.3 11.6 8.3 10.8 7.5C10 6 10.3 4.5 12 3Z "
-           "M5 6L7 7.5 M19 6L17 7.5 M4 11H6.5 M20 11H17.5";
+    return render::icons::kFlame;
 }
 
 bool DynamicLights::SdkReady() const {

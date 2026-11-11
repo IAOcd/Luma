@@ -51,6 +51,7 @@
 #include "render/gpu.h"
 #include "render/hud.h"
 #include "render/hud_editor.h"
+#include "render/icons.h"
 #include "render/input.h"
 #include "render/item_icons.h"
 #include "render/loading.h"
@@ -368,6 +369,11 @@ bool Initialize(IDXGISwapChain* swapchain) {
     // The GPU timer measures this same queue (it only creates anything when
     // someone turns it on).
     perf::gputimer::Attach(device.Get(), queue);
+    // The icons are drawn from one shared texture (render/icons.h): tell them
+    // how to make and update textures on this GPU.
+    icons::SetBackend(
+        [](const std::uint8_t* rgba, unsigned w, unsigned h) { return gpu::CreateTexture(rgba, w, h); },
+        [](ImTextureID id, const std::uint8_t* rgba, unsigned w, unsigned h) { return gpu::UpdateTexture(id, rgba, w, h); });
 
     // Necesitamos el alto de la imagen antes de crear ImGui (para la escala).
     DXGI_SWAP_CHAIN_DESC1 desc{};
@@ -441,6 +447,7 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     }
     notify::Render();
     loading::Render();
+    icons::Flush();  // the icons drawn for the first time this frame, to the GPU
     ImGui::Render();
     g_wantsTextInput.store(menuOpen && io.WantTextInput, std::memory_order_relaxed);
 
@@ -686,6 +693,7 @@ void Shutdown() {
 
     DestroyDeviceResources();
     perf::gputimer::Shutdown();  // (it waits for its own work on the GPU)
+    icons::Shutdown();
     gpu::Shutdown();
     if (g_r.win32Backend) {
         ImGui_ImplWin32_Shutdown();

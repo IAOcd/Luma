@@ -2,6 +2,8 @@
 //  toggle_keys.cpp - Implementación de toggle sprint / toggle sneak
 // =============================================================================
 #include "modules/utility/toggle_keys.h"
+
+#include "render/icons.h"
 #include "core/tr.h"
 
 #include <windows.h>
@@ -59,15 +61,8 @@ ToggleKey::ToggleKey(HoldSlot slot)
 }
 
 const char* ToggleKey::IconSvg() const {
-    // Las cabezas son círculos hechos con curvas C: el dibujador de íconos de
-    // Luma no entiende los arcos (comando a de SVG), por eso antes no se veían.
-    return IsSprint(slot_)
-               // corriendo: inclinado hacia adelante, con una pierna atrás
-               ? "M13.5 3C14.6 3 15.5 3.9 15.5 5S14.6 7 13.5 7S11.5 6.1 11.5 5S12.4 3 13.5 3z "
-                 "M12.5 8.5l-2.5 4.5 3 2-1 5.5 M10 13l-4 1 M12.5 8.5l3.5 3 3-1 M13 15l4 2"
-               // agachado: más bajo, con las rodillas dobladas
-               : "M12 6C13.1 6 14 6.9 14 8S13.1 10 12 10S10 9.1 10 8S10.9 6 12 6z "
-                 "M12 11l-1 4.5 4 1.5 1 3.5 M11 15.5l-3 4.5 M12 11.5l-4 2 M12 11.5l3.5 1.5";
+    // Sprint: footprints. Sneak: two arrows down (crouching).
+    return IsSprint(slot_) ? render::icons::kFootprints : render::icons::kChevronsDown;
 }
 
 int ToggleKey::GameKey() const {

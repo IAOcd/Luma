@@ -36,6 +36,7 @@
 #include <cwchar>
 
 #include "gui/app.h"
+#include "render/icons.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -225,6 +226,7 @@ void Render(HWND hwnd) {
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
     AppFrame();
+    luma::render::icons::Flush();  // los íconos nuevos de este frame, a la GPU
     ImGui::Render();
     const float clear[4] = {0, 0, 0, 1};
     g_context->OMSetRenderTargets(1, &g_target, nullptr);

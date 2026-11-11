@@ -3,6 +3,8 @@
 // =============================================================================
 #include "modules/hud/player_list.h"
 
+#include "render/icons.h"
+
 #include <windows.h>
 #include <imgui.h>
 
@@ -37,8 +39,7 @@ PlayerList::PlayerList()
              Category::Hud) {}
 
 const char* PlayerList::IconSvg() const {
-    // Tres renglones con una cabecita cuadrada cada uno.
-    return "M4 5h3v3H4z M10 6.5h10 M4 10.5h3v3H4z M10 12h10 M4 16h3v3H4z M10 17.5h10";
+    return render::icons::kUsers;
 }
 
 void PlayerList::Refresh() {

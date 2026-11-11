@@ -57,6 +57,7 @@ add_library(Luma SHARED
     render/hud.cpp
     render/hud_editor.cpp
     render/icons.cpp
+    render/nanosvg_impl.cpp
     render/input.cpp
     render/item_icons.cpp
     render/loading.cpp
@@ -98,6 +99,7 @@ target_link_libraries(Luma PRIVATE
     luma_options              # nuestras opciones de compilación (ver CMakeLists raíz)
     minhook                   # hooks (se usa desde la Fase 1/2)
     imgui                     # interfaz (se usa desde la Fase 2)
+    nanosvg                   # dibujar los íconos SVG con bordes suaves
     nlohmann_json::nlohmann_json  # configuración JSON (se usa desde la Fase 3)
     shell32                   # SHGetKnownFolderPath (carpeta %APPDATA%)
     ole32                     # CoTaskMemFree y COM (lo usan WIC y XAudio2)
@@ -113,3 +115,7 @@ target_link_libraries(Luma PRIVATE
     windowsapp                # APIs de Windows "WinRT": la música que suena (core/media.cpp)
     crypt32                   # DPAPI: abrir el pase de Luma cifrado
 )
+
+# nanosvg es código ajeno: sin avisos del compilador sobre él (por ejemplo
+# C4702 "código inalcanzable", que con /WX cortaría la compilación).
+set_source_files_properties(render/nanosvg_impl.cpp PROPERTIES COMPILE_OPTIONS "/W0")

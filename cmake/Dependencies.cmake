@@ -45,8 +45,25 @@ FetchContent_Declare(imgui
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
+# --- nanosvg -------------------------------------------------------------------
+# Lee archivos SVG y los convierte en píxeles con bordes suaves (antialiasing).
+# Con ella se dibujan los íconos de Luma. Licencia zlib. Son solo dos archivos
+# de cabecera (.h) sin CMakeLists; no tiene releases, así que fijamos un
+# commit exacto (el mismo código para siempre).
+FetchContent_Declare(nanosvg
+    URL https://github.com/memononen/nanosvg/archive/239e102ec2c691f2902e20ace2ed36ee4a35cfe6.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    # Solo descargar: su CMakeLists crearía bibliotecas que no necesitamos
+    # (apuntamos a una subcarpeta que no existe para que CMake no lo lea).
+    SOURCE_SUBDIR luma-no-cmake
+)
+
 # Descargar todo (y, para minhook y json, procesar su CMakeLists).
-FetchContent_MakeAvailable(minhook nlohmann_json imgui)
+FetchContent_MakeAvailable(minhook nlohmann_json imgui nanosvg)
+
+# nanosvg como biblioteca "de solo cabeceras": solo agrega su carpeta src/.
+add_library(nanosvg INTERFACE)
+target_include_directories(nanosvg INTERFACE ${nanosvg_SOURCE_DIR}/src)
 
 # --- Biblioteca ImGui ---------------------------------------------------------------
 # El núcleo de ImGui más dos "backends" oficiales (el código que conecta ImGui

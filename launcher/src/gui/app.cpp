@@ -66,32 +66,28 @@ namespace icons = render::icons;
 using i18n::T;
 
 // --- Íconos propios del launcher (cuadrícula de 24x24, como los del menú) -------
-constexpr const char* kIconHome = "M3.5 10.5L12 3.5l8.5 7 M5.5 9v11h13V9 M10 20v-6h4v6";
-constexpr const char* kIconAddons = "M12 3l8 4.5v9L12 21l-8-4.5v-9z M12 12l8-4.5 M12 12v9 M12 12L4 7.5";  // un bloque
-constexpr const char* kIconSkins =
-    "M8.5 4L4 6.5l1.8 4L8 9.6V20h8V9.6l2.2.9 1.8-4L15.5 4C14.8 5.3 13.5 6 12 6S9.2 5.3 8.5 4z";
-constexpr const char* kIconPlay = "F M8 5.2V18.8L18.8 12Z";
-constexpr const char* kIconSun =
-    "M8 12C8 9.8 9.8 8 12 8S16 9.8 16 12S14.2 16 12 16S8 14.2 8 12z M12 2.5V5 M12 19v2.5 M2.5 12H5 M19 12h2.5 "
-    "M5.3 5.3l1.8 1.8 M16.9 16.9l1.8 1.8 M5.3 18.7l1.8-1.8 M16.9 7.1l1.8-1.8";
-constexpr const char* kIconMoon =
-    "M19.5 14.6C18.4 15.2 17.2 15.5 15.9 15.5C11.8 15.5 8.5 12.2 8.5 8.1C8.5 6.8 8.8 5.6 9.4 4.5C6 5.6 3.5 8.8 3.5 "
-    "12.6C3.5 17.3 7.3 21 12 21C15.8 21 19 18.5 19.5 14.6z";
-constexpr const char* kIconMinimize = "M6 12h12";
-constexpr const char* kIconMaximize = "M6.5 6.5h11v11h-11z";
-constexpr const char* kIconRestore = "M8.5 9.5h9v8h-9z M6.5 14.5v-8h9";
-constexpr const char* kIconAlert = "M12 4L21 19.5H3z M12 10v4.5 M12 17v.5";
-constexpr const char* kIconClock = "M3.5 12C3.5 7.3 7.3 3.5 12 3.5S20.5 7.3 20.5 12S16.7 20.5 12 20.5S3.5 16.7 3.5 12z M12 7.5V12l3 2";
-constexpr const char* kIconSessions = "M4 6h16v12H4z M4 10h16 M8 14h3";
-constexpr const char* kIconNews = "M5 4h11l3 3v13H5z M8 9h8 M8 12.5h8 M8 16h5";
-constexpr const char* kIconSliders = "M4 6.5h9 M17 6.5h3 M15 4.5v4 M4 12h3 M11 12h9 M9 10v4 M4 17.5h11 M19 17.5h1 M17 15.5v4";
-constexpr const char* kIconCalendar = "M4.5 6h15v14h-15z M4.5 10h15 M8.5 3.5v4 M15.5 3.5v4";
-constexpr const char* kIconWindows = "M4 5.5l7-1v7H4z M13 4.2l7-1v8.3h-7z M4 13h7v7l-7-1z M13 13h7v8.3l-7-1z";
-constexpr const char* kIconStar = "F M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.8z";
-constexpr const char* kIconCheck = "M5 12.5l4.5 4.5L19 7.5";
-constexpr const char* kIconChevron = "M9.5 6l6 6-6 6";
-constexpr const char* kIconFolder = "M3.5 6.5h6l2 2h9v10h-17z";
-constexpr const char* kIconUser = "M8 8C8 5.8 9.8 4 12 4S16 5.8 16 8S14.2 12 12 12S8 10.2 8 8z M4.5 20c.8-3.8 3.9-6 7.5-6s6.7 2.2 7.5 6";
+// (Casi todos de Lucide: ver client/render/icons.h.)
+constexpr const char* kIconHome = icons::kHome;
+constexpr const char* kIconAddons = icons::kBox;  // un bloque
+constexpr const char* kIconSkins = icons::kCloset;
+constexpr const char* kIconPlay = icons::kPlayFilled;
+constexpr const char* kIconSun = icons::kSun;
+constexpr const char* kIconMoon = icons::kMoon;
+constexpr const char* kIconMinimize = icons::kMinus;
+constexpr const char* kIconMaximize = icons::kSquare;
+constexpr const char* kIconRestore = icons::kCopy;
+constexpr const char* kIconAlert = icons::kAlert;
+constexpr const char* kIconClock = icons::kClock;
+constexpr const char* kIconSessions = icons::kAppWindow;
+constexpr const char* kIconNews = icons::kNewspaper;
+constexpr const char* kIconSliders = icons::kSliders;
+constexpr const char* kIconCalendar = icons::kCalendar;
+constexpr const char* kIconWindows = icons::kWindowsLogo;
+constexpr const char* kIconStar = icons::kStarFilled;
+constexpr const char* kIconCheck = icons::kCheck;
+constexpr const char* kIconChevron = icons::kChevronRight;
+constexpr const char* kIconFolder = icons::kFolder;
+constexpr const char* kIconUser = icons::kProfiles;
 
 // --- Medidas (a 100% de escala; se multiplican por g_scale) ---------------------
 constexpr float kSidebarWidth = 232.0f;
@@ -1234,7 +1230,7 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, cons
     }
     d->AddRectFilled(dmin, dmax, C(ImVec4(0, 0, 0, 1), 0.35f + 0.15f * dropHover), S(12.0f));
     d->AddRect(dmin, dmax, C(ImVec4(1, 1, 1, 1), 0.15f), S(12.0f));
-    icons::Draw(d, g_playMenuOpen ? "M7 14l5-5 5 5" : "M7 10l5 5 5-5", ImVec2((dmin.x + dmax.x) * 0.5f, (dmin.y + dmax.y) * 0.5f),
+    icons::Draw(d, g_playMenuOpen ? icons::kChevronUp : icons::kChevronDown, ImVec2((dmin.x + dmax.x) * 0.5f, (dmin.y + dmax.y) * 0.5f),
                 S(20.0f), white, S(2.0f));
 
     // Debajo: qué juego y versión.
@@ -1352,9 +1348,9 @@ void DrawSkinCard(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) 
         int action;
     };
     const Btn buttons[] = {
-        {"##skin_spin", "M18.5 12c0 3.6-2.9 6.5-6.5 6.5S5.5 15.6 5.5 12 8.4 5.5 12 5.5c2 0 3.7.9 4.9 2.3 M17.5 4v4h-4", g_cardSpin, 0},
-        {"##skin_zoom", "M10.5 4.5c3.3 0 6 2.7 6 6s-2.7 6-6 6-6-2.7-6-6 2.7-6 6-6z M15 15l5 5 M8 10.5h5 M10.5 8v5", g_cardZoomTarget > 1.0f, 1},
-        {"##skin_full", "M4 9V4h5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5", false, 2},
+        {"##skin_spin", icons::kRotate, g_cardSpin, 0},
+        {"##skin_zoom", icons::kZoomIn, g_cardZoomTarget > 1.0f, 1},
+        {"##skin_full", icons::kExpand, false, 2},
     };
     for (const Btn& b : buttons) {
         float hover = 0.0f;
@@ -1925,10 +1921,10 @@ float g_skinsYaw = -0.45f;
 double g_deleteArmedAt = -10.0;      // borrar pide un segundo clic (dentro de 3 s)
 std::string g_importError;
 
-constexpr const char* kIconStarLine = "M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.8z";
-constexpr const char* kIconTrash = "M4.5 7h15 M9 7V4.5h6V7 M6.5 7l1 13h9l1-13 M10 10.5v6 M14 10.5v6";
-constexpr const char* kIconPlus = "M12 5v14 M5 12h14";
-constexpr const char* kIconGamepad = "M7 8h10c2.5 0 4 2.2 4 5s-1.2 5-3 5c-1.5 0-2.3-2-5-2h-2c-2.7 0-3.5 2-5 2-1.8 0-3-2.2-3-5s1.5-5 4-5z M7.5 11v3 M6 12.5h3 M15.5 12h.5 M17.5 13.5h.5";
+constexpr const char* kIconStarLine = icons::kStar;
+constexpr const char* kIconTrash = icons::kTrash;
+constexpr const char* kIconPlus = icons::kPlus;
+constexpr const char* kIconGamepad = icons::kGamepad;
 
 // Si Luma.dll guardó una skin nueva, sumarla a la biblioteca (cada frame, barato).
 void SyncSkins(const LocalData& data) {
@@ -2312,8 +2308,44 @@ void AppInit(HWND hwnd, float scale) {
     updater::Start(g_autoUpdate, GetCommandLineW());
 }
 
+// The icons' shared texture (render/icons.h), made and updated with D3D11.
+ID3D11ShaderResourceView* g_iconAtlas = nullptr;
+
+ImTextureID CreateIconTexture(const std::uint8_t* rgba, unsigned width, unsigned height) {
+    if (g_device == nullptr || g_iconAtlas != nullptr) return ImTextureID{};
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = width;
+    desc.Height = height;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA init{rgba, width * 4, 0};
+    ID3D11Texture2D* texture = nullptr;
+    if (FAILED(g_device->CreateTexture2D(&desc, &init, &texture))) return ImTextureID{};
+    g_device->CreateShaderResourceView(texture, nullptr, &g_iconAtlas);
+    texture->Release();  // the view keeps it alive
+    return g_iconAtlas != nullptr ? reinterpret_cast<ImTextureID>(g_iconAtlas) : ImTextureID{};
+}
+
+bool UpdateIconTexture(ImTextureID, const std::uint8_t* rgba, unsigned width, unsigned) {
+    if (g_device == nullptr || g_iconAtlas == nullptr) return false;
+    ID3D11Resource* resource = nullptr;
+    g_iconAtlas->GetResource(&resource);
+    ID3D11DeviceContext* context = nullptr;
+    g_device->GetImmediateContext(&context);
+    const bool ok = resource != nullptr && context != nullptr;
+    if (ok) context->UpdateSubresource(resource, 0, nullptr, rgba, width * 4, 0);
+    if (context != nullptr) context->Release();
+    if (resource != nullptr) resource->Release();
+    return ok;
+}
+
 void AppSetDevice(ID3D11Device* device) {
     g_device = device;
+    icons::SetBackend(CreateIconTexture, UpdateIconTexture);
     textures::SetDevice(device);
     skin3d::Init(device);
 }
@@ -2464,6 +2496,11 @@ void AppFrame() {
 
 void AppShutdown() {
     g_quit.store(true);
+    icons::Shutdown();
+    if (g_iconAtlas != nullptr) {
+        g_iconAtlas->Release();
+        g_iconAtlas = nullptr;
+    }
     account::Shutdown();
     updater::Shutdown();
     if (g_statusThread.joinable()) {

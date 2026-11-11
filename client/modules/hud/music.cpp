@@ -3,6 +3,8 @@
 // =============================================================================
 #include "modules/hud/music.h"
 
+#include "render/icons.h"
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -83,7 +85,7 @@ NowPlaying::NowPlaying()
 }
 
 const char* NowPlaying::IconSvg() const {
-    return "M9 18V6L19 4V16 M9 18C9 19.38 7.88 20.5 6.5 20.5C5.12 20.5 4 19.38 4 18C4 16.62 5.12 15.5 6.5 15.5C7.88 15.5 9 16.62 9 18Z M19 16C19 17.38 17.88 18.5 16.5 18.5C15.12 18.5 14 17.38 14 16C14 14.62 15.12 13.5 16.5 13.5C17.88 13.5 19 14.62 19 16Z";
+    return render::icons::kMusic;
 }
 
 void NowPlaying::OnEnable() {

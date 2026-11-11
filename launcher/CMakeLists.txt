@@ -39,6 +39,7 @@ add_executable(LumaLauncher WIN32
     src/signature.cpp    # comprobar la firma de las actualizaciones
     src/updater.cpp      # actualizaciones automáticas desde GitHub
     ${PROJECT_SOURCE_DIR}/client/render/icons.cpp   # el mismo dibujador de íconos del menú
+    ${PROJECT_SOURCE_DIR}/client/render/nanosvg_impl.cpp
     assets/launcher.rc
 )
 target_include_directories(LumaLauncher PRIVATE
@@ -68,6 +69,7 @@ endif()
 target_link_libraries(LumaLauncher PRIVATE
     launcher_core
     imgui
+    nanosvg
     nlohmann_json::nlohmann_json
     dwmapi         # sombra y esquinas redondeadas de Windows 11
     winhttp        # HTTPS con los servidores de Microsoft y Xbox
@@ -83,3 +85,7 @@ add_executable(LumaLauncherCli
     src/cli_main.cpp
 )
 target_link_libraries(LumaLauncherCli PRIVATE launcher_core)
+
+# nanosvg es código ajeno: sin avisos del compilador sobre él.
+set_source_files_properties(${PROJECT_SOURCE_DIR}/client/render/nanosvg_impl.cpp
+    TARGET_DIRECTORY LumaLauncher PROPERTIES COMPILE_OPTIONS "/W0")

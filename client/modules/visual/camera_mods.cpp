@@ -3,6 +3,8 @@
 // =============================================================================
 #include "modules/visual/camera_mods.h"
 
+#include "render/icons.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -29,8 +31,7 @@ Fullbright::Fullbright()
              Category::Visual) {}
 
 const char* Fullbright::IconSvg() const {
-    return "M12 7C14.76 7 17 9.24 17 12C17 14.76 14.76 17 12 17C9.24 17 7 14.76 7 12C7 9.24 9.24 7 12 7Z "
-           "M12 2v2 M12 20v2 M2 12h2 M20 12h2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4";
+    return render::icons::kSun;
 }
 
 bool Fullbright::SdkReady() const {
@@ -74,7 +75,7 @@ Freelook::Freelook()
              Category::Visual) {}
 
 const char* Freelook::IconSvg() const {
-    return "M2 12C4.5 7 8 5 12 5C16 5 19.5 7 22 12C19.5 17 16 19 12 19C8 19 4.5 17 2 12Z M12 9v6 M9 12h6";
+    return render::icons::kScan;
 }
 
 bool Freelook::SdkReady() const {
@@ -146,8 +147,7 @@ Zoom::Zoom()
 }
 
 const char* Zoom::IconSvg() const {
-    return "M16 10C16 13.31 13.31 16 10 16C6.69 16 4 13.31 4 10C4 6.69 6.69 4 10 4C13.31 4 16 6.69 16 10Z "
-           "M14.5 14.5L20 20 M7.5 10h5 M10 7.5v5";
+    return render::icons::kZoomIn;
 }
 
 bool Zoom::SdkReady() const {
@@ -349,7 +349,7 @@ FovChanger::FovChanger()
              Category::Visual) {}
 
 const char* FovChanger::IconSvg() const {
-    return "M12 18L4 6 M12 18L20 6 M6.5 9.5C8 8.5 10 8 12 8C14 8 16 8.5 17.5 9.5";
+    return render::icons::kAperture;
 }
 
 bool FovChanger::SdkReady() const {

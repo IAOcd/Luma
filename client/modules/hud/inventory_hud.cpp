@@ -2,6 +2,8 @@
 //  inventory_hud.cpp - Armadura, ítem en la mano, contador y aviso de durabilidad
 // =============================================================================
 #include "modules/hud/inventory_hud.h"
+
+#include "render/icons.h"
 #include "core/tr.h"
 
 #include <imgui.h>
@@ -117,7 +119,7 @@ ArmorHud::ArmorHud()
 }
 
 const char* ArmorHud::IconSvg() const {
-    return "M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z";
+    return render::icons::kShield;
 }
 
 ImVec2 ArmorHud::OnRenderHud(const HudFrame& frame) {
@@ -297,7 +299,7 @@ HeldItem::HeldItem()
 }
 
 const char* HeldItem::IconSvg() const {
-    return "M14.5 4.5l5 5 M5 19l9.5-9.5 M12 7l5 5 M4 20l2-1 M5 15l4 4";
+    return render::icons::kSword;
 }
 
 ImVec2 HeldItem::OnRenderHud(const HudFrame& frame) {
@@ -399,8 +401,7 @@ ItemCounter::ItemCounter()
 }
 
 const char* ItemCounter::IconSvg() const {
-    // Dos ítems apilados y una cruz de cantidad.
-    return "M4 10h9v9H4z M8 6h9v9 M16.5 17.5l4 4 M20.5 17.5l-4 4";
+    return render::icons::kPackage;
 }
 
 ImVec2 ItemCounter::OnRenderHud(const HudFrame& frame) {
@@ -626,7 +627,7 @@ DurabilityWarning::DurabilityWarning()
              Category::Utility) {}
 
 const char* DurabilityWarning::IconSvg() const {
-    return "M12 3L2 20h20L12 3Z M12 9v5 M12 17v0.5";
+    return render::icons::kAlert;
 }
 
 void DurabilityWarning::OnTick() {

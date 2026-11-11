@@ -3,6 +3,8 @@
 // =============================================================================
 #include "modules/visual/world_draw.h"
 
+#include "render/icons.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -41,7 +43,7 @@ BlockOutline::BlockOutline()
              "Changes the outline of the block you look at: its color and an optional fill.", Category::Visual) {}
 
 const char* BlockOutline::IconSvg() const {
-    return "M12 3l8 4.5v9L12 21l-8-4.5v-9z M12 12l8-4.5 M12 12v9 M12 12L4 7.5";
+    return render::icons::kBox;
 }
 
 bool BlockOutline::SdkReady() const {
@@ -113,9 +115,7 @@ Hitboxes::Hitboxes()
              Category::Visual) {}
 
 const char* Hitboxes::IconSvg() const {
-    // Una caja alrededor de una personita.
-    return "M5 2.5h14v19H5z M12 6C12.8 6 13.5 6.7 13.5 7.5S12.8 9 12 9S10.5 8.3 10.5 7.5S11.2 6 12 6z "
-           "M12 9v6 M9.5 11h5 M12 15l-2 3.5 M12 15l2 3.5";
+    return render::icons::kSquareDashed;
 }
 
 bool Hitboxes::SdkReady() const {
@@ -216,7 +216,7 @@ ChunkBorders::ChunkBorders()
              "Shows chunk borders (16x16 block columns), like Java's F3+G.", Category::Visual) {}
 
 const char* ChunkBorders::IconSvg() const {
-    return "M4 4h16v16H4z M12 4v16 M4 12h16";
+    return render::icons::kGrid;
 }
 
 bool ChunkBorders::SdkReady() const {

@@ -3,6 +3,8 @@
 // =============================================================================
 #include "modules/hud/scoreboard.h"
 
+#include "render/icons.h"
+
 #include <imgui.h>
 
 #include "core/tr.h"
@@ -25,8 +27,7 @@ MovableScoreboard::MovableScoreboard()
 }
 
 const char* MovableScoreboard::IconSvg() const {
-    // Una tabla: título arriba y tres filas con su número.
-    return "M4 4h16v16H4z M4 8.5h16 M7 12h6 M16 12h1 M7 15h6 M16 15h1 M7 18h6";
+    return render::icons::kTrophy;
 }
 
 bool MovableScoreboard::SdkReady() const {

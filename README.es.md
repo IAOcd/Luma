@@ -26,7 +26,7 @@ Luma **no** incluye nada que dé ventaja en multijugador: nada de killaura, fly,
 | **CMake** 3.24 o superior | Lee las "recetas" `CMakeLists.txt` y genera el proyecto de Visual Studio | `winget install Kitware.CMake`, o en el instalador de Visual Studio: "Herramientas de CMake de C++ para Windows" |
 | **Git** | Guarda el historial de cambios del proyecto | `winget install Git.Git` |
 
-Las bibliotecas externas (MinHook, Dear ImGui, nlohmann/json) **no hay que instalarlas**: CMake las descarga solo la primera vez que configuras el proyecto. Por eso esa primera vez necesitas internet.
+Las bibliotecas externas (MinHook, Dear ImGui, nlohmann/json, nanosvg) **no hay que instalarlas**: CMake las descarga solo la primera vez que configuras el proyecto. Por eso esa primera vez necesitas internet.
 
 ## Cómo compilar
 
@@ -273,6 +273,7 @@ Cada biblioteca tiene una **versión fija** en `cmake/Dependencies.cmake`, para 
 | [MinHook](https://github.com/TsudaKageyu/minhook) | 1.3.4 | BSD-2-Clause | Interceptar funciones (hooks) |
 | [Dear ImGui](https://github.com/ocornut/imgui) | 1.91.5 | MIT | Interfaz del menú y HUD |
 | [nlohmann/json](https://github.com/nlohmann/json) | 3.11.3 | MIT | Archivos de configuración |
+| [nanosvg](https://github.com/memononen/nanosvg) | commit 239e102 | zlib | Dibujar los íconos SVG con bordes suaves |
 
 ### Runtime de C++ estático (`/MT`)
 El código de soporte de C++ queda dentro de `Luma.dll`. Así la DLL no depende de archivos externos ni choca con la versión del runtime que use el juego.
@@ -436,6 +437,9 @@ Bibliotecas de terceros, que se descargan al compilar y tienen sus propias licen
 - [MinHook](https://github.com/TsudaKageyu/minhook) (BSD-2-Clause)
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT)
 - [nlohmann/json](https://github.com/nlohmann/json) (MIT)
+- [nanosvg](https://github.com/memononen/nanosvg) (zlib)
+
+La mayoría de los íconos son de [Lucide](https://lucide.dev) (licencia ISC, © Lucide Contributors), incluidos en `client/render/lucide_icons.inc`.
 
 Las ideas de cómo funcionan algunas partes internas del juego se estudiaron en clients de código abierto como Latite y Flarial. El código de Luma está escrito desde cero.
 

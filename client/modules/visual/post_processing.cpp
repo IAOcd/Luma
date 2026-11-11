@@ -3,6 +3,8 @@
 // =============================================================================
 #include "modules/visual/post_processing.h"
 
+#include "render/icons.h"
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -57,7 +59,7 @@ PostProcessing::PostProcessing()
              Category::Visual) {}
 
 const char* PostProcessing::IconSvg() const {
-    return "M4 6h16v12H4z M4 15l4-4 3 3 4-5 5 6 M9 9.5C9 10.33 8.33 11 7.5 11C6.67 11 6 10.33 6 9.5C6 8.67 6.67 8 7.5 8C8.33 8 9 8.67 9 9.5Z";
+    return render::icons::kWand;
 }
 
 void PostProcessing::Push() const {

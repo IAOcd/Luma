@@ -2,6 +2,8 @@
 //  hud_modules.cpp - FPS, CPS, Keystrokes y Reloj
 // =============================================================================
 #include "modules/hud/hud_modules.h"
+
+#include "render/icons.h"
 #include "core/tr.h"
 
 #include <windows.h>
@@ -83,7 +85,7 @@ FpsCounter::FpsCounter()
 }
 
 const char* FpsCounter::IconSvg() const {
-    return "M4 17C4 12.58 7.58 9 12 9C16.42 9 20 12.58 20 17 M12 17L15.5 12.5 M4 17h2 M18 17h2";
+    return render::icons::kPerformance;
 }
 
 ImVec2 FpsCounter::OnRenderHud(const HudFrame& frame) {
@@ -148,7 +150,7 @@ CpsCounter::CpsCounter()
 }
 
 const char* CpsCounter::IconSvg() const {
-    return "M12 3v5 M7 4.5l2 3.5 M17 4.5l-2 3.5 M8 11h8v6C16 19.2 14.2 21 12 21C9.8 21 8 19.2 8 17Z M12 11v4";
+    return render::icons::kMouseClick;
 }
 
 void CpsCounter::OnEnable() {
@@ -200,7 +202,7 @@ Keystrokes::Keystrokes()
 }
 
 const char* Keystrokes::IconSvg() const {
-    return "M9.5 3h5v5h-5z M3.5 10h5v5h-5z M9.5 10h5v5h-5z M15.5 10h5v5h-5z M3.5 17h17v4h-17z";
+    return render::icons::kKey;
 }
 
 void Keystrokes::OnEnable() {
@@ -326,7 +328,7 @@ Clock::Clock() : Module("clock", "Clock", "Shows your PC's time (and the date, i
 }
 
 const char* Clock::IconSvg() const {
-    return "M20 12C20 16.42 16.42 20 12 20C7.58 20 4 16.42 4 12C4 7.58 7.58 4 12 4C16.42 4 20 7.58 20 12Z M12 7v5l3 2";
+    return render::icons::kClock;
 }
 
 ImVec2 Clock::OnRenderHud(const HudFrame& frame) {

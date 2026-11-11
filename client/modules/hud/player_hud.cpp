@@ -2,6 +2,8 @@
 //  player_hud.cpp - Coordenadas, brújula y velocidad
 // =============================================================================
 #include "modules/hud/player_hud.h"
+
+#include "render/icons.h"
 #include "core/tr.h"
 
 #include <imgui.h>
@@ -89,8 +91,7 @@ Coordinates::Coordinates()
 }
 
 const char* Coordinates::IconSvg() const {
-    return "M12 21C12 21 5 14.5 5 9.5C5 5.91 8.13 3 12 3C15.87 3 19 5.91 19 9.5C19 14.5 12 21 12 21Z "
-           "M14.5 9.5C14.5 10.88 13.38 12 12 12C10.62 12 9.5 10.88 9.5 9.5C9.5 8.12 10.62 7 12 7C13.38 7 14.5 8.12 14.5 9.5Z";
+    return render::icons::kMapPin;
 }
 
 void Coordinates::OnEnable() {
@@ -186,8 +187,7 @@ Compass::Compass()
 }
 
 const char* Compass::IconSvg() const {
-    return "M21 12C21 16.97 16.97 21 12 21C7.03 21 3 16.97 3 12C3 7.03 7.03 3 12 3C16.97 3 21 7.03 21 12Z "
-           "M15.5 8.5L13.5 13.5L8.5 15.5L10.5 10.5Z";
+    return render::icons::kCompass;
 }
 
 ImVec2 Compass::OnRenderHud(const HudFrame& frame) {
@@ -281,8 +281,7 @@ SpeedDisplay::SpeedDisplay()
 }
 
 const char* SpeedDisplay::IconSvg() const {
-    // Líneas de velocidad y una flecha hacia adelante.
-    return "M3 8h9 M2 12h12 M4 16h8 M15 6.5l5 5.5-5 5.5";
+    return render::icons::kWind;
 }
 
 ImVec2 SpeedDisplay::OnRenderHud(const HudFrame& frame) {
@@ -348,7 +347,7 @@ PingDisplay::PingDisplay()
 }
 
 const char* PingDisplay::IconSvg() const {
-    return "M4 20h2v-3H4z M9 20h2v-6H9z M14 20h2v-9h-2z M19 20h2V6h-2z";
+    return render::icons::kSignal;
 }
 
 ImVec2 PingDisplay::OnRenderHud(const HudFrame& frame) {

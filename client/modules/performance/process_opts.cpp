@@ -27,13 +27,7 @@ namespace luma::modules::performance {
 
 namespace {
 
-constexpr const char* kSpeedIcon = "M13 3L5 13h6l-1 8 8-10h-6z";       // un rayo
 // Un cronómetro (con el botón arriba): distinto del Reloj del HUD.
-constexpr const char* kClockIcon =
-    "M19 14C19 17.9 15.9 21 12 21C8.1 21 5 17.9 5 14C5 10.1 8.1 7 12 7C15.9 7 19 10.1 19 14Z M12 14v-3.5 M10 3h4 "
-    "M12 3v4 M17.5 7.5l1.5-1.5";
-constexpr const char* kLeafIcon = "M5 19C5 11 10 5 19 5C19 14 13 19 5 19Z M5 19L12 12";
-constexpr const char* kThreadIcon = "M4 7h16 M4 12h10 M4 17h16 M17 10l3 2-3 2";
 
 // --- Ahorro de energía del proceso ("power throttling") ------------------------
 // Dos de las optimizaciones usan la misma llamada de Windows, cada una con su
@@ -80,7 +74,7 @@ ProcessPriority::ProcessPriority()
              Category::Performance) {}
 
 const char* ProcessPriority::IconSvg() const {
-    return kSpeedIcon;
+    return render::icons::kZap;
 }
 
 void ProcessPriority::Apply() const {
@@ -129,7 +123,7 @@ TimerResolution::TimerResolution()
              Category::Performance) {}
 
 const char* TimerResolution::IconSvg() const {
-    return kClockIcon;
+    return render::icons::kTimer;
 }
 
 void TimerResolution::OnEnable() {
@@ -157,7 +151,7 @@ NoEcoQos::NoEcoQos()
              Category::Performance) {}
 
 const char* NoEcoQos::IconSvg() const {
-    return kLeafIcon;
+    return render::icons::kLeaf;
 }
 
 void NoEcoQos::OnEnable() {
@@ -180,7 +174,7 @@ RenderThreadPriority::RenderThreadPriority()
              Category::Performance) {}
 
 const char* RenderThreadPriority::IconSvg() const {
-    return kThreadIcon;
+    return render::icons::kCpu;
 }
 
 void RenderThreadPriority::OnEnable() {

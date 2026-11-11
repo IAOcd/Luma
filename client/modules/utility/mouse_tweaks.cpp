@@ -3,6 +3,8 @@
 // =============================================================================
 #include "modules/utility/mouse_tweaks.h"
 
+#include "render/icons.h"
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -20,7 +22,7 @@ ScrollWheelDisabler::ScrollWheelDisabler()
              "While playing, the mouse wheel doesn't change the hotbar slot.", Category::Utility) {}
 
 const char* ScrollWheelDisabler::IconSvg() const {
-    return "M12 3C8.69 3 6 5.69 6 9v6c0 3.31 2.69 6 6 6s6-2.69 6-6V9c0-3.31-2.69-6-6-6Z M12 7v4 M4 4l16 16";
+    return render::icons::kMouseOff;
 }
 
 void ScrollWheelDisabler::OnEnable() {
@@ -38,8 +40,7 @@ SensitivityMultiplier::SensitivityMultiplier()
              "Multiplies the game's camera sensitivity (for example, 0.5 = half).", Category::Utility) {}
 
 const char* SensitivityMultiplier::IconSvg() const {
-    return "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M15 12C15 13.66 13.66 15 12 15C10.34 15 9 13.66 9 12C9 10.34 10.34 9 12 "
-           "9C13.66 9 15 10.34 15 12Z";
+    return render::icons::kSliders;
 }
 
 void SensitivityMultiplier::OnEnable() {
@@ -77,7 +78,7 @@ CpsCap::CpsCap()
              "Drops clicks above a maximum per second (some servers require it).", Category::Utility) {}
 
 const char* CpsCap::IconSvg() const {
-    return "M8 11h8v6C16 19.2 14.2 21 12 21C9.8 21 8 19.2 8 17Z M12 11v4 M5 5h14";
+    return render::icons::kMouseBan;
 }
 
 void CpsCap::OnEnable() {

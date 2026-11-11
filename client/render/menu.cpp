@@ -96,8 +96,7 @@ using modules::Module;
 enum class Page { Modules, Theme, Profiles, Settings, Benchmark, Diagnostics, Closet, Music };
 int g_settingsTab = 0;  // 0 general, 1 appearance, 2 profiles, 3 performance
 int g_musicTab = 0;     // 0 lyrics, 1 styles, 2 halo
-constexpr const char* kMusicIcon =
-    "M9 18V6L19 4V16 M9 18C9 19.38 7.88 20.5 6.5 20.5C5.12 20.5 4 19.38 4 18C4 16.62 5.12 15.5 6.5 15.5C7.88 15.5 9 16.62 9 18Z M19 16C19 17.38 17.88 18.5 16.5 18.5C15.12 18.5 14 17.38 14 16C14 14.62 15.12 13.5 16.5 13.5C17.88 13.5 19 14.62 19 16Z";
+constexpr const char* kMusicIcon = icons::kMusic;
 
 Page g_page = Page::Modules;
 Category g_categoryFilter = Category::Count;  // Count = todas
@@ -2170,7 +2169,7 @@ void DrawRadial(float appear, float scale) {
         };
         const Item items[4] = {
             {i18n::T("radial.mods"), icons::kAll, 270.0f},
-            {i18n::T("radial.closet"), icons::kProfiles, 0.0f},
+            {i18n::T("radial.closet"), icons::kCloset, 0.0f},
             {i18n::T("radial.settings"), icons::kSettings, 90.0f},
             {i18n::T("radial.hud"), icons::kHud, 180.0f},
         };
@@ -2299,7 +2298,7 @@ void DrawClosetPage() {
     const theme::Palette& p = theme::P();
     const float fs = Fs();
     PageHeader(i18n::T("closet.title"), i18n::T("closet.subtitle"));
-    SectionHeader(icons::kProfiles, i18n::T("closet.skins"), static_cast<int>(g_closet.size()));
+    SectionHeader(icons::kCloset, i18n::T("closet.skins"), static_cast<int>(g_closet.size()));
     if (g_closet.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("%s", i18n::T("closet.empty"));
@@ -2451,7 +2450,7 @@ void Sidebar() {
     if (NavItem("Music", kMusicIcon, g_page == Page::Music) && g_page != Page::Music) {
         go(Page::Music);
     }
-    if (NavItem(i18n::T("closet.title"), icons::kProfiles, g_page == Page::Closet) && g_page != Page::Closet) {
+    if (NavItem(i18n::T("closet.title"), icons::kCloset, g_page == Page::Closet) && g_page != Page::Closet) {
         go(Page::Closet);
     }
     if (NavItem("Settings", icons::kSettings, g_page == Page::Settings) && g_page != Page::Settings) {

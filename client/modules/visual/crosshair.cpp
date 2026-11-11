@@ -3,6 +3,8 @@
 // =============================================================================
 #include "modules/visual/crosshair.h"
 
+#include "render/icons.h"
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -62,7 +64,7 @@ Crosshair::Crosshair()
 }
 
 const char* Crosshair::IconSvg() const {
-    return "M12 3v6 M12 15v6 M3 12h6 M15 12h6";
+    return render::icons::kCrosshair;
 }
 
 void Crosshair::OnEnable() {

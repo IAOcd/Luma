@@ -59,7 +59,7 @@ private:
     float color_[4] = {1.0f, 1.0f, 1.0f, 0.95f};
     bool outline_ = true;    // contorno negro para que se vea sobre fondos claros
     // Color
-    int colorMode_ = 0;      // 0 original, 1 rainbow, 2 rainbow en onda
+    int colorMode_ = 0;      // 0 original, 1 rainbow, 2 rainbow en onda, 3 album colors
     float rainbowSpeed_ = 0.25f;
     // Mira pintada
     int gridSize_ = 16;      // 8, 16, 32 o 64

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 #include "core/lyrics.h"
 #include "core/media.h"
@@ -24,9 +25,10 @@ namespace mu = render::music;
 
 namespace {
 
-// Lyrics lines are longer than titles: they get twice the max width.
+// Lyrics lines are longer than titles: they get a bit more than the max
+// width (and wrap into two rows when they don't fit).
 float maxTextWidthForLyrics(const mu::Settings& s, float u) {
-    return static_cast<float>(s.maxWidth) * 2.0f * u;
+    return static_cast<float>(s.maxWidth) * 1.35f * u;
 }
 
 ImU32 WithAlpha(ImU32 color, float alpha) {
@@ -175,80 +177,139 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
 
     // The lyric line being sung (and the next one), with REAL timings only:
     // word by word if the source has word times, otherwise the whole line.
-    struct LyricNow {
-        const char* line = nullptr;
-        const char* next = nullptr;
-        float sungWidth = -1.0f;  // >= 0: only this much of the line is bright (word timings)
-    };
-    auto lyricNow = [&](float maxW) {
-        LyricNow out;
-        const lyrics::Result& ly = mu::CurrentLyrics();
-        if (ly.trackId != t.trackId || ly.status != lyrics::Status::Found || !ly.synced) return out;
+    //
+    // A STEADY SIZE: the box is measured once per song, for its LONGEST line
+    // (so it doesn't grow and shrink with every line). Lines longer than the
+    // max width wrap into two rows, and that room is kept for the whole song.
+    // A new line fades in and rises a little instead of popping.
+    const lyrics::Result& ly = mu::CurrentLyrics();
+    const bool haveLyrics = ly.trackId == t.trackId && ly.status == lyrics::Status::Found && ly.synced && !ly.lines.empty();
+    const float lyricMaxW = maxTextWidthForLyrics(s, u);
+    if (style == 5 || style == 6) {
+        const std::uint32_t lineCount = haveLyrics ? static_cast<std::uint32_t>(ly.lines.size()) : 0u;
+        if (layoutTrack_ != t.trackId || layoutScale_ != frame.scale || layoutLines_ != lineCount || layoutMaxW_ != lyricMaxW) {
+            layoutTrack_ = t.trackId;
+            layoutScale_ = frame.scale;
+            layoutLines_ = lineCount;
+            layoutMaxW_ = lyricMaxW;
+            float longest = rh::TextSize(m, t.title).x;
+            if (haveLyrics) {
+                longest = 0.0f;
+                for (const lyrics::Line& line : ly.lines) longest = std::max(longest, rh::TextSize(m, line.text.c_str()).x);
+            }
+            layoutTwoRows_ = longest > lyricMaxW;
+            layoutLongest_ = std::min(longest, lyricMaxW);
+        }
+    }
+    int lineIndex = -1;
+    const char* lineText = t.title;
+    const char* nextText = nullptr;
+    int litChars = -1;  // >= 0: only this many letters are bright (word timings)
+    if (haveLyrics) {
         const int ms = mu::LyricsMs(t);
-        const int i = lyrics::LineAt(ly, ms);
+        lineIndex = lyrics::LineAt(ly, ms);
         const int n = static_cast<int>(ly.lines.size());
-        if (i >= 0) {
-            const lyrics::Line& line = ly.lines[static_cast<std::size_t>(i)];
-            out.line = line.text.find_first_not_of(' ') == std::string::npos ? "..." : line.text.c_str();
+        if (lineIndex >= 0) {
+            const lyrics::Line& line = ly.lines[static_cast<std::size_t>(lineIndex)];
+            lineText = line.text.find_first_not_of(' ') == std::string::npos ? "..." : line.text.c_str();
             if (!line.words.empty()) {
-                float w = 0.0f;
+                litChars = 0;
                 for (const lyrics::Word& word : line.words) {
                     if (ms < word.ms) break;
-                    w += rh::TextSize(m, word.text.c_str()).x;
+                    litChars += static_cast<int>(word.text.size());
                 }
-                out.sungWidth = std::min(w, maxW);
-            }
-        }
-        if (s.lyricsNextLine && i + 1 < n) out.next = ly.lines[static_cast<std::size_t>(i + 1)].text.c_str();
-        return out;
-    };
-    auto drawLyric = [&](const LyricNow& lyric, ImVec2 at, float w) {
-        if (lyric.line == nullptr) return;
-        if (lyric.sungWidth >= 0.0f) {
-            Line(draw, m, at, w, lyric.line, dim, false);
-            if (lyric.sungWidth > 0.0f) {
-                draw->PushClipRect(ImVec2(at.x, at.y - m.capHeight), ImVec2(at.x + lyric.sungWidth, at.y + m.capHeight * 3.0f), true);
-                Line(draw, m, at, w, lyric.line, bright, false);
-                draw->PopClipRect();
             }
         } else {
-            Line(draw, m, at, w, lyric.line, bright, false);
+            lineText = "...";
         }
-        if (lyric.next != nullptr) {
-            Line(draw, m, ImVec2(at.x, at.y + lineH), w, lyric.next, WithAlpha(dim, 0.7f), false);
+        if (s.lyricsNextLine && lineIndex + 1 < n) nextText = ly.lines[static_cast<std::size_t>(lineIndex + 1)].text.c_str();
+    }
+    if (lineIndex != shownLine_) {
+        shownLine_ = lineIndex;
+        lineChangedAt_ = now;
+    }
+    const float lineFade = static_cast<float>(std::clamp((now - lineChangedAt_) / 0.22, 0.0, 1.0));
+    const float lineRise = (1.0f - lineFade) * 3.0f * u;
+    const int rows = layoutTwoRows_ ? 2 : 1;
+    const bool reserveNext = s.lyricsNextLine && haveLyrics;
+    const float lyricBlockH = m.capHeight + static_cast<float>(rows - 1) * lineH + (reserveNext ? lineH : 0.0f);
+
+    // Splits a text into up to "maxRows" rows of width "w" (word wrap).
+    auto wrap = [&](const char* text, float w, int maxRows, const char** starts, const char** ends) {
+        int count = 0;
+        const char* p = text;
+        const char* end = text + std::strlen(text);
+        const float scale = m.fontSize / m.font->FontSize;
+        while (p < end && count < maxRows) {
+            const char* cut = count == maxRows - 1 ? end : m.font->CalcWordWrapPositionA(scale, p, end, w);
+            if (cut == p) cut = p + 1;
+            starts[count] = p;
+            ends[count] = cut;
+            ++count;
+            p = cut;
+            while (p < end && *p == ' ') ++p;
+        }
+        return count;
+    };
+    auto drawLyric = [&](ImVec2 at, float w) {
+        const char* starts[2];
+        const char* ends[2];
+        const int n = wrap(lineText, w, rows, starts, ends);
+        int lit = litChars;
+        for (int r = 0; r < n; ++r) {
+            char row[256];
+            int len = std::min<int>(static_cast<int>(ends[r] - starts[r]), 250);
+            std::memcpy(row, starts[r], static_cast<std::size_t>(len));
+            row[len] = '\0';
+            // Two rows at most: if the rest doesn't fit in the last one, it ends with "...".
+            if (r == n - 1 && rh::TextSize(m, row).x > w) {
+                while (len > 1 && rh::TextSize(m, row).x + rh::TextSize(m, "...").x > w) {
+                    --len;
+                    while (len > 0 && (static_cast<unsigned char>(row[len]) & 0xC0) == 0x80) --len;  // whole letters
+                    row[len] = '\0';
+                }
+                std::memcpy(row + len, "...", 4);
+            }
+            const ImVec2 pos(at.x, at.y + static_cast<float>(r) * lineH + lineRise);
+            if (lit < 0) {
+                Line(draw, m, pos, w, row, WithAlpha(bright, lineFade), false);
+            } else {
+                Line(draw, m, pos, w, row, WithAlpha(dim, lineFade), false);
+                const int here = std::clamp(lit, 0, len);
+                if (here > 0) {
+                    char sung[256];
+                    std::memcpy(sung, row, static_cast<std::size_t>(here));
+                    sung[here] = '\0';
+                    Line(draw, m, pos, w, sung, WithAlpha(bright, lineFade), false);
+                }
+                lit -= len;
+            }
+        }
+        if (nextText != nullptr) {
+            const ImVec2 pos(at.x, at.y + static_cast<float>(rows) * lineH + lineRise * 0.5f);
+            Line(draw, m, pos, w, nextText, WithAlpha(dim, 0.7f * lineFade), false);
         }
     };
 
     // --- Lyrics: the line being sung and the next one ---
     if (style == 5) {
-        const float maxW = maxTextWidthForLyrics(s, u);
-        LyricNow lyric = lyricNow(maxW);
-        if (lyric.line == nullptr) lyric.line = t.title;  // no lyrics: the song's name
-        const float w1 = rh::TextSize(m, lyric.line).x;
-        const float w2 = lyric.next != nullptr ? rh::TextSize(m, lyric.next).x : 0.0f;
-        const float w = std::min(maxW, std::max({w1, w2, 40.0f * u}));
+        const float w = std::max(layoutLongest_, 60.0f * u);
         const float width = std::floor(pad * 2.0f + w);
-        const float height = std::floor(pad * 2.0f + m.capHeight + (lyric.next != nullptr ? lineH : 0.0f));
+        const float height = std::floor(pad * 2.0f + lyricBlockH);
         const ImVec2 o = frame.pos;
         rh::Box(draw, m, o, ImVec2(o.x + width, o.y + height));
-        drawLyric(lyric, ImVec2(o.x + pad, o.y + pad), w);
+        drawLyric(ImVec2(o.x + pad, o.y + pad), w);
         return ImVec2(width, height);
     }
 
     // --- Wide + lyrics: art, song and progress on top, the lyrics under them ---
     if (style == 6) {
-        const float maxW = maxTextWidthForLyrics(s, u);
-        const LyricNow lyric = lyricNow(maxW);
         const float artW = s.showArt ? lineH * 3.0f - 4.0f * u : 0.0f;
         float infoW = std::max(rh::TextSize(m, t.title).x, rh::TextSize(m, second).x);
-        infoW = std::clamp(infoW, 60.0f * u, maxW - artW - gap);
-        float lyricW = 0.0f;
-        if (lyric.line != nullptr) {
-            lyricW = std::max(rh::TextSize(m, lyric.line).x, lyric.next != nullptr ? rh::TextSize(m, lyric.next).x : 0.0f);
-        }
-        const float innerW = std::min(maxW, std::max(artW + (artW > 0 ? gap : 0.0f) + infoW, lyricW));
+        infoW = std::clamp(infoW, 60.0f * u, lyricMaxW - artW - gap);
+        const float innerW = std::min(lyricMaxW, std::max(artW + (artW > 0 ? gap : 0.0f) + infoW, haveLyrics ? layoutLongest_ : 0.0f));
         const float topH = std::max(artW, lineH * 3.0f - 4.0f * u);
-        const float lyricH = lyric.line != nullptr ? gap + m.capHeight + (lyric.next != nullptr ? lineH : 0.0f) : 0.0f;
+        const float lyricH = haveLyrics ? gap + lyricBlockH : 0.0f;
         const float width = std::floor(pad * 2.0f + innerW);
         const float height = std::floor(pad * 2.0f + topH + lyricH);
         const ImVec2 o = frame.pos;
@@ -274,11 +335,11 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
             }
             Bar(draw, ImVec2(x, y + m.capHeight * 0.5f - u), barW, 2.0f * u, frac, accent, fade);
         }
-        if (lyric.line != nullptr) {
-            const float ly = o.y + pad + topH + gap;
-            draw->AddLine(ImVec2(o.x + pad, ly - gap * 0.5f), ImVec2(o.x + pad + innerW, ly - gap * 0.5f),
+        if (haveLyrics) {
+            const float lyTop = o.y + pad + topH + gap;
+            draw->AddLine(ImVec2(o.x + pad, lyTop - gap * 0.5f), ImVec2(o.x + pad + innerW, lyTop - gap * 0.5f),
                           WithAlpha(dim, 0.25f), std::max(1.0f, u * 0.5f));
-            drawLyric(lyric, ImVec2(o.x + pad, ly), innerW);
+            drawLyric(ImVec2(o.x + pad, lyTop), innerW);
         }
         return ImVec2(width, height);
     }
@@ -422,6 +483,8 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
     out["lyricsNextLine"] = s.lyricsNextLine;
     out["hudFollowAlbum"] = s.hudFollowAlbum;
     out["hdCovers"] = s.hdCovers;
+    out["crosshairAlbum"] = s.crosshairAlbum;
+    out["watermarkAlbum"] = s.watermarkAlbum;
     out["menuFollowAlbum"] = s.menuFollowAlbum;
 }
 
@@ -457,6 +520,8 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
     s.lyricsNextLine = in.value("lyricsNextLine", d.lyricsNextLine);
     s.hudFollowAlbum = in.value("hudFollowAlbum", d.hudFollowAlbum);
     s.hdCovers = in.value("hdCovers", d.hdCovers);
+    s.crosshairAlbum = in.value("crosshairAlbum", d.crosshairAlbum);
+    s.watermarkAlbum = in.value("watermarkAlbum", d.watermarkAlbum);
     s.menuFollowAlbum = in.value("menuFollowAlbum", d.menuFollowAlbum);
     lyrics::SetOnline(s.lyricsOnline);
     if (IsEnabled()) {

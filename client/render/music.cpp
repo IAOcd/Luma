@@ -161,7 +161,7 @@ const Tint& AlbumTint() {
         tint.frame = frame;
         tint.has = false;
         const Settings& s = Get();
-        if (s.active && (s.hudFollowAlbum || s.menuFollowAlbum)) {
+        if (s.active) {
             const media::Track t = media::Current();
             if (t.present && t.artVersion != 0) {
                 const ImVec4 c = AccentFor(1, t, ImVec4(1, 1, 1, 1));
@@ -182,6 +182,72 @@ bool HudTint(float out[3]) {
     if (!t.has || !Get().hudFollowAlbum) return false;
     std::memcpy(out, t.rgb, sizeof(t.rgb));
     return true;
+}
+
+bool AlbumColor(float out[3]) {
+    const Tint& t = AlbumTint();
+    if (!t.has) return false;
+    std::memcpy(out, t.rgb, sizeof(t.rgb));
+    return true;
+}
+
+float ProgressSpring::Update(float playing, std::uint32_t trackId, double duration, float follow) {
+    const double now = ImGui::GetTime();
+    const float dt = std::min(ImGui::GetIO().DeltaTime, 0.05f);
+    playing = std::clamp(playing, 0.0f, 1.0f);
+    pop *= std::exp(-dt * 5.0f);
+    if (trackId != track || x < 0.0f) {
+        // A new song: go straight there, no animation.
+        track = trackId;
+        x = playing;
+        hold = -1.0f;
+        startedAt = -1.0;
+        trip = 1.0f;
+        v = 0.0f;
+        pop = 0.0f;
+        return x;
+    }
+    if (follow >= 0.0f) {
+        // Dragging: the dot follows the mouse closely (a touch of smoothing).
+        x += (std::clamp(follow, 0.0f, 1.0f) - x) * std::min(1.0f, dt * 28.0f);
+        startedAt = -1.0;
+        return x;
+    }
+    // Stop holding once the app reports (about) the place we seeked to.
+    if (hold >= 0.0f && startedAt < 0.0 && (std::fabs(playing - hold) * duration < 1.2 || now > holdUntil)) hold = -1.0f;
+    if (startedAt >= 0.0) {
+        // The spring (damping ratio ~0.6: a little past, then back) on the
+        // trip's progress, in small steps so it's the same at any frame rate.
+        constexpr float k = 130.0f, c = 14.0f;
+        for (int i = 0; i < 4; ++i) {
+            const float h = dt / 4.0f;
+            v += (k * (1.0f - trip) - c * v) * h;
+            trip += v * h;
+        }
+        const float delta = hold - from;
+        const float inside = std::min(trip, 1.0f);
+        float past = (trip - 1.0f) * delta;          // how far past the target...
+        past = std::clamp(past, -0.02f, 0.02f);      // ...at most 2% of the bar
+        x = from + delta * inside + (trip > 1.0f ? past : 0.0f);
+        if (std::fabs(1.0f - trip) < 0.002f && std::fabs(v) < 0.02f) {
+            x = hold;
+            startedAt = -1.0;
+        }
+        return std::clamp(x, 0.0f, 1.0f);
+    }
+    x = hold >= 0.0f ? hold : playing;
+    return x;
+}
+
+void ProgressSpring::SeekTo(float frac, double duration) {
+    from = x < 0.0f ? frac : x;
+    hold = std::clamp(frac, 0.0f, 1.0f);
+    holdUntil = ImGui::GetTime() + 2.5;
+    startedAt = ImGui::GetTime();
+    trip = 0.0f;
+    v = 0.0f;
+    pop = 1.0f;
+    media::Seek(hold * duration);
 }
 
 bool MenuTint(float out[3]) {
@@ -248,6 +314,8 @@ void DrawArt(ImDrawList* draw, ImVec2 min, ImVec2 max, int shape, float angle, f
     draw->AddCircleFilled(center, half * 0.07f, U(ImVec4(0.09f, 0.09f, 0.10f, 0.9f), alpha), 20);
 }
 
+ProgressSpring g_haloSpring;
+
 bool DrawHalo(ImDrawList* draw, ImVec2 c, float outer, float inner, float appear, bool& drewCenter) {
     drewCenter = false;
     const Settings& s = Get();
@@ -305,27 +373,36 @@ bool DrawHalo(ImDrawList* draw, ImVec2 c, float outer, float inner, float appear
     float mangle = std::atan2(mdy, mdx) - top;
     if (mangle < 0.0f) mangle += 2.0f * kPi;
     const float mouseFrac = mangle / (2.0f * kPi);
+    static bool pressed = false;   // the mouse went down on the ring...
+    static ImVec2 pressAt;         // ...here
     if (t.canSeek && t.duration > 0.0 && s.haloKnob) {
         const bool nearRing = !overButton && std::fabs(mdist - r) < th * 2.0f + fs * 0.35f;
         if (nearRing) {
             over = true;
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                dragging = true;
+                pressed = true;
+                pressAt = mouse;
             }
         }
-        if (dragging) {
+        if (pressed) {
             over = true;
-            dragFrac = mouseFrac;
+            // It's a drag only once the mouse moves a little; a plain click stays a click.
+            const float mx = mouse.x - pressAt.x, my = mouse.y - pressAt.y;
+            if (!dragging && mx * mx + my * my > fs * fs * 0.25f) dragging = true;
+            if (dragging) dragFrac = mouseFrac;
             if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                media::Seek(dragFrac * t.duration);  // drop = jump there
+                // Release: travel there with the spring (from where the dot is now).
+                g_haloSpring.SeekTo(dragging ? dragFrac : mouseFrac, t.duration);
                 dragging = false;
+                pressed = false;
             }
         }
     } else {
         dragging = false;
+        pressed = false;
     }
-    const float shown = dragging ? dragFrac : frac;
+    const float shown = g_haloSpring.Update(frac, t.trackId, t.duration, dragging ? dragFrac : -1.0f);
     if (shown > 0.002f) {
         const float a1 = top + shown * 2.0f * kPi;
         draw->PathArcTo(c, r, top, a1, std::max(6, static_cast<int>(128 * shown)));
@@ -337,8 +414,12 @@ bool DrawHalo(ImDrawList* draw, ImVec2 c, float outer, float inner, float appear
     if (s.haloKnob && t.duration > 0.0) {
         const float a1 = top + shown * 2.0f * kPi;
         const float grow = Ease(ImGui::GetID("##haloKnob"), over || dragging ? 1.0f : 0.0f, 14.0f);
-        draw->AddCircleFilled(ImVec2(c.x + std::cos(a1) * r, c.y + std::sin(a1) * r), th * (1.35f + 0.6f * grow),
-                              U(color, 1.0f), 24);
+        const float beat = g_haloSpring.pop;  // right after a seek the dot beats once
+        const ImVec2 knob(c.x + std::cos(a1) * r, c.y + std::sin(a1) * r);
+        if (beat > 0.02f) {
+            draw->AddCircle(knob, th * (1.8f + 3.0f * (1.0f - beat)), U(color, 0.6f * beat), 24, std::max(1.0f, th * 0.4f));
+        }
+        draw->AddCircleFilled(knob, th * (1.35f + 0.6f * grow + 0.5f * beat), U(color, 1.0f), 24);
     }
 
     // 2. Title and artist above the ring (and the time while dragging).
@@ -360,7 +441,7 @@ bool DrawHalo(ImDrawList* draw, ImVec2 c, float outer, float inner, float appear
     }
     if ((dragging || (over && t.duration > 0.0)) && t.duration > 0.0) {
         char now[16], total[16], line[40];
-        FormatTime((dragging ? dragFrac : frac) * t.duration, now, sizeof(now));
+        FormatTime((dragging ? dragFrac : shown) * t.duration, now, sizeof(now));
         FormatTime(t.duration, total, sizeof(total));
         std::snprintf(line, sizeof(line), "%s / %s", now, total);
         const ImVec2 ls = ImGui::CalcTextSize(line);
@@ -664,6 +745,8 @@ bool DrawAlbumColorSettings() {
              "iTunes catalog (only its title and artist) and saves the sharp art on your PC.");
     changed |= ui::Toggle("Color the whole HUD", &s.hudFollowAlbum, "(every module takes the album's color)");
     changed |= ui::Toggle("Color Luma's menu", &s.menuFollowAlbum, "(the accent follows the album)");
+    changed |= ui::Toggle("Color the crosshair", &s.crosshairAlbum);
+    changed |= ui::Toggle("Color Luma's watermark", &s.watermarkAlbum);
     return changed;
 }
 

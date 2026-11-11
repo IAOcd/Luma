@@ -12,6 +12,8 @@
 #include "core/version.h"
 #include "render/assets.h"
 #include "render/hud.h"
+#include "render/rainbow.h"
+#include "render/music.h"
 #include "render/icons.h"
 #include "render/theme.h"
 #include "render/ui.h"
@@ -56,8 +58,16 @@ ImVec2 Watermark::OnRenderHud(const HudFrame& frame) {
     if (box_) {
         rh::Box(frame.draw, m, o, ImVec2(o.x + width, o.y + height));
     }
-    // El logo, en marfil, con la misma sombra que el texto.
-    const ImU32 color = ImGui::ColorConvertFloat4ToU32(theme::kIvory);
+    // El logo, en marfil (o rainbow, o el color del álbum), con la misma sombra que el texto.
+    ImVec4 tint = theme::kIvory;
+    if (colorMode_ == 1) {
+        rainbow::Color(rainbow::kDefaultSpeed, 0.0f, tint.x, tint.y, tint.z);
+    }
+    if (colorMode_ == 2 || render::music::Get().watermarkAlbum) {  // also set from the Now playing module
+        float album[3];
+        if (render::music::AlbumColor(album)) tint = ImVec4(album[0], album[1], album[2], 1.0f);
+    }
+    const ImU32 color = ImGui::ColorConvertFloat4ToU32(tint);
     const ImVec2 logoCenter(o.x + pad + logo * 0.5f, o.y + height * 0.5f);
     if (showLogo_) {
         render::assets::DrawLogo(frame.draw, ImVec2(logoCenter.x + u, logoCenter.y + u), logo, IM_COL32(0, 0, 0, 110));
@@ -72,7 +82,8 @@ ImVec2 Watermark::OnRenderHud(const HudFrame& frame) {
     if (showVersion_) {
         // La versión, chiquita, alineada abajo con el nombre.
         const float vy = textY + m.capTop + m.capHeight - small.capTop - small.capHeight;
-        rh::Text(frame.draw, small, ImVec2(textX + nameSize.x + 2.0f * u, vy), version, IM_COL32(233, 230, 223, 170));
+        rh::Text(frame.draw, small, ImVec2(textX + nameSize.x + 2.0f * u, vy), version,
+                 ImGui::ColorConvertFloat4ToU32(ImVec4(tint.x, tint.y, tint.z, 0.67f)));
     }
     return ImVec2(std::floor(width), height);
 }
@@ -83,6 +94,8 @@ bool Watermark::DrawSettings() {
     changed |= ui::Toggle("Name", &showName_);
     changed |= ui::Toggle("Version", &showVersion_);
     changed |= ui::Toggle("Background box", &box_);
+    changed |= ui::Choice("Color", &colorMode_, {"Luma's ivory", "Rainbow", "Album colors"});
+    if (colorMode_ == 2) ui::Hint("Takes the color of the song's cover (needs the Now playing module on).");
     return changed;
 }
 
@@ -91,6 +104,7 @@ void Watermark::SaveSettings(nlohmann::json& out) const {
     out["box"] = box_;
     out["showLogo"] = showLogo_;
     out["showName"] = showName_;
+    out["colorMode"] = colorMode_;
 }
 
 void Watermark::LoadSettings(const nlohmann::json& in) {
@@ -98,6 +112,7 @@ void Watermark::LoadSettings(const nlohmann::json& in) {
     box_ = in.value("box", false);
     showLogo_ = in.value("showLogo", true);
     showName_ = in.value("showName", true);
+    colorMode_ = std::clamp(in.value("colorMode", 0), 0, 2);
     if (!showLogo_ && !showName_) {
         showName_ = true;  // algo tiene que verse
     }

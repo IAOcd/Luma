@@ -28,6 +28,7 @@ private:
     bool box_ = false;  // con caja de fondo, como los demás elementos
     bool showLogo_ = true;
     bool showName_ = true;
+    int colorMode_ = 0;     // 0 Luma's ivory, 1 rainbow, 2 album colors
 };
 
 }  // namespace luma::modules::hud

@@ -245,6 +245,30 @@ const char* ModuleIcon(const Module& module) {
 }
 
 
+// A name that must fit in "maxWidth" (module cards and rows): first it
+// shrinks a little; if it still doesn't fit and "maxLines" is 2, it wraps
+// into two lines going UP from "bottomY". Nothing is cut in half.
+void FitText(ImDrawList* draw, ImFont* font, float x, float bottomY, float maxWidth, ImU32 color, const char* text,
+             int maxLines) {
+    float size = font->FontSize;
+    float w = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text).x;
+    if (w > maxWidth) {
+        size = std::max(font->FontSize * 0.86f, size * maxWidth / w);
+        w = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text).x;
+    }
+    if (w <= maxWidth || maxLines < 2) {
+        draw->AddText(font, size, ImVec2(x, bottomY - size), color, text);
+        return;
+    }
+    const char* end = text + std::strlen(text);
+    const char* cut = font->CalcWordWrapPositionA(size / font->FontSize, text, end, maxWidth);
+    if (cut == text) cut = text + 1;
+    const char* second = cut;
+    while (*second == ' ') ++second;
+    draw->AddText(font, size, ImVec2(x, bottomY - size * 2.02f), color, text, cut);
+    draw->AddText(font, size, ImVec2(x, bottomY - size), color, second, end);
+}
+
 void CenteredText(ImDrawList* draw, ImFont* font, ImVec2 min, ImVec2 max, ImU32 color, const char* text) {
     const ImVec2 size = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, text);
     draw->AddText(font, font->FontSize,
@@ -420,9 +444,12 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index)
     return changed;
 }
 
+void FlushRow();  // (option rows, below: ends the last row before something else)
+
 // Encabezado de sección: texto chico y tenue, un contador y una línea fina.
 // (El ícono se ignora: las secciones son discretas a propósito.)
 void SectionHeader(const char* icon, const char* text, int count = -1) {
+    FlushRow();
     (void)icon;
     text = Tr(text);
     ImGui::Dummy(ImVec2(0.0f, Fs() * 0.5f));
@@ -483,6 +510,7 @@ void BeginGroupCard(const char* id) {
 }
 
 void EndGroupCard() {
+    FlushRow();
     ImGui::PopItemWidth();
     ImGui::EndGroup();
     const float pad = Fs() * 0.9f;
@@ -502,14 +530,42 @@ void EndGroupCard() {
 }
 
 // Una fila "etiqueta ........ control" dentro de una tarjeta.
-void RowLabel(const char* label, const char* hint = nullptr) {
+// --- Option rows: the label on the left, the control on the right ------------------
+// The label column has a fixed width. A long label (Spanish and Portuguese
+// are longer than English) WRAPS inside it instead of running under the
+// control, and its hint goes below it. The row is as tall as its label: the
+// next item starts under whichever is lower, the label or the control.
+float g_rowBottom = -1.0f;            // where the last label ended (window-local Y)
+ImDrawList* g_rowWindow = nullptr;    // in which window (its draw list identifies it)
+
+// Moves the cursor below the last row's label if the label is the taller one.
+void FlushRow() {
+    if (g_rowBottom >= 0.0f && ImGui::GetWindowDrawList() == g_rowWindow && ImGui::GetCursorPosY() < g_rowBottom) {
+        ImGui::SetCursorPosY(g_rowBottom);
+        ImGui::Dummy(ImVec2(0.0f, 0.0f));
+    }
+    g_rowBottom = -1.0f;
+}
+
+void BeginRow(const char* label, const char* hint, float columnFontSizes) {
+    FlushRow();
+    const float fs = ImGui::GetFontSize();
+    const float column = fs * columnFontSizes;
+    const ImVec2 start = ImGui::GetCursorPos();
     ImGui::AlignTextToFramePadding();
+    ImGui::PushTextWrapPos(start.x + column - fs * 0.7f);
     ImGui::TextUnformatted(Tr(label));
     if (hint != nullptr) {
-        ImGui::SameLine();
         ImGui::TextDisabled("%s", Tr(hint));
     }
-    ImGui::SameLine(Fs() * 15.0f);
+    ImGui::PopTextWrapPos();
+    g_rowBottom = ImGui::GetCursorPosY();
+    g_rowWindow = ImGui::GetWindowDrawList();
+    ImGui::SetCursorPos(ImVec2(start.x + column, start.y));  // the control, at the top of the row
+}
+
+void RowLabel(const char* label, const char* hint = nullptr) {
+    BeginRow(label, hint, 15.0f);
 }
 
 void KeybindButton(const char* id, int key, bool capturing, CaptureTarget target, Module* module) {
@@ -676,7 +732,8 @@ void ModuleCard(Module& module, float width, float height, int index) {
     const float toggleHeight = fs * 1.45f;
     const float toggleWidth = std::floor(std::floor(toggleHeight * 0.78f) * 1.85f);
     draw->PushClipRect(cMin, ImVec2(cMax.x - pad - toggleWidth - fs * 0.4f, cMax.y), true);
-    draw->AddText(medium, medium->FontSize, ImVec2(cMin.x + pad, nameY), Col(p.text, alpha), module.DisplayName());
+    FitText(draw, medium, cMin.x + pad, nameY + medium->FontSize, cMax.x - pad - toggleWidth - fs * 0.4f - (cMin.x + pad),
+            Col(p.text, alpha), module.DisplayName(), 2);
     draw->AddText(ImVec2(cMin.x + pad, statusY), Col(module.IsEnabled() && !hovered ? theme::Accent(0.95f) : p.textDim, alpha),
                   ModuleStatus(module, hovered));
     draw->PopClipRect();
@@ -783,7 +840,8 @@ void ModuleRow(Module& module, float width, int index) {
     const float blockH = medium->FontSize + fs * 1.05f;
     const float textY = cMin.y + (height - blockH) * 0.5f;
     draw->PushClipRect(cMin, ImVec2(right - fs * 0.6f, cMax.y), true);
-    draw->AddText(medium, medium->FontSize, ImVec2(textX, textY), Col(p.text, alpha), module.DisplayName());
+    FitText(draw, medium, textX, textY + medium->FontSize, right - fs * 0.6f - textX, Col(p.text, alpha),
+            module.DisplayName(), 1);
     const char* second = !Manager::IsAvailable(module) ? Tr("Not available in this version") : module.DisplayDescription();
     draw->AddText(ImVec2(textX, textY + medium->FontSize + fs * 0.05f), Col(p.textDim, alpha), second);
     draw->PopClipRect();
@@ -1824,25 +1882,33 @@ void DrawMusicPage() {
     const float frac = t.duration > 0.0 ? static_cast<float>(std::clamp(t.position / t.duration, 0.0, 1.0)) : 0.0f;
     static bool seeking = false;
     static float seekFrac = 0.0f;
+    static music::ProgressSpring spring;
     const float barH = std::max(3.0f, fs * 0.22f);
     ImGui::SetCursorScreenPos(ImVec2(origin.x, y - fs * 0.4f));
     ImGui::InvisibleButton("##musicSeek", ImVec2(leftW, fs * 0.8f + barH));
     const bool canSeek = t.canSeek && t.duration > 0.0;
-    if (canSeek && ImGui::IsItemActive()) {
+    const float mouseFrac = std::clamp((ImGui::GetIO().MousePos.x - origin.x) / leftW, 0.0f, 1.0f);
+    // A drag only once the mouse moves; a plain click travels there with the spring.
+    if (canSeek && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, fs * 0.5f)) {
         seeking = true;
-        seekFrac = std::clamp((ImGui::GetIO().MousePos.x - origin.x) / leftW, 0.0f, 1.0f);
-    } else if (seeking) {
-        media::Seek(seekFrac * t.duration);
+        seekFrac = mouseFrac;
+    }
+    if (canSeek && ImGui::IsItemDeactivated()) {
+        spring.SeekTo(seeking ? seekFrac : mouseFrac, t.duration);
         seeking = false;
     }
     if (canSeek && ImGui::IsItemHovered()) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
-    const float shown = seeking ? seekFrac : frac;
+    const float shown = spring.Update(frac, t.trackId, t.duration, seeking ? seekFrac : -1.0f);
     draw->AddRectFilled(ImVec2(origin.x, y), ImVec2(origin.x + leftW, y + barH), Col(p.text, 0.15f), barH * 0.5f);
     if (shown > 0.0f) {
         draw->AddRectFilled(ImVec2(origin.x, y), ImVec2(origin.x + leftW * shown, y + barH), Col(accent), barH * 0.5f);
-        draw->AddCircleFilled(ImVec2(origin.x + leftW * shown, y + barH * 0.5f), barH * 1.6f, Col(accent), 20);
+        const ImVec2 dot(origin.x + leftW * shown, y + barH * 0.5f);
+        if (spring.pop > 0.02f) {
+            draw->AddCircle(dot, barH * (2.2f + 4.0f * (1.0f - spring.pop)), Col(accent, 0.6f * spring.pop), 20, 1.5f);
+        }
+        draw->AddCircleFilled(dot, barH * (1.6f + 0.7f * spring.pop), Col(accent), 20);
     }
     y += barH + fs * 0.5f;
     if (t.duration > 0.0) {
@@ -2639,13 +2705,7 @@ namespace {
 float g_labelColumn = 15.0f;  // ancho de la columna de etiquetas (en tamaños de letra)
 
 void Row(const char* label, const char* hint) {
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(Tr(label));
-    if (hint != nullptr) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", Tr(hint));
-    }
-    ImGui::SameLine(ImGui::GetFontSize() * g_labelColumn);
+    m::BeginRow(label, hint, g_labelColumn);  // (see BeginRow: long labels wrap, nothing gets covered)
 }
 
 // El ancho que queda para el control a la derecha de la etiqueta.
@@ -2660,6 +2720,7 @@ void SetLabelColumn(float fontSizes) {
 }
 
 void Section(const char* title) {
+    m::FlushRow();
     title = Tr(title);
     ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize() * 0.3f));
     const theme::Palette& p = theme::P();
@@ -2676,6 +2737,7 @@ void Section(const char* title) {
 }
 
 void Hint(const char* text) {
+    m::FlushRow();
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("%s", Tr(text));
     ImGui::PopTextWrapPos();
@@ -2685,6 +2747,7 @@ bool Toggle(const char* label, bool* value, const char* hint) {
     ImGui::PushID(label);
     Row(label, hint);
     const bool changed = m::Toggle("##t", value, ImGui::GetFrameHeight() * 0.95f);
+    m::FlushRow();
     ImGui::PopID();
     return changed;
 }
@@ -2719,6 +2782,7 @@ bool Choice(const char* label, int* index, std::initializer_list<const char*> op
             ImGui::EndCombo();
         }
     }
+    m::FlushRow();
     ImGui::PopID();
     return changed;
 }
@@ -2728,6 +2792,7 @@ bool Slider(const char* label, float* value, float min, float max, const char* f
     Row(label, nullptr);
     FillWidth();
     const bool changed = ImGui::SliderFloat("##v", value, min, max, Tr(format));
+    m::FlushRow();
     ImGui::PopID();
     return changed;
 }
@@ -2737,6 +2802,7 @@ bool SliderInt(const char* label, int* value, int min, int max, const char* form
     Row(label, nullptr);
     FillWidth();
     const bool changed = ImGui::SliderInt("##v", value, min, max, Tr(format));
+    m::FlushRow();
     ImGui::PopID();
     return changed;
 }
@@ -2745,6 +2811,7 @@ bool Color(const char* label, float* rgb) {
     ImGui::PushID(label);
     Row(label, nullptr);
     const bool changed = ImGui::ColorEdit3("##c", rgb, ImGuiColorEditFlags_NoInputs);
+    m::FlushRow();
     ImGui::PopID();
     return changed;
 }
@@ -2754,6 +2821,7 @@ bool ColorAlpha(const char* label, float* rgba) {
     Row(label, nullptr);
     const bool changed =
         ImGui::ColorEdit4("##c", rgba, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
+    m::FlushRow();
     ImGui::PopID();
     return changed;
 }
@@ -2763,6 +2831,7 @@ bool Text(const char* label, char* buffer, int size, const char* placeholder) {
     Row(label, nullptr);
     FillWidth();
     const bool changed = ImGui::InputTextWithHint("##t", Tr(placeholder), buffer, static_cast<std::size_t>(size));
+    m::FlushRow();
     ImGui::PopID();
     return changed;
 }
@@ -2771,7 +2840,9 @@ bool Button(const char* label, const char* rowLabel) {
     if (rowLabel != nullptr) {
         Row(rowLabel, nullptr);
     }
-    return m::GlassButton(label, nullptr, ImVec2(0, 0));
+    const bool clicked = m::GlassButton(label, nullptr, ImVec2(0, 0));
+    m::FlushRow();
+    return clicked;
 }
 
 }  // namespace luma::render::ui

@@ -68,6 +68,8 @@ struct Settings {
     // --- Album colors everywhere ---
     bool hudFollowAlbum = false;  // every HUD module's text takes the album color
     bool menuFollowAlbum = false; // Luma's menu accent takes the album color
+    bool crosshairAlbum = false;  // the Crosshair module takes the album color
+    bool watermarkAlbum = false;  // the Watermark module takes the album color
 };
 
 Settings& Get();
@@ -98,6 +100,31 @@ float SpinAngle();
 // a song with art is playing. Computed once per frame (cheap to call a lot).
 bool HudTint(float out[3]);
 bool MenuTint(float out[3]);
+// The album color for any module that offers "Album colors" (crosshair,
+// watermark...): true while the Now playing module is on and the song has art.
+bool AlbumColor(float out[3]);
+
+// The progress shown on the Halo and the Music page. A seek doesn't jump:
+// the dot travels there on a spring (it goes a little past and corrects).
+// The spring runs on the trip's PROGRESS (0 -> 1), and how far it may go past
+// the target is capped (2% of the bar): short seeks feel the same, long ones
+// no longer swing wildly. After it, the new place is kept until the app
+// reports it (apps take a moment, and the bar used to jump back and forth).
+struct ProgressSpring {
+    float x = -1.0f;          // shown position (0..1)
+    float v = 0.0f;           // the trip's spring speed
+    float hold = -1.0f;       // where we seeked to, while the app catches up
+    double holdUntil = 0.0;
+    std::uint32_t track = 0;
+    float pop = 0.0f;         // 1 right after a seek, fades out (the dot "beats")
+    float from = 0.0f;        // the seek animation: from where...
+    double startedAt = -1.0;  // ...and when it started (-1 = not animating)
+    float trip = 1.0f;        // the trip's progress (the spring moves this, 0 -> 1)
+    // "playing" = the real position (0..1); "follow" = a target that wins
+    // (while dragging), or a negative number for none.
+    float Update(float playing, std::uint32_t trackId, double duration, float follow = -1.0f);
+    void SeekTo(float frac, double duration);
+};
 
 // The lyrics of the current song (updated from core/lyrics when they change).
 const lyrics::Result& CurrentLyrics();

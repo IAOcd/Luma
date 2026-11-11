@@ -15,6 +15,7 @@
 #include "core/tr.h"
 #include "render/hud.h"
 #include "render/overlay.h"
+#include "render/music.h"
 #include "render/rainbow.h"
 #include "render/ui.h"
 #include "sdk/game_crosshair.h"
@@ -74,8 +75,20 @@ void Crosshair::OnDisable() {
 
 // El color final de un píxel: el original o el del arcoíris (con su alfa).
 std::uint32_t Crosshair::Tinted(std::uint32_t color, float offset) const {
-    if (colorMode_ == 0) return color;
+    // "Color the crosshair" in the Now playing module wins over this module's own mode.
+    const bool album = colorMode_ == 3 || render::music::Get().crosshairAlbum;
+    if (colorMode_ == 0 && !album) return color;
     float r = 1, g = 1, b = 1;
+    if (album) {
+        // The album's color (Now playing module); the original if nothing plays.
+        float rgb[3];
+        if (!render::music::AlbumColor(rgb)) return color;
+        r = rgb[0];
+        g = rgb[1];
+        b = rgb[2];
+        const std::uint32_t alpha = (color >> IM_COL32_A_SHIFT) & 0xFF;
+        return IM_COL32(static_cast<int>(r * 255.0f), static_cast<int>(g * 255.0f), static_cast<int>(b * 255.0f), alpha);
+    }
     rainbow::Color(rainbowSpeed_, colorMode_ == 2 ? offset : 0.0f, r, g, b);
     const std::uint32_t alpha = (color >> IM_COL32_A_SHIFT) & 0xFF;
     return IM_COL32(static_cast<int>(r * 255.0f), static_cast<int>(g * 255.0f), static_cast<int>(b * 255.0f), alpha);
@@ -370,8 +383,9 @@ bool Crosshair::DrawSettings() {
         changed |= DrawEditor();
     }
     ui::Section("Color");
-    changed |= ui::Choice("Color mode", &colorMode_, {"Original", "Rainbow", "Rainbow wave"});
-    if (colorMode_ != 0) changed |= ui::Slider("Rainbow speed", &rainbowSpeed_, 0.05f, 2.0f, "%.2f");
+    changed |= ui::Choice("Color mode", &colorMode_, {"Original", "Rainbow", "Rainbow wave", "Album colors"});
+    if (colorMode_ == 1 || colorMode_ == 2) changed |= ui::Slider("Rainbow speed", &rainbowSpeed_, 0.05f, 2.0f, "%.2f");
+    if (colorMode_ == 3) ui::Hint("Takes the color of the song's cover (needs the Now playing module on).");
     changed |= ui::Toggle("Hide in menus", &hideInMenus_);
     return changed;
 }
@@ -415,7 +429,7 @@ void Crosshair::LoadSettings(const nlohmann::json& in) {
         for (int i = 0; i < 4; ++i) color_[i] = std::clamp(in["color"][i].get<float>(), 0.0f, 1.0f);
     }
     outline_ = in.value("outline", true);
-    colorMode_ = std::clamp(in.value("colorMode", 0), 0, 2);
+    colorMode_ = std::clamp(in.value("colorMode", 0), 0, 3);
     rainbowSpeed_ = std::clamp(in.value("rainbowSpeed", 0.25f), 0.05f, 2.0f);
     pixelScale_ = std::clamp(in.value("pixelScale", 1.0f), 0.25f, 3.0f);
     hideGame_ = in.value("hideGame", true);

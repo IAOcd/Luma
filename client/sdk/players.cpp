@@ -161,6 +161,25 @@ bool Read(std::vector<Player>& out, bool withFaces, std::size_t max) {
     return true;
 }
 
+bool UuidOf(const std::string& name, std::uint8_t out[16]) {
+    const std::uintptr_t level = LevelPtr();
+    std::uintptr_t map = 0, head = 0, node = 0;
+    std::uint64_t count = 0;
+    if (level == 0 || !SafeRead(level + kLevelPlayerList, map) || !LooksLikePointer(map) ||
+        !SafeRead(map + kMapListHead, head) || !LooksLikePointer(head) || !SafeRead(map + kMapSize, count) || count > 5000) {
+        return false;
+    }
+    SafeRead(head, node);
+    for (std::size_t i = 0; i < count && node != head && LooksLikePointer(node); ++i) {
+        char text[64]{};
+        if (SafeReadString(node + kNodeValue + kUuidSize + kEntryName, text, sizeof(text)) && StripColors(text) == name) {
+            return SafeCopy(node + kNodeValue, out, kUuidSize);  // la clave del mapa = el UUID
+        }
+        if (!SafeRead(node, node)) break;
+    }
+    return false;
+}
+
 bool WorldName(std::string& out) {
     const std::uintptr_t level = LevelPtr();
     std::uintptr_t data = 0;

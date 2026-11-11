@@ -69,6 +69,8 @@ add_library(Luma SHARED
     sdk/memory.cpp
     sdk/paperdoll.cpp
     sdk/hud_ui.cpp
+    sdk/game_crosshair.cpp                  # esconder la mira del juego
+    sdk/skin_apply.cpp                      # Equipar cambia la skin al instante
     sdk/watch.cpp                           # diagnóstico: quién escribe en una dirección
     sdk/skin.cpp
     sdk/mouse_queue.cpp

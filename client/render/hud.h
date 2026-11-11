@@ -42,6 +42,8 @@ struct Style {
     bool border = false;        // borde fino alrededor de las cajas
     float text[3] = {1.0f, 1.0f, 1.0f};         // color del texto
     float pressed[3] = {1.0f, 1.0f, 1.0f};      // color de una tecla apretada (keystrokes)
+    bool rainbow = false;       // el texto (y lo apretado) va cambiando de color (render/rainbow.h)
+    float rainbowSpeed = 0.25f; // vueltas al arcoíris por segundo
     // Esconder el HUD en los menús del juego (pausa, inventario, chat...),
     // para que no quede encima de ellos. Luma lo sabe porque el juego
     // "suelta" el mouse al abrir un menú (sdk/mouse_grab.h).

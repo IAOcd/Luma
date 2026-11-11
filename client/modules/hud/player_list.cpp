@@ -69,6 +69,45 @@ void PlayerList::Refresh() {
         }
     }
     players_ = std::move(list);
+    char name[64]{};
+    if (const std::uintptr_t player = sdk::player::LocalPlayer();
+        player != 0 && sdk::SafeReadString(player + sdk::offsets::kPlayerName, name, sizeof(name))) {
+        ownName_ = name;
+    }
+    // Orden: tú primero, después (opcional) los de Luma, después por nombre.
+    auto lower = [](std::string text) {
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    };
+    const std::string own = lower(ownName_);
+    struct Sorted {
+        sdk::players::Player p;
+        std::string key;
+        bool own;
+        bool luma;
+    };
+    std::vector<Sorted> sorted;
+    sorted.reserve(players_.size());
+    for (auto& p : players_) {
+        Sorted e{std::move(p), {}, false, false};
+        e.key = lower(e.p.name);
+        e.own = e.key == own;
+        e.luma = (e.own && cloud::SignedIn()) || cloud::IsLumaUser(e.p.name);
+        sorted.push_back(std::move(e));
+    }
+    std::stable_sort(sorted.begin(), sorted.end(), [&](const Sorted& a, const Sorted& b) {
+        if (a.own != b.own) return a.own;
+        if (lumaFirst_ && a.luma != b.luma) return a.luma;
+        return a.key < b.key;
+    });
+    players_.clear();
+    rowOwn_.clear();
+    rowLuma_.clear();
+    for (Sorted& e : sorted) {
+        rowOwn_.push_back(e.own);
+        rowLuma_.push_back(e.luma);
+        players_.push_back(std::move(e.p));
+    }
     cloud::RequestLookup(names);  // ¿quiénes usan Luma? (el servidor responde en segundo plano)
     // ¿Servidor o mundo local? Lo sabemos por el ping (en tu propio mundo es 0).
     onServer_ = sdk::network::OnServer();
@@ -77,11 +116,6 @@ void PlayerList::Refresh() {
         if (sdk::players::ReadServer(server_)) title_ = server_.address;
     } else {
         sdk::players::WorldName(title_);
-    }
-    char name[64]{};
-    if (const std::uintptr_t player = sdk::player::LocalPlayer();
-        player != 0 && sdk::SafeReadString(player + sdk::offsets::kPlayerName, name, sizeof(name))) {
-        ownName_ = name;
     }
     if (!logged_) {
         logged_ = true;
@@ -100,52 +134,36 @@ ImVec2 PlayerList::OnRenderHud(const HudFrame& frame) {
     if (lastRefresh_ == 0 || perf::TicksToMs(perf::Now() - lastRefresh_) > 1000.0) {
         Refresh();
     }
-    // Orden: tú primero, después (opcional) los de Luma, después por nombre.
-    std::vector<const sdk::players::Player*> rows;
-    rows.reserve(players_.size());
-    for (const auto& p : players_) rows.push_back(&p);
-    auto lower = [](std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return s;
-    };
-    const std::string own = lower(ownName_);
-    std::stable_sort(rows.begin(), rows.end(), [&](const sdk::players::Player* a, const sdk::players::Player* b) {
-        const bool ma = lower(a->name) == own, mb = lower(b->name) == own;
-        if (ma != mb) return ma;
-        if (lumaFirst_) {
-            const bool la = cloud::IsLumaUser(a->name), lb = cloud::IsLumaUser(b->name);
-            if (la != lb) return la;
-        }
-        return lower(a->name) < lower(b->name);
-    });
-
-    const rh::Metrics m = rh::Measure(frame.scale);
+    // --- El estilo de Luma, con columnas como en Java -------------------------------
+    //   Caja redondeada; arriba el mundo o servidor y "N jugadores · ping" con
+    //   su color; tu fila resaltada y las demás alternadas; caras con sombra y
+    //   el logo de Luma al principio. Hasta 20 por columna: con más, se
+    //   reparten en columnas PAREJAS (30 jugadores = 2 columnas de 15).
+    const std::size_t n = players_.size();
+    const rh::Metrics m = rh::Measure(frame.scale * size_);
     const float u = m.px;  // un "píxel" del HUD
     const float rowH = std::floor(rh::LineBoxHeight(m) + 2.0f * u);
     const float face = std::floor(rowH - 5.0f * u);
-    // ¿Hay alguien con Luma? Entonces se reserva una columna a la izquierda para el logo.
-    bool anyLuma = false;
-    for (const auto* r : rows) {
-        if ((lower(r->name) == own && cloud::SignedIn()) || cloud::IsLumaUser(r->name)) {
-            anyLuma = true;
-            break;
-        }
+    int columns = 1;
+    std::size_t perColumn = n;
+    while (perColumn > 20) {
+        ++columns;
+        perColumn = (n + columns - 1) / columns;
     }
+    bool anyLuma = false;
+    for (bool l : rowLuma_) anyLuma |= l;
     const float logoCol = anyLuma ? std::floor(rowH * 0.85f) : 0.0f;
     const float padX = 5.0f * u;
-    // Columnas de hasta 20 jugadores.
-    const int perColumn = 20;
-    const int columns = std::max(1, (static_cast<int>(rows.size()) + perColumn - 1) / perColumn);
     float colW = 100.0f * u;
-    for (const auto* r : rows) {
-        colW = std::max(colW, padX * 2.0f + logoCol + (showFaces_ ? face + 4.0f * u : 0.0f) + rh::TextSize(m, r->name.c_str()).x);
+    for (const auto& p : players_) {
+        colW = std::max(colW, padX * 2.0f + logoCol + (showFaces_ ? face + 4.0f * u : 0.0f) + rh::TextSize(m, p.name.c_str()).x);
     }
-    const int shownRows = std::min(perColumn, static_cast<int>(rows.size()));
+    const std::size_t shownRows = std::max<std::size_t>(1, perColumn);
     // Encabezado: el servidor o el mundo, y "N jugadores · ping".
     char header[160];
     std::snprintf(header, sizeof(header), "%s", !title_.empty() ? title_.c_str() : T(onServer_ ? "tab.server" : "tab.local"));
     char count[64];
-    std::snprintf(count, sizeof(count), T("tab.players"), static_cast<int>(rows.size()));
+    std::snprintf(count, sizeof(count), T("tab.players"), static_cast<int>(n));
     char pingText[32] = "";
     const int ping = sdk::network::PingMs();
     if (ping > 0) std::snprintf(pingText, sizeof(pingText), "%d ms", ping);
@@ -156,7 +174,7 @@ ImVec2 PlayerList::OnRenderHud(const HudFrame& frame) {
     const float width = std::floor(innerW + 8.0f * u);
     const float height = std::floor(headerH + shownRows * rowH + 8.0f * u + (showServer_ ? 3.0f * u : 0.0f));
     const ImGuiIO& io = ImGui::GetIO();
-    const ImVec2 min(std::floor((io.DisplaySize.x - width) * 0.5f), std::floor(io.DisplaySize.y * 0.06f));
+    const ImVec2 min(std::floor((io.DisplaySize.x - width) * 0.5f), std::floor(io.DisplaySize.y * 0.04f));
     const ImVec2 max(min.x + width, min.y + height);
     ImDrawList* d = frame.draw;
     const rh::Style& style = rh::CurrentStyle();
@@ -168,7 +186,6 @@ ImVec2 PlayerList::OnRenderHud(const HudFrame& frame) {
     d->AddRect(min, max, rh::TextColor(0.10f), r, 0, std::max(1.0f, std::floor(u * 0.5f)));
     float y = min.y + 4.0f * u;
     if (showServer_) {
-        // Arriba: el nombre grande y centrado; debajo, cuántos y el ping con su color.
         rh::CenteredText(d, m, ImVec2(min.x, y), ImVec2(max.x, y + rowH), header, rh::TextColor());
         const float infoY = y + rowH;
         const float ix = std::floor(min.x + (width - infoW) * 0.5f);
@@ -184,13 +201,15 @@ ImVec2 PlayerList::OnRenderHud(const HudFrame& frame) {
         d->AddRectFilled(ImVec2(min.x + 4.0f * u, y), ImVec2(max.x - 4.0f * u, y + std::max(1.0f, std::floor(u * 0.5f))), rh::TextColor(0.12f));
         y += 3.0f * u;
     }
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        const sdk::players::Player& p = *rows[i];
-        const int col = static_cast<int>(i) / perColumn;
-        const int row = static_cast<int>(i) % perColumn;
-        const float x = std::floor(min.x + 4.0f * u + col * (colW + gap));
+    const float listX = std::floor(min.x + (width - (colW * columns + gap * (columns - 1))) * 0.5f);
+    for (std::size_t i = 0; i < n; ++i) {
+        const sdk::players::Player& p = players_[i];
+        const int col = static_cast<int>(i / shownRows);
+        const std::size_t row = i % shownRows;
+        const float x = std::floor(listX + col * (colW + gap));
         const float ry = std::floor(y + row * rowH);
-        const bool isOwn = lower(p.name) == own;
+        const bool isOwn = i < rowOwn_.size() && rowOwn_[i];
+        const bool isLuma = i < rowLuma_.size() && rowLuma_[i];
         // Tu fila, resaltada; las demás, alternadas apenas.
         if (isOwn) {
             d->AddRectFilled(ImVec2(x, ry), ImVec2(x + colW, ry + rowH), rh::TextColor(0.10f), 2.0f * u);
@@ -198,17 +217,14 @@ ImVec2 PlayerList::OnRenderHud(const HudFrame& frame) {
             d->AddRectFilled(ImVec2(x, ry), ImVec2(x + colW, ry + rowH), rh::TextColor(0.035f), 2.0f * u);
         }
         float tx = x + padX;
-        // El logo de Luma, AL PRINCIPIO de la fila (tú: si iniciaste sesión;
-        // los demás: según el servidor de Luma).
+        // El logo de Luma, AL PRINCIPIO de la fila.
         if (anyLuma) {
-            if ((isOwn && cloud::SignedIn()) || cloud::IsLumaUser(p.name)) {
-                render::assets::DrawLogo(d, ImVec2(tx + logoCol * 0.42f, ry + rowH * 0.5f), rowH * 0.62f, rh::TextColor(0.95f));
-            }
+            if (isLuma) render::assets::DrawLogo(d, ImVec2(tx + logoCol * 0.42f, ry + rowH * 0.5f), rowH * 0.62f, rh::TextColor(0.95f));
             tx += logoCol;
         }
         // La cara: 8x8 cuadraditos (nítida, sin texturas), con una sombra.
-        auto it = faces_.find(p.name);
         if (showFaces_) {
+            auto it = faces_.find(p.name);
             const float fy = std::floor(ry + (rowH - face) * 0.5f);
             d->AddRectFilled(ImVec2(tx + u, fy + u), ImVec2(tx + face + u, fy + face + u), IM_COL32(0, 0, 0, 90));
             if (it != faces_.end() && it->second.hasFace) {
@@ -237,6 +253,7 @@ bool PlayerList::DrawSettings() {
     changed |= ui::Toggle("Servidor y ping arriba", &showServer_);
     changed |= ui::Toggle("Caras de las skins", &showFaces_);
     changed |= ui::Toggle("Usuarios de Luma primero", &lumaFirst_);
+    changed |= ui::Slider("Tamaño", &size_, 0.5f, 1.5f, "%.2fx");
     ui::Hint("Se abre manteniendo Tab. El logo de Luma aparece en quienes usan Luma e iniciaron sesión con Microsoft "
              "en el launcher. El ping de los demás no se puede ver: Bedrock no lo manda.");
     return changed;
@@ -247,6 +264,7 @@ void PlayerList::SaveSettings(nlohmann::json& out) const {
     out["showServer"] = showServer_;
     out["showFaces"] = showFaces_;
     out["lumaFirst"] = lumaFirst_;
+    out["size"] = size_;
 }
 
 void PlayerList::LoadSettings(const nlohmann::json& in) {
@@ -254,6 +272,7 @@ void PlayerList::LoadSettings(const nlohmann::json& in) {
     showServer_ = in.value("showServer", true);
     showFaces_ = in.value("showFaces", true);
     lumaFirst_ = in.value("lumaFirst", false);
+    size_ = std::clamp(in.value("size", 0.85f), 0.5f, 1.5f);
 }
 
 }  // namespace luma::modules::hud

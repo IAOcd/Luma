@@ -2,6 +2,7 @@
 //  hud.cpp - Implementación del estilo del HUD
 // =============================================================================
 #include "render/hud.h"
+#include "render/rainbow.h"
 
 #include <windows.h>
 
@@ -117,10 +118,20 @@ ImVec2 TextSize(const Metrics& m, const char* text) {
 }
 
 ImU32 TextColor(float alpha) {
+    if (g_current->rainbow) {
+        float c[3];
+        rainbow::Color(g_current->rainbowSpeed, 0.0f, c[0], c[1], c[2]);
+        return ToU32(c, alpha);
+    }
     return ToU32(g_current->text, alpha);
 }
 
 ImU32 PressedColor(float alpha) {
+    if (g_current->rainbow) {
+        float c[3];
+        rainbow::Color(g_current->rainbowSpeed, 0.5f, c[0], c[1], c[2]);  // (medio arcoíris corrido: se distingue)
+        return ToU32(c, alpha);
+    }
     return ToU32(g_current->pressed, alpha);
 }
 
@@ -198,6 +209,8 @@ void SaveStyle(const Style& st, nlohmann::json& h) {
     h["text"] = {st.text[0], st.text[1], st.text[2]};
     h["pressed"] = {st.pressed[0], st.pressed[1], st.pressed[2]};
     h["hideInGameMenus"] = st.hideInGameMenus;
+    h["rainbow"] = st.rainbow;
+    h["rainbowSpeed"] = st.rainbowSpeed;
 }
 
 void LoadStyle(const nlohmann::json& h, Style& st) {
@@ -212,6 +225,8 @@ void LoadStyle(const nlohmann::json& h, Style& st) {
     st.rounding = std::clamp(h.value("rounding", defaults.rounding), 0.0f, 8.0f);
     st.border = h.value("border", defaults.border);
     st.hideInGameMenus = h.value("hideInGameMenus", defaults.hideInGameMenus);
+    st.rainbow = h.value("rainbow", defaults.rainbow);
+    st.rainbowSpeed = std::clamp(h.value("rainbowSpeed", defaults.rainbowSpeed), 0.05f, 2.0f);
     auto color = [&](const char* key, float* out) {
         if (h.contains(key) && h[key].is_array() && h[key].size() == 3) {
             for (int i = 0; i < 3; ++i) {

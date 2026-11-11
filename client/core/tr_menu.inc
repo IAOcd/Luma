@@ -166,3 +166,9 @@
 {"Conectando con el juego...", "Connecting to the game...", "Conectando ao jogo..."},
 {"Conectando con el mouse del juego...", "Connecting to the game's mouse...", "Conectando ao mouse do jogo..."},
 {"{} cargado · pulsa {} para abrir el menú", "{} loaded · press {} to open the menu", "{} carregado · aperte {} para abrir o menu"},
+
+// --- Skin al instante -----------------------------------------------------------------
+{"Skin al instante: entra a un mundo primero", "Instant skin: join a world first", "Skin instantânea: entre em um mundo primeiro"},
+{"Skin al instante: usa el Vestidor una vez en este mundo y vuelve a Equipar", "Instant skin: use the Dressing Room once in this world, then Equip again", "Skin instantânea: use o Provador uma vez neste mundo e equipe de novo"},
+{"Skin al instante: esa skin tiene otro tamaño que la actual", "Instant skin: that skin is a different size from the current one", "Skin instantânea: essa skin tem outro tamanho que a atual"},
+{"Skin aplicada", "Skin applied", "Skin aplicada"},

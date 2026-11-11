@@ -56,6 +56,8 @@ bool Draw(modules::Module& module) {
             changed |= ui::Color("Color del fondo", s.backgroundColor);
             changed |= ui::Color("Color del texto", s.text);
             changed |= ui::Color("Color al apretar", s.pressed);
+            changed |= ui::Toggle("Rainbow", &s.rainbow, "(el texto va cambiando de color)");
+            if (s.rainbow) changed |= ui::Slider("Velocidad del rainbow", &s.rainbowSpeed, 0.05f, 2.0f, "%.2f");
             changed |= ui::Toggle("Sombra del texto", &s.textShadow);
             changed |= ui::Toggle("Borde", &s.border);
             changed |= ui::Slider("Esquinas", &s.rounding, 0.0f, 6.0f, "%.0f");

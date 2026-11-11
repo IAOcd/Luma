@@ -42,6 +42,9 @@ struct Server {
 };
 // false en un mundo local (o si no se pudo leer).
 bool ReadServer(Server& out);
+// El identificador (UUID, 16 bytes) de un jugador de la lista, por su nombre.
+bool UuidOf(const std::string& name, std::uint8_t out[16]);
+
 // El nombre del mundo (en un mundo local; en un servidor es el que puso el servidor).
 bool WorldName(std::string& out);
 

@@ -46,10 +46,15 @@
 #include "sdk/camera.h"
 #include "sdk/draw3d.h"
 #include "sdk/hud_ui.h"
+#include "sdk/game_crosshair.h"
+#include "sdk/skin_apply.h"
 #include "sdk/paperdoll.h"
 #include <nlohmann/json.hpp>
 
 #include "core/cloud.h"
+#include <filesystem>
+#include "sdk/memory.h"
+#include "sdk/watch.h"
 #include "core/tr.h"
 #include "core/stats.h"
 #include "i18n.h"
@@ -219,6 +224,8 @@ bool Startup(HMODULE module) {
         sdk::draw3d::Init();   // dibujar dentro del mundo (contorno, hitboxes)
         sdk::paperdoll::Init();  // mover el muñeco del HUD del juego
         sdk::hudui::Init();      // scoreboard movible sin titilar (UIControl::updatePos)
+        sdk::skinapply::Init();  // Equipar cambia la skin al instante
+        sdk::gamecrosshair::Init();  // esconder la mira del juego (módulo de mira)
         std::lock_guard lock(StateMutex());
         modules::Manager::DisableUnavailable();
     }
@@ -277,6 +284,7 @@ void WaitForUnload() {
         perf::benchmark::Poll();
         sdk::network::Poll();                   // ping de la conexión con el servidor
         stats::Poll();
+        sdk::skinapply::Poll();                 // ¿equipaste otra skin? (lee su PNG)
         render::skinheads::Poll();              // caras de skins pedidas por el menú (Closet)                          // tiempo jugado y nombre del jugador (para el launcher)
         render::icons_items::Poll();            // íconos de ítems pedidos por el HUD                // terminar pruebas (cálculos y CSV fuera del render)
         modules::performance::PollRenderThread();  // prioridad del hilo de render

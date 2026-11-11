@@ -55,6 +55,7 @@ void BlockOutline::Push() const {
     s.fill = fill_;
     s.fillColor = ToColor(fillColor_);
     s.fillMaterial = fillMaterial_;
+    s.rainbow = rainbow_;
     sdk::draw3d::SetOutline(s);
 }
 
@@ -69,6 +70,7 @@ void BlockOutline::OnDisable() {
 bool BlockOutline::DrawSettings() {
     bool changed = false;
     changed |= ui::ColorAlpha("Color de la línea", line_);
+    changed |= ui::Toggle("Rainbow", &rainbow_, "(va cambiando de color)");
     changed |= ui::Toggle("Relleno", &fill_);
     if (fill_) {
         changed |= ui::ColorAlpha("Color del relleno", fillColor_);
@@ -89,6 +91,7 @@ void BlockOutline::SaveSettings(nlohmann::json& out) const {
     out["fill"] = fill_;
     SaveColor(out, "fillColor", fillColor_);
     out["fillMaterial"] = fillMaterial_;
+    out["rainbow"] = rainbow_;
 }
 
 void BlockOutline::LoadSettings(const nlohmann::json& in) {
@@ -96,6 +99,7 @@ void BlockOutline::LoadSettings(const nlohmann::json& in) {
     fill_ = in.value("fill", false);
     LoadColor(in, "fillColor", fillColor_);
     fillMaterial_ = std::clamp(in.value("fillMaterial", 0), 0, sdk::draw3d::kFillMaterialCount - 1);
+    rainbow_ = in.value("rainbow", false);
     Push();
 }
 
@@ -129,6 +133,7 @@ void Hitboxes::Push() const {
     s.itemColor = ToColor(itemColor_);
     s.maxDistance = maxDistance_;
     s.showSelf = showSelf_;
+    s.rainbow = rainbow_;
     sdk::draw3d::SetHitboxes(s);
 }
 
@@ -142,6 +147,7 @@ void Hitboxes::OnDisable() {
 
 bool Hitboxes::DrawSettings() {
     bool changed = false;
+    changed |= ui::Toggle("Rainbow", &rainbow_, "(todas las cajas van cambiando de color)");
     ui::Section("Jugadores");
     changed |= ui::Toggle("Mostrar jugadores", &players_);
     if (players_) {
@@ -174,6 +180,7 @@ void Hitboxes::SaveSettings(nlohmann::json& out) const {
     SaveColor(out, "itemColor", itemColor_);
     out["maxDistance"] = maxDistance_;
     out["showSelf"] = showSelf_;
+    out["rainbow"] = rainbow_;
 }
 
 void Hitboxes::LoadSettings(const nlohmann::json& in) {
@@ -196,6 +203,7 @@ void Hitboxes::LoadSettings(const nlohmann::json& in) {
     }
     maxDistance_ = std::clamp(in.value("maxDistance", 32.0f), 8.0f, 96.0f);
     showSelf_ = in.value("showSelf", false);
+    rainbow_ = in.value("rainbow", false);
     Push();
 }
 
@@ -223,6 +231,7 @@ void ChunkBorders::Push() const {
     s.neighbor = ToColor(neighbor_);
     s.neighbors = neighbors_;
     s.range = range_;
+    s.rainbow = rainbow_;
     sdk::draw3d::SetChunkBorders(s);
 }
 
@@ -236,6 +245,7 @@ void ChunkBorders::OnDisable() {
 
 bool ChunkBorders::DrawSettings() {
     bool changed = false;
+    changed |= ui::Toggle("Rainbow", &rainbow_, "(las líneas van cambiando de color)");
     changed |= ui::ColorAlpha("Paredes del chunk", inner_);
     changed |= ui::ColorAlpha("Esquinas del chunk", corner_);
     changed |= ui::Toggle("Esquinas de los vecinos", &neighbors_);
@@ -256,6 +266,7 @@ void ChunkBorders::SaveSettings(nlohmann::json& out) const {
     SaveColor(out, "neighbor", neighbor_);
     out["neighbors"] = neighbors_;
     out["range"] = range_;
+    out["rainbow"] = rainbow_;
 }
 
 void ChunkBorders::LoadSettings(const nlohmann::json& in) {
@@ -264,6 +275,7 @@ void ChunkBorders::LoadSettings(const nlohmann::json& in) {
     LoadColor(in, "neighbor", neighbor_);
     neighbors_ = in.value("neighbors", true);
     range_ = std::clamp(in.value("range", 24), 8, 64);
+    rainbow_ = in.value("rainbow", false);
     Push();
 }
 

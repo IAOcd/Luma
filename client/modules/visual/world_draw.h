@@ -35,6 +35,7 @@ private:
     bool fill_ = false;
     float fillColor_[4] = {1.0f, 1.0f, 1.0f, 0.15f};
     int fillMaterial_ = 0;
+    bool rainbow_ = false;  // va cambiando de color (render/rainbow.h)
 };
 
 class Hitboxes : public Module {
@@ -59,6 +60,7 @@ private:
     float itemColor_[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     float maxDistance_ = 32.0f;
     bool showSelf_ = false;
+    bool rainbow_ = false;  // va cambiando de color (render/rainbow.h)
 };
 
 class ChunkBorders : public Module {
@@ -79,6 +81,7 @@ private:
     float corner_[4] = {0.35f, 0.65f, 1.0f, 1.0f};
     float neighbor_[4] = {1.0f, 0.35f, 0.3f, 0.9f};
     bool neighbors_ = true;
+    bool rainbow_ = false;  // va cambiando de color (render/rainbow.h)
     int range_ = 24;
 };
 

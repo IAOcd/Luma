@@ -41,6 +41,9 @@ private:
     bool showServer_ = true;
     bool showFaces_ = true;
     bool lumaFirst_ = false;   // los usuarios de Luma primero
+    float size_ = 0.85f;       // tamaño de la lista (1 = el del HUD)
+    std::vector<bool> rowOwn_;   // por fila (en el orden de players_): ¿eres tú?
+    std::vector<bool> rowLuma_;  // ¿usa Luma?
     // Lo que se muestra (se relee 1 vez por segundo mientras está abierta).
     std::vector<sdk::players::Player> players_;
     std::unordered_map<std::string, sdk::players::Player> faces_;  // nombre -> cara (para no releerlas)

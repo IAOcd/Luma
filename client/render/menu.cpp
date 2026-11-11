@@ -1122,6 +1122,12 @@ void DrawThemePage() {
         hudChanged |= Toggle("##hudborder", &h.border, ImGui::GetFrameHeight() * 0.95f);
         RowLabel("Color del texto");
         hudChanged |= ImGui::ColorEdit3("##hudtext", h.text, ImGuiColorEditFlags_NoInputs);
+        RowLabel("Rainbow", "(todo el HUD cambia de color)");
+        hudChanged |= Toggle("##hudrainbow", &h.rainbow, ImGui::GetFrameHeight() * 0.95f);
+        if (h.rainbow) {
+            RowLabel("Velocidad del rainbow");
+            hudChanged |= ImGui::SliderFloat("##hudrainbowspeed", &h.rainbowSpeed, 0.05f, 2.0f, "%.2f");
+        }
         RowLabel("Esconder en los menús", "(pausa, inventario, chat)");
         hudChanged |= Toggle("##hudhide", &h.hideInGameMenus, ImGui::GetFrameHeight() * 0.95f);
         RowLabel("Tecla apretada", "(keystrokes)");

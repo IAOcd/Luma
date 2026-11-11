@@ -2,6 +2,7 @@
 //  draw3d.cpp - Dibujo dentro del mundo (ver draw3d.h)
 // =============================================================================
 #include "sdk/draw3d.h"
+#include "render/rainbow.h"
 
 #include <windows.h>
 #include <intrin.h>
@@ -334,7 +335,7 @@ std::uintptr_t g_stateSize = 0;
 
 std::uintptr_t DetectStateSize(std::uintptr_t player, std::uintptr_t states, std::uint32_t ownId) {
     std::uintptr_t own = 0;
-    if (!SafeRead(player + offsets::kActorStateVector, own) || !LooksLikePointer(own)) {
+    if (!SafeRead(player + offsets::kActorStateVector, own) || !LooksLikeDataPointer(own)) {
         return 0;
     }
     for (std::uintptr_t size : {std::uintptr_t{0x24}, std::uintptr_t{0x28}, std::uintptr_t{0x30}, std::uintptr_t{0x20}}) {
@@ -343,6 +344,38 @@ std::uintptr_t DetectStateSize(std::uintptr_t player, std::uintptr_t states, std
         }
     }
     return 0;
+}
+
+// Si tu jugador no está en esta lista (en un mundo local puede ser la del
+// servidor interno), lo comprobamos con las propias entidades: con el tamaño
+// correcto, la posición de cada una cae DENTRO de su caja (de lado).
+std::uintptr_t DetectStateSizeFromBoxes(std::uintptr_t boxes, std::uintptr_t states, const std::uintptr_t* entities,
+                                        std::uintptr_t pages, std::size_t boxSize) {
+    std::uintptr_t best = 0;
+    int bestHits = 0;
+    for (std::uintptr_t size : {std::uintptr_t{0x24}, std::uintptr_t{0x28}, std::uintptr_t{0x30}, std::uintptr_t{0x20}}) {
+        int hits = 0, tried = 0;
+        const std::size_t count = std::min<std::size_t>((entities[1] - entities[0]) / 4, 512);
+        for (std::size_t i = 0; i < count && tried < 24; ++i) {
+            std::uint32_t entity = 0;
+            if (!SafeRead(entities[0] + i * 4, entity) || (entity & offsets::kEntityMask) == offsets::kEntityMask) continue;
+            std::uintptr_t page = 0;
+            if (!SafeRead(pages + (i / offsets::kPayloadPage) * 8, page) || !LooksLikePointer(page)) continue;
+            const std::uintptr_t comp = page + (i % offsets::kPayloadPage) * boxSize;
+            if (entity::ComponentOf(boxes, entity, boxSize) != comp) continue;
+            float box[6]{};
+            const std::uintptr_t state = entity::ComponentOf(states, entity, size);
+            float pos[3]{};
+            if (!SafeRead(comp, box) || state == 0 || !SafeRead(state, pos)) continue;
+            ++tried;
+            if (pos[0] >= box[0] - 0.05f && pos[0] <= box[3] + 0.05f && pos[2] >= box[2] - 0.05f && pos[2] <= box[5] + 0.05f) ++hits;
+        }
+        if (tried >= 3 && hits * 4 >= tried * 3 && hits > bestHits) {  // 3 de cada 4, por lo menos
+            best = size;
+            bestHits = hits;
+        }
+    }
+    return best;
 }
 
 // En qué punto entre dos ticks estamos (0 = recién empezó el tick, 1 = el siguiente).
@@ -390,8 +423,18 @@ void CollectHitboxes(const Frame& f, const HitboxSettings& s, float* outLo, floa
         return;
     }
     if (g_stateSize == 0 && states != 0) {
-        g_stateSize = DetectStateSize(player, states, ownId);
-        log::Info("SDK: hitboxes: tamaño de la posición de las entidades: 0x{:X}.", g_stateSize);
+        // (reintentar cada 2 segundos, no en cada frame)
+        static ULONGLONG lastTry = 0;
+        static bool logged = false;
+        if (GetTickCount64() - lastTry >= 2000) {
+            lastTry = GetTickCount64();
+            g_stateSize = DetectStateSize(player, states, ownId);
+            if (g_stateSize == 0) g_stateSize = DetectStateSizeFromBoxes(boxes, states, entities, pages, kAabbComponentSize);
+            if (g_stateSize != 0 || !logged) {
+                logged = true;
+                log::Info("SDK: hitboxes: tamaño de la posición de las entidades: 0x{:X}.", g_stateSize);
+            }
+        }
     }
     const float alpha = PartialTick(player);
     // Dónde estás tú. En un mundo local el juego tiene DOS copias de tu
@@ -400,7 +443,7 @@ void CollectHitboxes(const Frame& f, const HitboxSettings& s, float* outLo, floa
     // esté justo donde estás.
     float ownFeet[3]{};
     std::uintptr_t ownAabb = 0;
-    const bool haveOwn = SafeRead(player + offsets::kActorAabb, ownAabb) && LooksLikePointer(ownAabb) &&
+    const bool haveOwn = SafeRead(player + offsets::kActorAabb, ownAabb) && LooksLikeDataPointer(ownAabb) &&
                          SafeRead(ownAabb, ownFeet) && std::isfinite(ownFeet[0]);
     const std::size_t count = std::min<std::size_t>((entities[1] - entities[0]) / 4, 8192);
     const float maxDist2 = s.maxDistance * s.maxDistance;
@@ -484,7 +527,9 @@ void CollectHitboxes(const Frame& f, const HitboxSettings& s, float* outLo, floa
         {
             bool inside = true;
             for (int k = 0; k < 3; ++k) {
-                const float margin = 0.3f + motion[k];
+                // (en altura, varios ticks de margen: la copia del servidor
+                // de un mundo local va atrasada cuando caes)
+                const float margin = 0.3f + motion[k] * (k == 1 ? 3.0f : 1.0f);
                 inside &= f.origin[k] > box[k] - margin && f.origin[k] < box[k + 3] + margin;
             }
             if (inside) {
@@ -498,9 +543,12 @@ void CollectHitboxes(const Frame& f, const HitboxSettings& s, float* outLo, floa
             continue;
         }
         const std::uint32_t kind = type & 0xFFFF;
-        if (!s.showSelf && haveOwn && std::fabs(rawMin[0] - ownFeet[0]) < 0.75f &&
-            std::fabs(rawMin[1] - ownFeet[1]) < 1.0f && std::fabs(rawMin[2] - ownFeet[2]) < 0.75f) {
-            continue;  // tu otra copia (sea del tipo que diga el juego)
+        // Tu otra copia (la del servidor interno de un mundo local). Al caer va
+        // unos ticks atrasada: en altura la tolerancia crece con la velocidad
+        // de caída (de lado sigue siendo estricta, para no esconder a otros).
+        if (!s.showSelf && haveOwn && std::fabs(rawMin[0] - ownFeet[0]) < 0.75f + motion[0] &&
+            std::fabs(rawMin[1] - ownFeet[1]) < 1.0f + motion[1] * 4.0f && std::fabs(rawMin[2] - ownFeet[2]) < 0.75f + motion[2]) {
+            continue;
         }
         const bool isPlayer = kind == kTypePlayer || isSelf;
         const bool isItem = kind == kTypeItem || kind == kTypeXpOrb;
@@ -655,6 +703,16 @@ bool LooksLikeParams(void* params) {
 // (oscuro y casi transparente): por eso el relleno no se veía. Ahora, en cada
 // llamada nuestra, ponemos ESE color en el que queremos (los vértices van en
 // blanco) y al final devolvemos el del juego.
+// Si "rainbow" está activo, el color del arcoíris de ahora (con la
+// transparencia del color elegido). "offset" corre el tono (cada grupo un poco
+// distinto, para que se distingan).
+Color Rainbowed(const Color& c, bool on, float offset) {
+    if (!on) return c;
+    Color out = c;
+    rainbow::Color(rainbow::kDefaultSpeed, offset, out.r, out.g, out.b);
+    return out;
+}
+
 void Tint(bool haveColor, std::uintptr_t colorPtr, const Color& c) {
     if (haveColor) {
         const float v[4] = {c.r, c.g, c.b, c.a};
@@ -673,9 +731,13 @@ void Submit(void* sc, void* tess, void* material, std::uint8_t* copy, void* a5, 
     g_renderMesh(sc, tess, material, copy, a5, a6);
 }
 
+// "closeIfEmpty": en el contorno invisible, si no hay nada nuestro que
+// dibujar, igual hay que CERRAR el lote de líneas del juego con una llamada de
+// dibujo (si no, queda a medio armar y lo siguiente que lo usa, como la mira
+// del juego, no se dibuja). Para eso, una línea transparente muy abajo.
 void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, void* a6, std::uintptr_t lrp,
                  const OutlineSettings& o, const HitboxSettings& h, const int* blockPos, bool hitboxes,
-                 void* fillMaterial) {
+                 void* fillMaterial, bool closeIfEmpty = false) {
     std::uintptr_t colorPtr = 0;
     float saved[4]{};
     bool haveColor = false;
@@ -701,8 +763,9 @@ void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, v
                 blo[i] = static_cast<float>(blockPos[i]) - 0.004f;
                 bhi[i] = static_cast<float>(blockPos[i]) + 1.004f;
             }
-            FilledBox(f, haveColor ? white : o.fillColor, blo, bhi);
-            Tint(haveColor, colorPtr, o.fillColor);
+            const Color fillColor = Rainbowed(o.fillColor, o.rainbow, 0.0f);
+            FilledBox(f, haveColor ? white : fillColor, blo, bhi);
+            Tint(haveColor, colorPtr, fillColor);
             Submit(sc, tess, fillMaterial, copy, a5, a6, blo, bhi);
         }
         // 2. Bordes de chunk.
@@ -713,9 +776,10 @@ void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, v
             for (int g = 0; g < 3; ++g) {
                 float lo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
                 float hi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
-                ChunkLines(f, haveColor ? white : *colors[g], cs, g, lo, hi);
+                const Color color = Rainbowed(*colors[g], cs.rainbow, g * 0.33f);
+                ChunkLines(f, haveColor ? white : color, cs, g, lo, hi);
                 if (lo[0] <= hi[0]) {
-                    Tint(haveColor, colorPtr, *colors[g]);
+                    Tint(haveColor, colorPtr, color);
                     Submit(sc, tess, material, copy, a5, a6, lo, hi);
                     ++drawn;
                 }
@@ -735,16 +799,24 @@ void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, v
                     if (g_pending[i].group != g) {
                         continue;
                     }
-                    Box(f, haveColor ? white : *colors[g], g_pending[i].lo, g_pending[i].hi);
+                    Box(f, haveColor ? white : Rainbowed(*colors[g], h.rainbow, g * 0.33f), g_pending[i].lo, g_pending[i].hi);
                     Grow(lo, hi, g_pending[i].lo, g_pending[i].hi);
                     ++n;
                 }
                 if (n > 0) {
-                    Tint(haveColor, colorPtr, *colors[g]);
+                    Tint(haveColor, colorPtr, Rainbowed(*colors[g], h.rainbow, g * 0.33f));
                     Submit(sc, tess, material, copy, a5, a6, lo, hi);
                     drawn += n;
                 }
             }
+        }
+        if (drawn == 0 && closeIfEmpty) {
+            float lo[3] = {f.origin[0] - 0.1f, f.origin[1] - 4000.0f, f.origin[2] - 0.1f};
+            float hi[3] = {f.origin[0] + 0.1f, f.origin[1] - 3999.9f, f.origin[2] + 0.1f};
+            const Color clear{1.0f, 1.0f, 1.0f, 0.0f};
+            Box(f, clear, lo, hi);
+            Tint(haveColor, colorPtr, clear);
+            Submit(sc, tess, material, copy, a5, a6, lo, hi);
         }
         if (haveColor) {
             SafeWrite(colorPtr, saved, sizeof(saved));
@@ -815,7 +887,11 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
             t_levelDrawn = true;
             g_levelPathDraws.fetch_add(1, std::memory_order_relaxed);
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, OutlineSettings{}, CopyHitboxes(), nullptr,
-                        true, nullptr);
+                        true, nullptr, /*closeIfEmpty=*/true);
+        } else if (g_ready.load(std::memory_order_relaxed) && LooksLikeParams(params)) {
+            // (ya dibujamos este frame: solo cerrar el lote vacío)
+            DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, OutlineSettings{}, HitboxSettings{}, nullptr,
+                        false, nullptr, /*closeIfEmpty=*/true);
         }
         return;
     }
@@ -827,7 +903,7 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
     if (t_inOutline && !t_outlineDrawn && g_ready.load(std::memory_order_relaxed)) {
         const OutlineSettings o = CopyOutline();
         if (o.enabled) {
-            tinted = TintScreen(screenContext, o.line, saved, colorPtr);
+            tinted = TintScreen(screenContext, Rainbowed(o.line, o.rainbow, 0.0f), saved, colorPtr);
         }
     }
     g_renderMesh(screenContext, tess, material, params, a5, a6);
@@ -922,7 +998,7 @@ void __fastcall OutlineCallerDetour(void* lrp, void* screenContext, void* region
     const std::uintptr_t player = sdk::player::LocalPlayer();
     std::uintptr_t aabb = 0;
     float feet[3]{};
-    if (player != 0 && SafeRead(player + offsets::kActorAabb, aabb) && LooksLikePointer(aabb) && SafeRead(aabb, feet) &&
+    if (player != 0 && SafeRead(player + offsets::kActorAabb, aabb) && LooksLikeDataPointer(aabb) && SafeRead(aabb, feet) &&
         std::isfinite(feet[0]) && std::isfinite(feet[1]) && std::isfinite(feet[2])) {
         for (int dy = 1; dy <= 9 && count < 10; ++dy) {
             candidates[count][0] = static_cast<int>(std::floor(feet[0]));

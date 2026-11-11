@@ -41,6 +41,7 @@ struct OutlineSettings {
     bool fill = false;
     Color fillColor{1.0f, 1.0f, 1.0f, 0.15f};
     int fillMaterial = 0;  // cuál de los materiales candidatos usar (0..kFillMaterialCount-1)
+    bool rainbow = false;  // la línea (y el relleno) van cambiando de color
 };
 inline constexpr int kFillMaterialCount = 4;
 void SetOutline(const OutlineSettings& settings);
@@ -56,6 +57,7 @@ struct HitboxSettings {
     Color itemColor{1.0f, 1.0f, 1.0f, 1.0f};
     float maxDistance = 32.0f;  // bloques
     bool showSelf = false;      // tu propia caja (solo se ve en tercera persona)
+    bool rainbow = false;       // todas las cajas van cambiando de color
 };
 void SetHitboxes(const HitboxSettings& settings);
 
@@ -67,6 +69,7 @@ struct ChunkBorderSettings {
     Color neighbor{1.0f, 0.35f, 0.3f, 0.9f};  // esquinas de los chunks vecinos
     bool neighbors = true;
     int range = 24;                            // bloques arriba y abajo de ti
+    bool rainbow = false;                      // las líneas van cambiando de color
 };
 void SetChunkBorders(const ChunkBorderSettings& settings);
 

@@ -13,6 +13,7 @@
 #include <imgui.h>
 
 #include <cstddef>
+#include <string>
 
 #include "core/lyrics.h"
 #include "core/media.h"
@@ -64,6 +65,7 @@ struct Settings {
     float lyricsOffset = 0.0f;    // seconds: + = lyrics later, - = earlier
     bool lyricsNextLine = true;   // HUD lyrics: show the next line too
     bool lyricsSweep = true;      // HUD lyrics: the light fills each word smoothly
+    std::string spotifyClientId;  // the user's own Spotify app (core/spotify.h); empty = off
     bool hdCovers = true;         // look up a sharp album art online when the app's is small
     // --- Album colors everywhere ---
     bool hudFollowAlbum = false;  // every HUD module's text takes the album color
@@ -149,6 +151,11 @@ inline float SmoothStep(float x) {
     x = x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x);
     return x * x * (3.0f - 2.0f * x);
 }
+
+// "Up next" tab of the Music page: your Spotify queue (core/spotify.h).
+void DrawUpNext(ImVec2 min, ImVec2 max);
+// The Spotify section of the settings (Client ID, connect / disconnect).
+bool DrawSpotifySettings();
 
 // The lyrics panel of the Music page: synced lyrics scroll by themselves.
 // Draws in the current ImGui window, inside min..max.

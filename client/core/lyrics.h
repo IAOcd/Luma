@@ -66,6 +66,11 @@ void SetOnline(bool online);
 // Ask LiriQo first (on by default). Off = only LRCLIB.
 void SetLiriqo(bool on);
 
+// Look a song up in the background and save it on disk, without showing it
+// (the next songs of the Spotify queue: core/spotify.h). When that song
+// starts, its lyrics are already there.
+void Prefetch(const std::string& title, const std::string& artist, const std::string& album, int seconds);
+
 // HD COVERS: when the app gives Windows a small album art (Liner gives
 // 150x150), this thread also looks the song up in Apple's iTunes catalog
 // (itunes.apple.com: free, no account) and offers a 1000x1000 art to

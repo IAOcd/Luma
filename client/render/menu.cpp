@@ -2131,8 +2131,8 @@ void DrawMusicPage() {
     const float rightX = origin.x + leftW + gap;
     const float rightW = total - leftW - gap;
     ImGui::SetCursorScreenPos(ImVec2(rightX, origin.y));
-    static const char* const kTabs[] = {"Lyrics", "Styles", "Halo"};
-    Segmented("##musicTabs", kTabs, 3, &g_musicTab);
+    static const char* const kTabs[] = {"Lyrics", "Up next", "Styles", "Halo"};
+    Segmented("##musicTabs", kTabs, 4, &g_musicTab);
     const float tabsBottom = ImGui::GetCursorScreenPos().y + fs * 0.6f;
     const float rightH = std::max(fs * 10.0f, ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - tabsBottom -
                                                   ImGui::GetStyle().WindowPadding.y);
@@ -2140,17 +2140,22 @@ void DrawMusicPage() {
     ImGui::BeginChild("##musicRight", ImVec2(rightW, rightH), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
     SmoothScroll();
-    if (g_musicTab == 0) {
+    if (g_musicTab == 0 || g_musicTab == 1) {
         const ImVec2 at = ImGui::GetCursorScreenPos();
-        music::DrawLyrics(at, ImVec2(at.x + rightW, at.y + rightH - fs * 0.2f));
+        if (g_musicTab == 0) {
+            music::DrawLyrics(at, ImVec2(at.x + rightW, at.y + rightH - fs * 0.2f));
+        } else {
+            music::DrawUpNext(at, ImVec2(at.x + rightW, at.y + rightH - fs * 0.2f));
+        }
         ImGui::Dummy(ImVec2(rightW, rightH - fs * 0.4f));
     } else {
         ui::SetLabelColumn(11.0f);
         bool changed = false;
-        if (g_musicTab == 1) {
+        if (g_musicTab == 2) {
             changed |= music::DrawStyleSettings();
             changed |= music::DrawAlbumColorSettings();
             changed |= music::DrawLyricsSettings();
+            changed |= music::DrawSpotifySettings();
         } else {
             changed = music::DrawHaloSettings();
         }

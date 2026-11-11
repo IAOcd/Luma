@@ -11,6 +11,7 @@
 
 #include <imgui_internal.h>  // ImLerp for colors
 
+#include "core/spotify.h"
 #include "core/tr.h"
 #include "render/gpu.h"
 #include "render/icons.h"
@@ -857,6 +858,136 @@ bool DrawLyricsSettings() {
     ui::Hint("To find the lyrics, the song's title, artist, album and length are sent to LiriQo (a free service run "
              "by one developer, which asks Apple Music, NetEase and others) and, if it doesn't have them, to LRCLIB "
              "(lrclib.net). Nothing about you. Found lyrics are saved on your PC, so each song is looked up once.");
+    return changed;
+}
+
+// =============================================================================
+//  Spotify: "Up next" and its settings
+// =============================================================================
+
+namespace {
+
+const std::vector<spotify::QueueItem>& CurrentQueue() {
+    static std::vector<spotify::QueueItem> queue;
+    static std::uint32_t version = 0;
+    std::vector<spotify::QueueItem> fresh;
+    std::uint32_t v = 0;
+    if (spotify::Queue(version, fresh, v)) {
+        queue = std::move(fresh);
+        version = v;
+    }
+    return queue;
+}
+
+}  // namespace
+
+void DrawUpNext(ImVec2 min, ImVec2 max) {
+    const theme::Palette& p = theme::P();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* mid = theme::GetFonts().medium;
+    ImFont* reg = theme::GetFonts().regular;
+    const float fs = ImGui::GetFontSize();
+    const float width = max.x - min.x;
+    const spotify::Status status = spotify::GetStatus();
+    auto message = [&](const char* a, const char* b) {
+        const float y = min.y + (max.y - min.y) * 0.3f;
+        const ImVec2 sa = mid->CalcTextSizeA(mid->FontSize, FLT_MAX, 0.0f, a);
+        draw->AddText(mid, mid->FontSize, ImVec2(min.x + (width - sa.x) * 0.5f, y), U(p.text, 1.0f), a);
+        if (b != nullptr) {
+            const ImVec2 sb = reg->CalcTextSizeA(reg->FontSize, FLT_MAX, width * 0.9f, b);
+            draw->AddText(reg, reg->FontSize, ImVec2(min.x + (width - sb.x) * 0.5f, y + mid->FontSize * 1.5f), U(p.textDim, 1.0f), b,
+                          nullptr, width * 0.9f);
+        }
+    };
+    if (status.state != spotify::State::Connected) {
+        message(Tr("Connect Spotify to see what's next"),
+                Tr("Optional. In Styles > Spotify: paste your app's Client ID and press Connect. Luma then shows your "
+                   "queue here and gets the lyrics of the next songs ready before they start."));
+        return;
+    }
+    const auto& queue = CurrentQueue();
+    if (queue.empty()) {
+        message(Tr("Nothing in your queue"), Tr("Play something on Spotify (a playlist or an album)."));
+        return;
+    }
+    // A list: number, title and artist, length on the right. The first one
+    // (the next song) a bit brighter.
+    float y = min.y + fs * 0.2f;
+    const float rowH = mid->FontSize + reg->FontSize + fs * 0.9f;
+    for (std::size_t i = 0; i < queue.size() && y + rowH <= max.y; ++i) {
+        const spotify::QueueItem& item = queue[i];
+        const float a = i == 0 ? 1.0f : 0.78f;
+        if (i == 0) {
+            draw->AddRectFilled(ImVec2(min.x, y - fs * 0.25f), ImVec2(max.x, y + rowH - fs * 0.45f), U(p.surface, 0.55f),
+                                fs * 0.5f);
+        }
+        char number[8];
+        std::snprintf(number, sizeof(number), "%zu", i + 1);
+        draw->AddText(mid, mid->FontSize, ImVec2(min.x + fs * 0.6f, y + fs * 0.35f), U(p.textDim, a), number);
+        char length[16];
+        FormatTime(static_cast<double>(item.seconds), length, sizeof(length));
+        const float lw = reg->CalcTextSizeA(reg->FontSize, FLT_MAX, 0.0f, length).x;
+        draw->AddText(reg, reg->FontSize, ImVec2(max.x - fs * 0.6f - lw, y + fs * 0.45f), U(p.textDim, a), length);
+        const float textX = min.x + fs * 2.2f;
+        const float textW = max.x - fs * 1.4f - lw - textX;
+        char title[200], artist[200];
+        Fit(mid, mid->FontSize, item.title.c_str(), textW, title, sizeof(title));
+        Fit(reg, reg->FontSize, item.artist.c_str(), textW, artist, sizeof(artist));
+        draw->AddText(mid, mid->FontSize, ImVec2(textX, y), U(p.text, a), title);
+        draw->AddText(reg, reg->FontSize, ImVec2(textX, y + mid->FontSize + fs * 0.1f), U(p.textDim, a), artist);
+        y += rowH;
+    }
+}
+
+bool DrawSpotifySettings() {
+    Settings& s = Get();
+    bool changed = false;
+    ui::Section("Spotify (optional)");
+    static char clientId[72] = "";
+    static bool loaded = false;
+    if (!loaded) {
+        std::snprintf(clientId, sizeof(clientId), "%s", s.spotifyClientId.c_str());
+        loaded = true;
+    }
+    if (ui::Text("Client ID", clientId, sizeof(clientId), "paste it from developer.spotify.com")) {
+        // Only letters and numbers (a Client ID is 32 of them).
+        std::string clean;
+        for (const char* c = clientId; *c != '\0'; ++c) {
+            if (std::isalnum(static_cast<unsigned char>(*c))) clean.push_back(*c);
+        }
+        if (clean != s.spotifyClientId) {
+            s.spotifyClientId = clean;
+            spotify::SetClientId(clean);
+            changed = true;
+        }
+    }
+    const spotify::Status status = spotify::GetStatus();
+    switch (status.state) {
+        case spotify::State::NoClientId:
+            ui::Hint("Paste your Client ID above to connect.");
+            break;
+        case spotify::State::SignedOut:
+            if (ui::Button("Connect Spotify", "Your account")) spotify::Connect();
+            break;
+        case spotify::State::SigningIn:
+            ui::Hint("Waiting for you in the browser... (accept there and come back)");
+            break;
+        case spotify::State::Connected:
+            if (ui::Button("Disconnect", "Connected")) spotify::Disconnect();
+            break;
+        case spotify::State::Error: {
+            char text[200];
+            std::snprintf(text, sizeof(text), "%s: %s", Tr("Couldn't connect"), status.error.c_str());
+            ui::Hint(text);
+            if (ui::Button("Try again", "Your account")) spotify::Connect();
+            break;
+        }
+    }
+    ui::Hint("How to get a Client ID (once, 5 minutes): 1. Go to developer.spotify.com/dashboard and sign in. "
+             "2. Create app: any name, Redirect URI exactly http://127.0.0.1:43821/callback, tick \"Web API\". "
+             "3. Copy its Client ID here and press Connect. Spotify requires the app's owner to have Premium.");
+    ui::Hint("Luma only asks to see what you're playing and your queue. Everything stays on your PC (encrypted); "
+             "you can disconnect here or in your Spotify account at any time.");
     return changed;
 }
 

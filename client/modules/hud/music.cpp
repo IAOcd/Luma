@@ -13,6 +13,7 @@
 #include <cstring>
 
 #include "core/lyrics.h"
+#include "core/spotify.h"
 #include "core/media.h"
 #include "render/hud.h"
 #include "render/music.h"
@@ -94,6 +95,7 @@ void NowPlaying::OnEnable() {
     lyrics::Want(lyrics::kCovers, mu::Get().hdCovers);
     media::Want(media::kHud, true);
     media::Want(media::kRadial, mu::Get().halo);
+    spotify::SetActive(true);  // (it does nothing without a Client ID and a connection)
 }
 
 void NowPlaying::OnDisable() {
@@ -102,6 +104,7 @@ void NowPlaying::OnDisable() {
     mu::Get().active = false;
     media::Want(media::kHud, false);
     media::Want(media::kRadial, false);
+    spotify::SetActive(false);
 }
 
 ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
@@ -495,6 +498,7 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
     out["lyricsOnline"] = s.lyricsOnline;
     out["lyricsLiriqo"] = s.lyricsLiriqo;
     out["lyricsSweep"] = s.lyricsSweep;
+    out["spotifyClientId"] = s.spotifyClientId;
     out["lyricsOffset"] = s.lyricsOffset;
     out["lyricsNextLine"] = s.lyricsNextLine;
     out["hudFollowAlbum"] = s.hudFollowAlbum;
@@ -534,6 +538,8 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
     s.lyricsOnline = in.value("lyricsOnline", d.lyricsOnline);
     s.lyricsLiriqo = in.value("lyricsLiriqo", d.lyricsLiriqo);
     s.lyricsSweep = in.value("lyricsSweep", d.lyricsSweep);
+    s.spotifyClientId = in.value("spotifyClientId", std::string());
+    if (s.spotifyClientId.size() > 64) s.spotifyClientId.clear();
     s.lyricsOffset = std::clamp(in.value("lyricsOffset", d.lyricsOffset), -5.0f, 5.0f);
     s.lyricsNextLine = in.value("lyricsNextLine", d.lyricsNextLine);
     s.hudFollowAlbum = in.value("hudFollowAlbum", d.hudFollowAlbum);
@@ -543,6 +549,7 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
     s.menuFollowAlbum = in.value("menuFollowAlbum", d.menuFollowAlbum);
     lyrics::SetOnline(s.lyricsOnline);
     lyrics::SetLiriqo(s.lyricsLiriqo);
+    spotify::SetClientId(s.spotifyClientId);
     if (IsEnabled()) {
         OnEnable();
     }

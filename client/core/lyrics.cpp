@@ -601,7 +601,16 @@ std::int64_t NowSeconds() {
 }
 
 bool LoadCache(const Query& q, Found& out) {
-    std::ifstream in(CachePath(q), std::ios::binary);
+    // The same song may come with its length rounded differently (Windows
+    // says 156.6 s, Spotify 156 s): try the neighbors too.
+    std::ifstream in;
+    for (int delta : {0, -1, 1}) {
+        Query nearby = q;
+        nearby.seconds = q.seconds + delta;
+        in.open(CachePath(nearby), std::ios::binary);
+        if (in) break;
+        in.clear();
+    }
     if (!in) return false;
     const auto j = nlohmann::json::parse(in, nullptr, false);
     if (!j.is_object()) return false;
@@ -697,6 +706,78 @@ bool FetchCover(const Query& q, std::vector<std::uint8_t>& out) {
     return true;
 }
 
+// Looks a song up online (LiriQo and LRCLIB at once) and saves the result.
+// "earlyTrack" != 0: publish LRCLIB's lyrics for that song while LiriQo
+// works (0 = a prefetch: nothing is shown, it's only saved for later).
+bool Lookup(const Query& q, Found& found, std::uint32_t earlyTrack, const char* title) {
+    bool ok = false;
+    g_reached.store(false);
+    // BOTH SOURCES AT ONCE: LiriQo asks many catalogs and can take
+    // 5-15 s; LRCLIB answers in 1-2 s. So LiriQo runs on a second
+    // thread while we ask LRCLIB: LRCLIB's lyrics are shown right
+    // away, and if LiriQo brings them word by word, they replace
+    // them when they arrive.
+    std::future<std::pair<bool, Found>> liriqo;
+    if (g_liriqo.load()) {
+        liriqo = std::async(std::launch::async, [q]() {
+            Found f;
+            bool r = false;
+            try {
+                r = FromLiriqo(q, f);
+            } catch (...) {
+            }
+            return std::make_pair(r, f);
+        });
+    }
+    Found lrclib;
+    bool lrclibOk = false;
+    try {
+        lrclibOk = FromLrclib(q, lrclib);
+    } catch (...) {
+    }
+    if (earlyTrack != 0 && lrclibOk && liriqo.valid() && media::Current().trackId == earlyTrack) {
+        Result early = ToResult(lrclib, earlyTrack);
+        log::Info("Lyrics: \"{}\" -> {} lines from LRCLIB first (waiting for LiriQo).", title, early.lines.size());
+        Publish(std::move(early));
+    }
+    Found best;
+    bool bestOk = false;
+    if (liriqo.valid()) {
+        // (It always finishes: its request gives up after 12 s.)
+        auto [r, f] = liriqo.get();
+        bestOk = r;
+        best = std::move(f);
+    }
+    const bool liriqoWords = bestOk && best.synced.find('<') != std::string::npos;
+    if (liriqoWords || (bestOk && !lrclibOk)) {
+        found = best;  // word by word (or LRCLIB had nothing)
+        ok = true;
+    } else if (lrclibOk) {
+        found = lrclib;
+        ok = true;
+    } else if (!best.plain.empty()) {
+        found = best;  // only plain text, from LiriQo
+        ok = true;
+    }
+    // Remember "not found" too (for 3 days), but only if a source
+    // really answered: without internet, nothing is saved.
+    if (!ok) found = Found{"", "", "", false};
+    if (ok || g_reached.load()) SaveCache(q, found);
+    return ok;
+}
+
+// --- Prefetch: the next songs of the queue (core/spotify) ---------------------------------
+std::mutex g_prefetchMutex;
+std::vector<Query> g_prefetch;  // waiting to be looked up (newest request first)
+
+bool TakePrefetch(Query& out) {
+    std::lock_guard lock(g_prefetchMutex);
+    if (g_prefetch.empty()) return false;
+    out = g_prefetch.front();
+    g_prefetch.erase(g_prefetch.begin());
+    return true;
+}
+
 void ThreadMain() {
     std::uint32_t lastTrack = 0;
     std::uint32_t lastCoverTrack = 0;
@@ -718,7 +799,22 @@ void ThreadMain() {
                 }
             }
         }
-        if ((wanted & (kMenu | kHud)) == 0 || t.trackId == lastTrack) continue;
+        if ((wanted & (kMenu | kHud)) == 0) continue;
+        if (t.trackId == lastTrack) {
+            // Nothing new playing: look up one of the next songs (if any).
+            Query next;
+            if (g_online.load() && TakePrefetch(next)) {
+                Found cached;
+                try {
+                    if (!LoadCache(next, cached)) {
+                        const bool ok = Lookup(next, cached, 0, next.title.c_str());
+                        log::Info("Lyrics: prefetched \"{}\" ({}).", next.title, ok ? cached.source : std::string("none"));
+                    }
+                } catch (...) {
+                }
+            }
+            continue;
+        }
         lastTrack = t.trackId;
         Query q{t.title, t.artist, t.album, static_cast<int>(std::lround(t.duration))};
         Result searching;
@@ -729,60 +825,7 @@ void ThreadMain() {
         bool ok = false;
         try {
             ok = LoadCache(q, found);
-            if (!ok && g_online.load()) {
-                g_reached.store(false);
-                // BOTH SOURCES AT ONCE: LiriQo asks many catalogs and can take
-                // 5-15 s; LRCLIB answers in 1-2 s. So LiriQo runs on a second
-                // thread while we ask LRCLIB: LRCLIB's lyrics are shown right
-                // away, and if LiriQo brings them word by word, they replace
-                // them when they arrive.
-                std::future<std::pair<bool, Found>> liriqo;
-                if (g_liriqo.load()) {
-                    liriqo = std::async(std::launch::async, [q]() {
-                        Found f;
-                        bool r = false;
-                        try {
-                            r = FromLiriqo(q, f);
-                        } catch (...) {
-                        }
-                        return std::make_pair(r, f);
-                    });
-                }
-                Found lrclib;
-                bool lrclibOk = false;
-                try {
-                    lrclibOk = FromLrclib(q, lrclib);
-                } catch (...) {
-                }
-                if (lrclibOk && liriqo.valid() && media::Current().trackId == t.trackId) {
-                    Result early = ToResult(lrclib, t.trackId);
-                    log::Info("Lyrics: \"{}\" -> {} lines from LRCLIB first (waiting for LiriQo).", t.title, early.lines.size());
-                    Publish(std::move(early));
-                }
-                Found best;
-                bool bestOk = false;
-                if (liriqo.valid()) {
-                    // (It always finishes: its request gives up after 12 s.)
-                    auto [r, f] = liriqo.get();
-                    bestOk = r;
-                    best = std::move(f);
-                }
-                const bool liriqoWords = bestOk && best.synced.find('<') != std::string::npos;
-                if (liriqoWords || (bestOk && !lrclibOk)) {
-                    found = best;  // word by word (or LRCLIB had nothing)
-                    ok = true;
-                } else if (lrclibOk) {
-                    found = lrclib;
-                    ok = true;
-                } else if (!best.plain.empty()) {
-                    found = best;  // only plain text, from LiriQo
-                    ok = true;
-                }
-                // Remember "not found" too (for 3 days), but only if a source
-                // really answered: without internet, nothing is saved.
-                if (!ok) found = Found{"", "", "", false};
-                if (ok || g_reached.load()) SaveCache(q, found);
-            }
+            if (!ok && g_online.load()) ok = Lookup(q, found, t.trackId, t.title);
         } catch (...) {
             ok = false;
         }
@@ -818,6 +861,16 @@ void Want(Source source, bool want) {
 
 void SetOnline(bool online) {
     g_online.store(online);
+}
+
+void Prefetch(const std::string& title, const std::string& artist, const std::string& album, int seconds) {
+    if (title.empty()) return;
+    std::lock_guard lock(g_prefetchMutex);
+    for (const Query& q : g_prefetch) {
+        if (q.title == title && q.artist == artist) return;  // already waiting
+    }
+    if (g_prefetch.size() >= 6) g_prefetch.pop_back();
+    g_prefetch.push_back(Query{title, artist, album, seconds});
 }
 
 void SetLiriqo(bool on) {

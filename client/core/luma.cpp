@@ -54,6 +54,7 @@
 
 #include "core/cloud.h"
 #include "core/lyrics.h"
+#include "core/spotify.h"
 #include "core/media.h"
 #include <filesystem>
 #include "sdk/memory.h"
@@ -325,6 +326,7 @@ void Shutdown() {
     }
     stats::End();
     cloud::Stop();
+    spotify::Shutdown();  // the Spotify thread (a request takes 8 s at most)
     lyrics::Shutdown();  // the lyrics thread (a request takes 8 s at most)
     media::Shutdown();  // the music thread (it waits at most a couple of seconds)
     sdk::camera::BeginUnload();

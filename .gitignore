@@ -32,3 +32,6 @@ CLAUDE.md
 # Servidor (Cloudflare): dependencias y datos locales de prueba
 server/node_modules/
 server/.wrangler/
+
+# El código del servidor es privado: no se publica en GitHub.
+server/

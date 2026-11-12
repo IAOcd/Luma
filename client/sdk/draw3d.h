@@ -88,7 +88,9 @@ struct WorldShapes {
     // anywhere (filled triangles don't show far away with these materials).
     bool lines = false;
 };
-void SetWorldShapes(std::vector<WorldShapes> shapes);
+// Each module uses its own "channel", so they don't erase each other's shapes.
+enum ShapeChannel { kChannelLyrics = 0, kChannelVisualizer = 1, kChannelCount = 2 };
+void SetWorldShapes(std::vector<WorldShapes> shapes, int channel = kChannelLyrics);
 // Which of the fill materials draws them (the same candidates as the outline fill).
 void SetWorldShapesMaterial(int index);
 

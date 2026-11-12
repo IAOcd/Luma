@@ -11,6 +11,7 @@
 
 #include <imgui_internal.h>  // ImLerp for colors
 
+#include "core/audio_viz.h"
 #include "core/spotify.h"
 #include "core/tr.h"
 #include "render/gpu.h"
@@ -220,6 +221,10 @@ void ApplyEfficiency() {
 bool DrawEfficiencySettings() {
     Settings& s = Get();
     bool changed = false;
+    ImGui::PushID("musicEfficiency");
+    struct PopId {
+        ~PopId() { ImGui::PopID(); }
+    } popId;
     ui::Section("Efficiency");
     changed |= ui::Toggle("Music efficiency mode", &s.efficiency, "(lighter music module)");
     ui::Hint("Turns off the music's extras: lyric animations, the spinning art, fades, scrolling names, album "
@@ -236,6 +241,7 @@ bool DrawEfficiencySettings() {
         changed |= ui::Toggle("Album colors", &s.effAlbumColors, "(HUD, menu, crosshair, watermark)");
         changed |= ui::Toggle("HD album art", &s.effHdCovers, "(no downloads)");
         changed |= ui::Toggle("Lyrics ahead (Spotify)", &s.effPrefetch, "(no lookups for the next songs)");
+        changed |= ui::Toggle("Visualizer", &s.effVisualizer, "(it listens to the sound and draws a lot)");
         ImGui::EndDisabled();
     }
     if (changed) ApplyEfficiency();
@@ -914,6 +920,10 @@ bool DrawAlbumColorSettings() {
 bool DrawLyricsSettings() {
     Settings& s = Get();
     bool changed = false;
+    ImGui::PushID("lyricflow");  // (its controls share names with other sections)
+    struct PopId {
+        ~PopId() { ImGui::PopID(); }
+    } popId;
     ui::Section("Lyric Flow");
     changed |= ui::Toggle("Lyrics in the sky", &s.lyricFlow, "(each word written in the world as it's sung)");
     if (s.lyricFlow) {
@@ -1072,9 +1082,68 @@ void DrawUpNext(ImVec2 min, ImVec2 max) {
     }
 }
 
+bool VisualizerOn() {
+    const Settings& s = Get();
+    return s.visualizer && !(s.efficiency && s.effVisualizer);
+}
+
+bool DrawVisualizerSettings() {
+    Settings& s = Get();
+    bool changed = false;
+    // Its own ID scope: "Style", "Color", "Opacity"... also exist in other
+    // sections of this page, and ImGui needs every control to be unique.
+    ImGui::PushID("visualizer");
+    struct PopId {
+        ~PopId() { ImGui::PopID(); }
+    } popId;
+    ui::Section("Visualizer in the sky");
+    changed |= ui::Toggle("Visualizer", &s.visualizer, "(the sky dances with your music)");
+    if (s.visualizer) {
+        const audioviz::Levels lv = audioviz::Get();
+        if (lv.live) {
+            ui::Hint(lv.processOnly ? "Listening to everything except Minecraft (its own sounds don't move it)."
+                                    : "Listening to all the sound of your PC (this Windows can't leave Minecraft out).");
+        }
+        changed |= ui::Choice("Style", &s.vizStyle, {"Bars", "Mirrored", "Wave", "Aurora", "Rings", "Pillars", "Layered wave"});
+        changed |= ui::Toggle("Layers", &s.vizLayers, "(a soft glow behind and peaks on top)");
+        changed |= ui::Slider("Reaction to hits", &s.vizHitReaction, 0.0f, 2.0f, "%.1fx");
+        changed |= ui::SliderInt("Bars", &s.vizBars, 24, 256, "%d");
+        changed |= ui::Slider("Distance (blocks)", &s.vizDistance, 30.0f, 200.0f, "%.0f");
+        changed |= ui::Toggle("Follow my height", &s.vizFollowHeight, "(off: always at the same height of the world)");
+        if (s.vizFollowHeight) {
+            changed |= ui::Slider("Height (blocks)", &s.vizHeight, -30.0f, 60.0f, "%.0f");
+        } else {
+            changed |= ui::Slider("World height (Y)", &s.vizWorldY, -60.0f, 320.0f, "%.0f");
+        }
+        changed |= ui::Slider("Size (blocks)", &s.vizScale, 4.0f, 80.0f, "%.0f");
+        changed |= ui::Toggle("Reflection below", &s.vizReflection, "(a mirrored copy going down, like on water)");
+        changed |= ui::Slider("Thickness", &s.vizThickness, 0.1f, 1.0f, "%.2f");
+        changed |= ui::Slider("Sensitivity", &s.vizSensitivity, 0.3f, 3.0f, "%.1fx");
+        changed |= ui::Slider("Smoothing", &s.vizSmoothing, 0.0f, 0.95f, "%.2f");
+        changed |= ui::Slider("Spin (degrees/s)", &s.vizSpin, -30.0f, 30.0f, "%.0f");
+        changed |= ui::Choice("Color", &s.vizColorMode, {"One color", "Album", "Album gradient", "Two colors", "Rainbow",
+                                                         "Album palette", "Album colors changing", "Album + my color"});
+        if (s.vizColorMode == 0 || s.vizColorMode == 3 || s.vizColorMode == 7) {
+            changed |= ui::Color(s.vizColorMode == 7 ? "My color" : "Color 1", s.vizColor);
+        }
+        if (s.vizColorMode >= 5 && s.vizColorMode <= 6) {
+            ui::Hint("The palette is taken from the album art: its most present colors.");
+        }
+        if (s.vizColorMode == 3) changed |= ui::Color("Color 2", s.vizColor2);
+        changed |= ui::Slider("Opacity", &s.vizOpacity, 0.1f, 1.0f, "%.2f");
+    }
+    ui::Hint("Luma listens to the sound your PC plays (never the microphone), only in memory: nothing is recorded. "
+             "It's part of the sky: it follows you when you walk, and the terrain and clouds in front cover it.");
+    return changed;
+}
+
 bool DrawSpotifySettings() {
     Settings& s = Get();
     bool changed = false;
+    ImGui::PushID("spotify");
+    struct PopId {
+        ~PopId() { ImGui::PopID(); }
+    } popId;
     ui::Section("Spotify (optional)");
     static char clientId[72] = "";
     static bool loaded = false;

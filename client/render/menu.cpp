@@ -2203,6 +2203,7 @@ void DrawMusicPage() {
             changed |= music::DrawStyleSettings();
             changed |= music::DrawAlbumColorSettings();
             changed |= music::DrawLyricsSettings();
+            changed |= music::DrawVisualizerSettings();
             changed |= music::DrawSpotifySettings();
         } else {
             changed = music::DrawHaloSettings();

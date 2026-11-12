@@ -126,6 +126,53 @@ void AppName(char* out, std::size_t size, const winrt::hstring& id) {
 // Also its main color (average of the colorful pixels).
 UINT g_lastArtW = 0, g_lastArtH = 0;  // the original size of the last art (for the log)
 
+// The album's palette: its pixels are sorted by hue into 12 "slices" of the
+// color wheel (colorful, not too dark pixels only, weighted by how colorful
+// and bright they are). The 5 heaviest slices give the 5 colors (each one the
+// average of its pixels). A gray cover gets its accent, lighter and darker.
+void Palette(const std::vector<std::uint8_t>& rgba, const float accent[3], float out[5][3], int& count) {
+    double sum[12][3]{}, weight[12]{};
+    for (std::size_t i = 0; i + 3 < rgba.size(); i += 16) {
+        const double r = rgba[i] / 255.0, g = rgba[i + 1] / 255.0, b = rgba[i + 2] / 255.0;
+        const double mx = std::max({r, g, b}), mn = std::min({r, g, b});
+        const double sat = mx > 0.0 ? (mx - mn) / mx : 0.0;
+        if (sat < 0.22 || mx < 0.18) continue;
+        double h = 0.0;
+        if (mx == r) h = std::fmod((g - b) / (mx - mn), 6.0);
+        else if (mx == g) h = (b - r) / (mx - mn) + 2.0;
+        else h = (r - g) / (mx - mn) + 4.0;
+        if (h < 0.0) h += 6.0;
+        const int slice = std::clamp(static_cast<int>(h * 2.0), 0, 11);
+        const double w = sat * mx;
+        sum[slice][0] += r * w;
+        sum[slice][1] += g * w;
+        sum[slice][2] += b * w;
+        weight[slice] += w;
+    }
+    count = 0;
+    bool used[12]{};
+    for (int pick = 0; pick < 5; ++pick) {
+        int best = -1;
+        for (int k = 0; k < 12; ++k) {
+            if (!used[k] && weight[k] > 0.0 && (best < 0 || weight[k] > weight[best])) best = k;
+        }
+        if (best < 0 || (count > 0 && weight[best] < weight[0] * 0.04)) break;  // too little of it
+        used[best] = true;
+        for (int c = 0; c < 3; ++c) out[count][c] = static_cast<float>(sum[best][c] / weight[best]);
+        ++count;
+    }
+    if (count < 2) {
+        // Few colors: the accent, plus a lighter and a darker one.
+        count = 0;
+        for (int c = 0; c < 3; ++c) {
+            out[0][c] = accent[c];
+            out[1][c] = accent[c] + (1.0f - accent[c]) * 0.55f;
+            out[2][c] = accent[c] * 0.55f;
+        }
+        count = 3;
+    }
+}
+
 bool DecodeArt(const std::vector<std::uint8_t>& bytes, std::vector<std::uint8_t>& rgba, float accent[3]) {
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICStream> stream;
@@ -409,11 +456,13 @@ void ThreadMain() {
                             std::vector<std::uint8_t> bytes;
                             float accent[3];
                             song.artSourceSize = 0;
+                            song.paletteCount = 2;
                             if (ReadThumbnail(props.Thumbnail(), bytes) && DecodeArt(bytes, art, accent)) {
                                 newArt = true;
                                 song.artVersion = ++artCounter;
                                 song.artSourceSize = static_cast<int>(g_lastArtW);
                                 std::memcpy(song.accent, accent, sizeof(accent));
+                                Palette(art, accent, song.palette, song.paletteCount);
                             }
                             song.artChecked = true;
                             if (newArt) {
@@ -444,6 +493,7 @@ void ThreadMain() {
                     song.artVersion = ++artCounter;
                     song.artSourceSize = static_cast<int>(g_lastArtW);
                     std::memcpy(song.accent, accent, sizeof(accent));
+                    Palette(art, accent, song.palette, song.paletteCount);
                     log::Info("Media: HD album art {}x{} for \"{}\".", g_lastArtW, g_lastArtH, song.title);
                 }
             }
@@ -451,6 +501,8 @@ void ThreadMain() {
             std::memcpy(t.artist, song.artist, sizeof(t.artist));
             std::memcpy(t.album, song.album, sizeof(t.album));
             std::memcpy(t.accent, song.accent, sizeof(t.accent));
+            std::memcpy(t.palette, song.palette, sizeof(t.palette));
+            t.paletteCount = song.paletteCount;
             t.trackId = song.trackId;
             t.artVersion = song.artVersion;
             t.artSourceSize = song.artSourceSize;

@@ -15,6 +15,7 @@
 #include "core/lyrics.h"
 #include "core/spotify.h"
 #include "render/lyric_flow.h"
+#include "render/visualizer.h"
 #include "core/media.h"
 #include "render/hud.h"
 #include "render/music.h"
@@ -106,6 +107,7 @@ void NowPlaying::OnDisable() {
     media::Want(media::kRadial, false);
     spotify::SetActive(false);
     render::lyricflow::Stop();
+    render::visualizer::Stop();
 }
 
 ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
@@ -154,6 +156,11 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
         render::lyricflow::Draw(frame.draw, ImGui::GetIO().DisplaySize);  // the lyrics in the sky
     } else {
         render::lyricflow::Stop();
+    }
+    if (mu::VisualizerOn()) {
+        render::visualizer::Draw(ImGui::GetIO().DisplaySize);  // the visualizer around you
+    } else {
+        render::visualizer::Stop();
     }
 
 
@@ -509,6 +516,12 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
     out["lyricsLiriqo"] = s.lyricsLiriqo;
     out["lyricsSweep"] = s.lyricsSweep;
     out["spotifyClientId"] = s.spotifyClientId;
+    out["visualizer"] = {{"on", s.visualizer}, {"style", s.vizStyle}, {"bars", s.vizBars}, {"distance", s.vizDistance},
+                         {"height", s.vizHeight}, {"scale", s.vizScale}, {"thickness", s.vizThickness},
+                         {"sensitivity", s.vizSensitivity}, {"smoothing", s.vizSmoothing}, {"spin", s.vizSpin},
+                         {"colorMode", s.vizColorMode}, {"color", {s.vizColor[0], s.vizColor[1], s.vizColor[2]}}, {"color2", {s.vizColor2[0], s.vizColor2[1], s.vizColor2[2]}},
+                         {"opacity", s.vizOpacity}, {"followHeight", s.vizFollowHeight}, {"worldY", s.vizWorldY},
+                         {"reflection", s.vizReflection}, {"layersOn", s.vizLayers}, {"hitReaction2", s.vizHitReaction}};
     out["lyricFlow"] = {{"on", s.lyricFlow}, {"distance", s.flowDistance}, {"height", s.flowHeight}, {"size", s.flowSize},
                         {"tilt", s.flowTilt}, {"opacity", s.flowOpacity}, {"uppercase", s.flowUppercase},
                         {"mode", s.flowMode}, {"layout", s.flowLayout}, {"appear", s.flowAppear}, {"leave", s.flowLeave}, {"motion", s.flowMotion},
@@ -521,7 +534,7 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
                         {"wordSpacing", s.flowWordSpacing}, {"leaveTime", s.flowLeaveTime}};
     out["efficiency"] = {{"on", s.efficiency}, {"lyricAnim", s.effLyricAnim}, {"uiAnim", s.effUiAnim}, {"spin", s.effSpin}, {"songFade", s.effSongFade},
                          {"marquee", s.effMarquee}, {"albumColors", s.effAlbumColors}, {"hdCovers", s.effHdCovers},
-                         {"prefetch", s.effPrefetch}};
+                         {"prefetch", s.effPrefetch}, {"visualizer", s.effVisualizer}};
     out["lyricsOffset"] = s.lyricsOffset;
     out["lyricsNextLine"] = s.lyricsNextLine;
     out["hudFollowAlbum"] = s.hudFollowAlbum;
@@ -563,6 +576,36 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
     s.lyricsSweep = in.value("lyricsSweep", d.lyricsSweep);
     s.spotifyClientId = in.value("spotifyClientId", std::string());
     if (s.spotifyClientId.size() > 64) s.spotifyClientId.clear();
+    if (in.contains("visualizer") && in["visualizer"].is_object()) {
+        const nlohmann::json& v = in["visualizer"];
+        s.visualizer = v.value("on", d.visualizer);
+        s.vizStyle = std::clamp(v.value("style", d.vizStyle), 0, 6);
+        s.vizBars = std::clamp(v.value("bars", d.vizBars), 24, 256);
+        s.vizDistance = std::clamp(v.value("distance", d.vizDistance), 30.0f, 200.0f);
+        s.vizHeight = std::clamp(v.value("height", d.vizHeight), -30.0f, 60.0f);
+        s.vizScale = std::clamp(v.value("scale", d.vizScale), 4.0f, 80.0f);
+        s.vizThickness = std::clamp(v.value("thickness", d.vizThickness), 0.1f, 1.0f);
+        s.vizSensitivity = std::clamp(v.value("sensitivity", d.vizSensitivity), 0.3f, 3.0f);
+        s.vizSmoothing = std::clamp(v.value("smoothing", d.vizSmoothing), 0.0f, 0.95f);
+        s.vizSpin = std::clamp(v.value("spin", d.vizSpin), -30.0f, 30.0f);
+        s.vizColorMode = std::clamp(v.value("colorMode", d.vizColorMode), 0, 7);
+        s.vizOpacity = std::clamp(v.value("opacity", d.vizOpacity), 0.1f, 1.0f);
+        s.vizFollowHeight = v.value("followHeight", d.vizFollowHeight);
+        s.vizWorldY = std::clamp(v.value("worldY", d.vizWorldY), -60.0f, 320.0f);
+        s.vizReflection = v.value("reflection", d.vizReflection);
+        s.vizLayers = v.value("layersOn", d.vizLayers);
+        s.vizHitReaction = std::clamp(v.value("hitReaction2", d.vizHitReaction), 0.0f, 2.0f);
+        for (int i = 0; i < 3; ++i) {
+            s.vizColor[i] = d.vizColor[i];
+            s.vizColor2[i] = d.vizColor2[i];
+        }
+        if (v.contains("color") && v["color"].is_array() && v["color"].size() == 3)
+            for (int i = 0; i < 3; ++i) s.vizColor[i] = std::clamp(v["color"][i].get<float>(), 0.0f, 1.0f);
+        if (v.contains("color2") && v["color2"].is_array() && v["color2"].size() == 3)
+            for (int i = 0; i < 3; ++i) s.vizColor2[i] = std::clamp(v["color2"][i].get<float>(), 0.0f, 1.0f);
+    } else {
+        s.visualizer = d.visualizer;
+    }
     if (in.contains("lyricFlow") && in["lyricFlow"].is_object()) {
         const nlohmann::json& f = in["lyricFlow"];
         s.lyricFlow = f.value("on", d.lyricFlow);
@@ -616,6 +659,7 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
         s.effAlbumColors = e.value("albumColors", d.effAlbumColors);
         s.effHdCovers = e.value("hdCovers", d.effHdCovers);
         s.effPrefetch = e.value("prefetch", d.effPrefetch);
+        s.effVisualizer = e.value("visualizer", d.effVisualizer);
     } else {
         s.efficiency = d.efficiency;
     }

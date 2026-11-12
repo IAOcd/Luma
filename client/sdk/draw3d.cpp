@@ -107,7 +107,7 @@ std::mutex g_settingsMutex;
 OutlineSettings g_outline;
 HitboxSettings g_hitboxes;
 ChunkBorderSettings g_chunks;
-std::vector<WorldShapes> g_shapes;      // Lyric Flow's letters (SetWorldShapes)
+std::vector<WorldShapes> g_shapes[kChannelCount];  // other modules' shapes, by channel (SetWorldShapes)
 int g_shapesMaterial = 0;
 std::vector<WorldShapes> g_shapesFrame;  // the copy being drawn this frame (render thread only)
 
@@ -607,13 +607,16 @@ ChunkBorderSettings CopyChunks() {
 // ¿Hay algo para dibujar en el mundo además del contorno? (hitboxes, bordes de chunk, formas)
 bool WorldWanted() {
     std::lock_guard lock(g_settingsMutex);
-    return g_hitboxes.enabled || g_chunks.enabled || !g_shapes.empty();
+    bool shapes = false;
+    for (const auto& channel : g_shapes) shapes |= !channel.empty();
+    return g_hitboxes.enabled || g_chunks.enabled || shapes;
 }
 
 // Takes this frame's shapes (outside the __try: copying a vector isn't allowed in there).
 void TakeShapesForFrame() {
     std::lock_guard lock(g_settingsMutex);
-    g_shapesFrame = g_shapes;
+    g_shapesFrame.clear();
+    for (const auto& channel : g_shapes) g_shapesFrame.insert(g_shapesFrame.end(), channel.begin(), channel.end());
 }
 
 int ShapesMaterial() {
@@ -1235,9 +1238,10 @@ void SetChunkBorders(const ChunkBorderSettings& settings) {
     g_chunks = settings;
 }
 
-void SetWorldShapes(std::vector<WorldShapes> shapes) {
+void SetWorldShapes(std::vector<WorldShapes> shapes, int channel) {
+    if (channel < 0 || channel >= kChannelCount) return;
     std::lock_guard lock(g_settingsMutex);
-    g_shapes = std::move(shapes);
+    g_shapes[channel] = std::move(shapes);
 }
 
 void SetWorldShapesMaterial(int index) {

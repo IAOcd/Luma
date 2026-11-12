@@ -96,6 +96,26 @@ struct Settings {
     float flowLeaveTime = 0.45f;     // how long a line takes to leave (seconds)
     bool flowAlbumColor = false;  // (old setting: now flowColorMode = 1)
     int flowMaterial = 0;         // (unused: the letters are lines with the outline material)
+    // --- Visualizer in the sky (render/visualizer.h) ---
+    bool visualizer = false;
+    int vizStyle = 0;             // bars, mirrored, wave, aurora, rings, pillars
+    int vizBars = 96;             // how many bars around you
+    float vizDistance = 110.0f;   // how far (blocks)
+    float vizHeight = -2.0f;      // where it starts, blocks above (+) or below (-) your eyes
+    float vizScale = 28.0f;       // the tallest a bar gets (blocks)
+    float vizThickness = 0.6f;    // how much of its slot a bar fills
+    float vizSensitivity = 1.0f;
+    float vizSmoothing = 0.5f;
+    float vizSpin = 0.0f;         // degrees per second (0 = still)
+    int vizColorMode = 1;         // 0 color, 1 album, 2 album gradient (by height), 3 two colors, 4 rainbow
+    float vizColor[3] = {1.0f, 1.0f, 1.0f};
+    float vizColor2[3] = {0.55f, 0.75f, 1.0f};
+    float vizOpacity = 0.85f;
+    bool vizFollowHeight = false;  // false = at a fixed height of the world (vizWorldY), like a real horizon
+    float vizWorldY = 64.0f;       // that height (Y)
+    bool vizLayers = false;        // glow behind + peaks on top (off = the simple bars)
+    float vizHitReaction = 0.6f;   // how much it jumps on strong hits (0..2)
+    bool vizReflection = true;     // a dimmer mirrored copy below (fills the void in Bedwars-like maps)
     // MUSIC EFFICIENCY MODE (like the general one, only for the music): it
     // overrides these without changing them. "eff*" = what it turns off.
     bool efficiency = false;
@@ -107,6 +127,7 @@ struct Settings {
     bool effAlbumColors = true;  // no album colors on the HUD, menu, crosshair, watermark
     bool effHdCovers = true;     // no HD album art downloads
     bool effPrefetch = true;     // no lyrics looked up ahead (Spotify queue)
+    bool effVisualizer = true;   // the sky visualizer is off (it listens to the sound and draws a lot)
     std::string spotifyClientId;  // the user's own Spotify app (core/spotify.h); empty = off
     bool hdCovers = true;         // look up a sharp album art online when the app's is small
     // --- Album colors everywhere ---
@@ -212,6 +233,9 @@ bool DrawEfficiencySettings();
 void DrawUpNext(ImVec2 min, ImVec2 max);
 // The Spotify section of the settings (Client ID, connect / disconnect).
 bool DrawSpotifySettings();
+// The visualizer section (Music > Styles).
+bool DrawVisualizerSettings();
+bool VisualizerOn();
 
 // The lyrics panel of the Music page: synced lyrics scroll by themselves.
 // Draws in the current ImGui window, inside min..max.

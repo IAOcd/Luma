@@ -52,6 +52,9 @@ struct Track {
     int artSourceSize = 0;         // width of the art the app gave Windows (0 = none). Small = blurry.
     bool artChecked = false;       // the app's art was already looked at for this song
     float accent[3] = {0.91f, 0.90f, 0.87f};  // main color of the album art (ivory if none)
+    // The album's PALETTE: its most present colors (2..5), the most present first.
+    float palette[5][3] = {{0.91f, 0.90f, 0.87f}, {0.70f, 0.68f, 0.64f}};
+    int paletteCount = 2;
 };
 
 // Who needs the music (it runs while at least one does).

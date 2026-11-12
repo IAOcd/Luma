@@ -54,6 +54,7 @@
 
 #include "core/cloud.h"
 #include "core/lyrics.h"
+#include "core/audio_viz.h"
 #include "core/spotify.h"
 #include "core/media.h"
 #include <filesystem>
@@ -326,6 +327,7 @@ void Shutdown() {
     }
     stats::End();
     cloud::Stop();
+    audioviz::Shutdown();  // the visualizer's listening thread
     spotify::Shutdown();  // the Spotify thread (a request takes 8 s at most)
     lyrics::Shutdown();  // the lyrics thread (a request takes 8 s at most)
     media::Shutdown();  // the music thread (it waits at most a couple of seconds)

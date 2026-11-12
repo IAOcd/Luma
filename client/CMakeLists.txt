@@ -22,6 +22,7 @@ add_library(Luma SHARED
     core/cloud.cpp                          # hablar con el servidor de Luma (usuarios de Luma)
     core/media.cpp                          # la música que suena en Windows (módulo de música)
     core/lyrics.cpp                         # las letras de la canción (LRCLIB)
+    core/audio_viz.cpp                      # el sonido de la musica, para el visualizer
     core/spotify.cpp                        # conexión opcional con Spotify (la cola: "A continuación")
     ${PROJECT_SOURCE_DIR}/shared/skin_pack.cpp  # tus skins como paquete del juego
     ${PROJECT_SOURCE_DIR}/shared/i18n.cpp   # textos en inglés, español y portugués (los mismos del launcher)
@@ -59,6 +60,7 @@ add_library(Luma SHARED
     render/hud_editor.cpp
     render/icons.cpp
     render/lyric_flow.cpp
+    render/visualizer.cpp
     render/nanosvg_impl.cpp
     render/input.cpp
     render/item_icons.cpp
@@ -118,6 +120,7 @@ target_link_libraries(Luma PRIVATE
     crypt32                   # DPAPI: abrir el pase de Luma cifrado
     ws2_32                    # Spotify: el mini servidor en 127.0.0.1 para volver del navegador
     bcrypt                    # Spotify: números aleatorios y SHA-256 (PKCE)
+    mmdevapi                  # el visualizer: escuchar el sonido de la PC (ActivateAudioInterfaceAsync)
 )
 
 # nanosvg es código ajeno: sin avisos del compilador sobre él (por ejemplo

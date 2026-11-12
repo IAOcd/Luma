@@ -88,6 +88,7 @@ struct Kind {
     std::uint32_t rgb = 0x969696;
     bool air = false;   // nothing: keep going down
     bool skip = false;  // something you see through on a map (grass, flowers, torches...): keep going down
+    bool water = false; // water: the map shows how deep it is
 };
 std::unordered_map<std::uintptr_t, Kind> g_kinds;
 
@@ -151,6 +152,7 @@ Kind Classify(const char* name) {
     for (const Rule& r : kRules) {
         if (Has(name, r.part)) {
             k.rgb = r.rgb;
+            k.water = std::strcmp(r.part, "water") == 0;
             return k;
         }
     }
@@ -175,11 +177,13 @@ struct Column {
     int x = 0x7FFFFFFF, z = 0;  // which world column it holds
     std::uint32_t rgb = 0;
     std::int16_t height = 0;
-    bool known = false;
+    std::uint8_t depth = 0;     // water: how many blocks deep (0 = not water)
+    bool known = false;         // something was found (false = unloaded chunk or only air)
+    float scannedAt = -1.0e9f;  // when it was last read (seconds)
 };
 std::vector<Column> g_cells(static_cast<std::size_t>(kGrid) * kGrid);
 int g_centerX = 0, g_centerZ = 0;
-int g_cursor = 0;  // the next column to scan (cycles through the grid)
+int g_cursor = 0;  // where the next frame continues looking (cycles through the grid)
 std::mutex g_mutex;
 std::uint32_t g_version = 0;
 float g_costUs = 0.0f;
@@ -239,27 +243,42 @@ void OnRegion(void* region) {
         }
     }
 
-    // 2. This frame's share of columns (at most ~0.5 ms). The grid is locked
-    // meanwhile (the overlay copies it from another thread).
+    // 2. This frame's share of columns. The grid is locked meanwhile (the
+    // overlay copies it from another thread).
+    //
+    // LIGHT ON PURPOSE: a column is only read again when it's NEW (you
+    // walked and it entered the map), when it was empty (a chunk that
+    // wasn't loaded yet, tried again every 2 s), or every 6 s to notice
+    // blocks placed or broken. New columns get up to 0.5 ms per frame (so
+    // the map fills fast); refreshing old ones, at most 24 per frame.
     std::unique_lock gridLock(g_mutex);
     const int cx = feet[0], cz = feet[2];
     const int top = std::min(feet[1] + 40, 319);
     const int bottom = std::max(feet[1] - 80, -64);
     const LONGLONG budget = Freq().QuadPart / 2000;  // 0.5 ms
-    int scanned = 0;
+    const float now = static_cast<float>(static_cast<double>(t0.QuadPart) / static_cast<double>(Freq().QuadPart));
+    int visited = 0, refreshed = 0;
     bool changed = false;
-    while (scanned < kGrid * kGrid) {
+    while (visited < 4096) {  // (looking at a column costs nothing; reading it is what costs)
         const int i = g_cursor;
         g_cursor = (g_cursor + 1) % (kGrid * kGrid);
-        ++scanned;
+        ++visited;
         const int wx = cx - kGrid / 2 + i % kGrid;
         const int wz = cz - kGrid / 2 + i / kGrid;
         Column& col = g_cells[static_cast<std::size_t>((wx & (kGrid - 1)) + (wz & (kGrid - 1)) * kGrid)];
+        const bool same = col.x == wx && col.z == wz;
+        const float age = now - col.scannedAt;
+        const bool isNew = !same || (!col.known && age > 2.0f);
+        if (!isNew) {
+            if (age < 6.0f || refreshed >= 24) continue;
+            ++refreshed;
+        }
         int start = top;
-        if (col.known && col.x == wx && col.z == wz) start = std::min(top, col.height + 8);
+        if (col.known && same) start = std::min(top, col.height + 8);
         Column fresh;
         fresh.x = wx;
         fresh.z = wz;
+        fresh.scannedAt = now;
         for (int y = start; y >= bottom; --y) {
             void* b = GetBlock(region, wx, y, wz);
             if (b == nullptr) break;
@@ -268,17 +287,25 @@ void OnRegion(void* region) {
             fresh.rgb = k->rgb;
             fresh.height = static_cast<std::int16_t>(y);
             fresh.known = true;
+            if (k->water) {
+                // How deep: count the water below (up to 16).
+                int d = 1;
+                while (d < 16) {
+                    void* under = GetBlock(region, wx, y - d, wz);
+                    if (under == nullptr || !KindOf(under)->water) break;
+                    ++d;
+                }
+                fresh.depth = static_cast<std::uint8_t>(d);
+            }
             break;
         }
-        if (fresh.known != col.known || fresh.rgb != col.rgb || fresh.height != col.height || fresh.x != col.x || fresh.z != col.z) {
+        if (fresh.known != col.known || fresh.rgb != col.rgb || fresh.height != col.height || fresh.depth != col.depth || !same) {
             changed = true;
         }
         col = fresh;
-        if ((scanned & 15) == 0) {
-            LARGE_INTEGER now;
-            QueryPerformanceCounter(&now);
-            if (now.QuadPart - t0.QuadPart > budget) break;
-        }
+        LARGE_INTEGER t;
+        QueryPerformanceCounter(&t);
+        if (t.QuadPart - t0.QuadPart > budget) break;
     }
     LARGE_INTEGER t1;
     QueryPerformanceCounter(&t1);
@@ -297,24 +324,51 @@ bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, 
     centerX = g_centerX;
     centerZ = g_centerZ;
     version = g_version;
-    // Row by row, north (-Z) at the top. Each pixel a little darker or
-    // lighter than its northern neighbor, like the paper maps of the game:
-    // that's what makes hills visible.
+    // Row by row, north (-Z) at the top. To make it look alive (not flat):
+    //   - LIGHT FROM THE NORTH-WEST ("hillshade"): a column higher than its
+    //     north and west neighbors is lit, a lower one is in shadow, and the
+    //     more the difference, the stronger. Hills and cliffs pop out.
+    //   - HEIGHT: higher ground a little lighter, deep valleys a little darker.
+    //   - WATER BY DEPTH: shallow water light turquoise, deep water dark blue
+    //     (and the shore stands out).
+    //   - TEXTURE: each block a tiny bit lighter or darker (always the same
+    //     one), like the pixels of a real texture.
+    auto cellAt = [&](int wx, int wz) -> const Column* {
+        const Column& c = g_cells[static_cast<std::size_t>((wx & (kGrid - 1)) + (wz & (kGrid - 1)) * kGrid)];
+        return c.known && c.x == wx && c.z == wz ? &c : nullptr;
+    };
     for (int r = 0; r < kGrid; ++r) {
         for (int c = 0; c < kGrid; ++c) {
             const int wx = centerX - kGrid / 2 + c, wz = centerZ - kGrid / 2 + r;
-            const Column& col = g_cells[static_cast<std::size_t>((wx & (kGrid - 1)) + (wz & (kGrid - 1)) * kGrid)];
+            const Column* col = cellAt(wx, wz);
             std::uint32_t px = 0;
-            if (col.known && col.x == wx && col.z == wz) {
-                const Column& north = g_cells[static_cast<std::size_t>((wx & (kGrid - 1)) + ((wz - 1) & (kGrid - 1)) * kGrid)];
-                float shade = 0.88f;
-                if (north.known && north.x == wx && north.z == wz - 1) {
-                    shade = col.height > north.height ? 1.0f : (col.height < north.height ? 0.74f : 0.88f);
+            if (col != nullptr) {
+                float rgb[3] = {static_cast<float>((col->rgb >> 16) & 0xFF), static_cast<float>((col->rgb >> 8) & 0xFF),
+                                static_cast<float>(col->rgb & 0xFF)};
+                float shade = 1.0f;
+                if (col->depth > 0) {
+                    // Water: from light turquoise (1 block) to deep blue (12+).
+                    const float t = std::clamp((static_cast<float>(col->depth) - 1.0f) / 11.0f, 0.0f, 1.0f);
+                    const float shallow[3] = {86.0f, 170.0f, 230.0f}, deep[3] = {22.0f, 48.0f, 140.0f};
+                    for (int k = 0; k < 3; ++k) rgb[k] = shallow[k] + (deep[k] - shallow[k]) * t;
+                    // Waves: a faint pattern.
+                    const unsigned h = static_cast<unsigned>(wx * 73856093) ^ static_cast<unsigned>(wz * 19349663);
+                    shade = 0.96f + static_cast<float>(h % 9) * 0.01f;
+                } else {
+                    const Column* north = cellAt(wx, wz - 1);
+                    const Column* west = cellAt(wx - 1, wz);
+                    const float hn = north != nullptr && north->depth == 0 ? north->height : col->height;
+                    const float hw = west != nullptr && west->depth == 0 ? west->height : col->height;
+                    const float slope = (static_cast<float>(col->height) - hn) + (static_cast<float>(col->height) - hw);
+                    shade = std::clamp(1.0f + slope * 0.09f, 0.55f, 1.3f);
+                    shade *= std::clamp(1.0f + (static_cast<float>(col->height) - 64.0f) * 0.004f, 0.8f, 1.15f);
+                    const unsigned h = static_cast<unsigned>(wx * 73856093) ^ static_cast<unsigned>(wz * 19349663) ^ 0x9E3779B9u;
+                    shade *= 0.95f + static_cast<float>((h >> 7) % 11) * 0.01f;
+                    // The edge of water: a slightly darker rim on land.
+                    if ((north != nullptr && north->depth > 0) || (west != nullptr && west->depth > 0)) shade *= 0.88f;
                 }
-                const auto ch = [&](int shift) {
-                    return static_cast<std::uint32_t>(std::clamp(static_cast<float>((col.rgb >> shift) & 0xFF) * shade, 0.0f, 255.0f));
-                };
-                px = ch(16) | (ch(8) << 8) | (ch(0) << 16) | 0xFF000000u;  // RGBA in memory (R first)
+                const auto ch = [&](int k) { return static_cast<std::uint32_t>(std::clamp(rgb[k] * shade, 0.0f, 255.0f)); };
+                px = ch(0) | (ch(1) << 8) | (ch(2) << 16) | 0xFF000000u;  // RGBA in memory (R first)
             }
             rgbaOut[r * kGrid + c] = px;
         }

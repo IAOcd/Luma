@@ -80,6 +80,12 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
     if (texture_ != ImTextureID{}) {
         draw->AddImage(texture_, mapMin, mapMax);
     }
+    // North, at the top.
+    {
+        const float w = rh::TextSize(m, "N").x;
+        const ImVec2 at((mapMin.x + mapMax.x - w) * 0.5f, mapMin.y + 2.0f * u - m.capTop);
+        rh::Text(draw, m, at, "N", rh::TextColor(0.9f));
+    }
     if (!sdk::blocks::Available()) {
         rh::Text(draw, m, ImVec2(mapMin.x + 3.0f * u, mapMin.y + 3.0f * u), Tr("Reading the world..."), rh::TextColor(0.8f));
     }

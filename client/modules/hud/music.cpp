@@ -511,7 +511,7 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
     out["spotifyClientId"] = s.spotifyClientId;
     out["lyricFlow"] = {{"on", s.lyricFlow}, {"distance", s.flowDistance}, {"height", s.flowHeight}, {"size", s.flowSize},
                         {"tilt", s.flowTilt}, {"opacity", s.flowOpacity}, {"uppercase", s.flowUppercase},
-                        {"mode", s.flowMode}, {"appear", s.flowAppear}, {"leave", s.flowLeave}, {"motion", s.flowMotion},
+                        {"mode", s.flowMode}, {"layout", s.flowLayout}, {"appear", s.flowAppear}, {"leave", s.flowLeave}, {"motion", s.flowMotion},
                         {"speed", s.flowSpeed}, {"colorMode", s.flowColorMode}, {"color", {s.flowColor[0], s.flowColor[1], s.flowColor[2]}},
                         {"color2", {s.flowColor2[0], s.flowColor2[1], s.flowColor2[2]}}, {"highlight", s.flowHighlight},
                         {"highlightColor", {s.flowHighlightColor[0], s.flowHighlightColor[1], s.flowHighlightColor[2]}}, {"outline", s.flowOutline},
@@ -573,6 +573,7 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
         s.flowOpacity = std::clamp(f.value("opacity", d.flowOpacity), 0.2f, 1.0f);
         s.flowUppercase = f.value("uppercase", d.flowUppercase);
         s.flowMode = std::clamp(f.value("mode", d.flowMode), 0, 1);
+        s.flowLayout = std::clamp(f.value("layout", d.flowLayout), 0, 5);
         s.flowAppear = std::clamp(f.value("appear", d.flowAppear), 0, 8);
         s.flowLeave = std::clamp(f.value("leave", d.flowLeave), 0, 4);
         s.flowMotion = std::clamp(f.value("motion", d.flowMotion), 0, 4);

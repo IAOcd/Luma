@@ -74,6 +74,7 @@ struct Settings {
     float flowOpacity = 0.95f;
     bool flowUppercase = true;
     int flowMode = 0;             // 0 = anchored to a place of the world, 1 = in the sky (follows you, like the skybox)
+    int flowLayout = 0;           // how a line is arranged: scattered, centered, left, arc, stacked, staircase
     int flowAppear = 0;           // how a word appears: pop, fade, drop, rise, zoom, spin, flip, typewriter, scatter
     int flowLeave = 0;            // how a line leaves: float up, fade, fall, shrink, scatter
     int flowMotion = 1;           // while it's there: none, float, wave, sway, pulse (the word being sung)

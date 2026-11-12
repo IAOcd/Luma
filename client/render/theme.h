@@ -37,6 +37,7 @@ struct Settings {
     // essential. It doesn't touch your settings: it only overrides them while
     // it's on (turn it off and everything is as you left it). In "advanced"
     // you choose what it turns off.
+    float reopenSeconds = 3.0f;   // reopening the menu within this time goes back to where you were (0 = always the start)
     bool efficiency = false;
     bool effAnimations = true;    // menu and notification animations (also the press / ripple)
     bool effBlur = true;          // the glass blur behind the menu (the most expensive: GPU passes)

@@ -107,6 +107,7 @@ char g_search[64] = "";
 // Animaciones.
 std::int64_t g_openedAt = 0;
 std::int64_t g_closedAt = 0;
+bool g_radialWhenClosed = true;  // where the menu was when it closed (quick reopen)
 std::atomic<bool> g_closing{false};
 std::int64_t g_pageChangedAt = 0;
 ImGuiID g_lastHovered = 0;
@@ -1552,9 +1553,13 @@ void DrawSettingsPage() {
     RowLabel("Unload Luma");
     KeybindButton("##unloadkey", config::g_unloadKey.load(), g_capture == CaptureTarget::UnloadKey,
                   CaptureTarget::UnloadKey, nullptr);
+    RowLabel("Reopen where you left it (s)");
+    if (ImGui::SliderFloat("##reopen", &theme::Get().reopenSeconds, 0.0f, 15.0f, "%.1f")) config::MarkDirty();
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("%s", Tr("Esc también cierra el menú. Limitación conocida: si la tecla del menú es una "
                         "letra, escribirla en el chat abre el menú (se corrige en la Fase 7)."));
+    ImGui::TextDisabled("%s", Tr("If you open the menu again within these seconds after closing it, it opens where you "
+                                 "were (the same page and module options). 0 = always at the start."));
     ImGui::PopTextWrapPos();
     EndGroupCard();
 
@@ -2683,7 +2688,14 @@ void Sidebar() {
 // =============================================================================
 
 void OnOpened() {
-    g_radial = !hudeditor::IsActive();  // siempre empieza en el radial
+    // QUICK REOPEN: if you closed the menu a moment ago (3 s by default), it
+    // opens exactly where you were: same page, same module options, same tab,
+    // same scroll (all of that is kept while it's closed; only the radial
+    // "start" was forced before). Later than that, it starts at the radial.
+    const double closedFor = g_closedAt == 0 ? 1.0e9 : perf::TicksToMs(perf::Now() - g_closedAt) / 1000.0;
+    const bool quick = closedFor <= static_cast<double>(theme::Get().reopenSeconds);
+    g_radial = quick ? g_radialWhenClosed : !hudeditor::IsActive();
+    if (hudeditor::IsActive()) g_radial = false;
     g_closetDirty = true;
     g_openedAt = perf::Now();
     g_pageChangedAt = g_openedAt;
@@ -2699,6 +2711,7 @@ void OnClosed() {
         hudeditor::End();
     }
     g_closedAt = perf::Now();
+    g_radialWhenClosed = g_radial;
     g_closing.store(AnimOn());
     sound::Play(sound::Effect::Close);
 }

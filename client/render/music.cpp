@@ -922,10 +922,11 @@ bool DrawLyricsSettings() {
             ui::Hint("In the sky: very far, like the sun or the clouds. It follows you when you walk (you never get "
                      "closer), but stays put when you turn: it's part of the sky. Everything in front covers it.");
         }
+        changed |= ui::Choice("Layout", &s.flowLayout, {"Scattered", "Centered", "Left", "Arc", "Stacked", "Staircase"});
         changed |= ui::Slider("Distance (blocks)", &s.flowDistance, 8.0f, 60.0f, "%.0f");
         changed |= ui::Slider("Height (blocks)", &s.flowHeight, -4.0f, 40.0f, "%.0f");
         changed |= ui::Slider("Word size (blocks)", &s.flowSize, 0.5f, 6.0f, "%.1f");
-        changed |= ui::Slider("Tilt (degrees)", &s.flowTilt, 0.0f, 30.0f, "%.0f");
+        if (s.flowLayout == 0) changed |= ui::Slider("Tilt (degrees)", &s.flowTilt, 0.0f, 30.0f, "%.0f");
         ui::Section("Lyric Flow: letters");
         {
             // The font list (a combo with every font of render/lyric_flow.h).

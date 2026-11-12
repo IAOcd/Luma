@@ -58,6 +58,7 @@ constexpr float kSkyDistance = 140.0f;   // "in the sky": this far away (blocks)
 enum Appear { kPop, kFade, kDrop, kRise, kZoom, kSpin, kFlip, kTypewriter, kScatter };
 enum Leave { kFloatUp, kFadeOut, kFall, kShrink, kScatterOut };
 enum Motion { kNone, kFloat, kWave, kSway, kPulse };
+enum Layout { kScattered, kCentered, kLeft, kArc, kStacked, kStaircase };
 
 // A lit piece of a word: a rectangle in font pixels (x right, y down).
 struct Rect {
@@ -347,9 +348,12 @@ void BuildLine(FlowLine& f, const lyrics::Result& ly, int index, std::uint32_t t
     const int lineEnd = index + 1 < static_cast<int>(ly.lines.size()) ? ly.lines[static_cast<std::size_t>(index + 1)].ms
                                                                        : line.ms + 4000;
 
-    // Lay them out in rows, each word with its own size, height and tilt.
+    // Lay them out. "Scattered": rows where each word has its own size,
+    // height and tilt (like the video). The others are tidy: every word the
+    // same size, straight, arranged as the layout says (see the end).
+    const bool scattered = s.flowLayout == kScattered;
     const float base = s.flowSize;
-    const float maxRow = base * 13.0f;
+    const float maxRow = base * (s.flowLayout == kArc ? 18.0f : 13.0f);
     struct Row {
         float width = 0.0f;
         std::size_t first = 0, count = 0;
@@ -366,28 +370,51 @@ void BuildLine(FlowLine& f, const lyrics::Result& ly, int index, std::uint32_t t
         const float r1 = Hash01(static_cast<std::uint32_t>(index), static_cast<std::uint32_t>(i));
         const float r2 = Hash01(static_cast<std::uint32_t>(index) + 977u, static_cast<std::uint32_t>(i));
         const float r3 = Hash01(static_cast<std::uint32_t>(index) + 4211u, static_cast<std::uint32_t>(i));
-        w.size = base * (0.8f + 0.55f * r1 * r1);
-        w.tilt = (r2 - 0.5f) * 2.0f * s.flowTilt * kDegToRad;
+        w.size = scattered ? base * (0.8f + 0.55f * r1 * r1) : base;
+        w.tilt = scattered ? (r2 - 0.5f) * 2.0f * s.flowTilt * kDegToRad : 0.0f;
         w.phase = r3 * 6.2831f;
         const float widthBlocks = w.width / w.cells * w.size;
         const float gap = base * s.flowWordSpacing;
-        if (x > 0.0f && x + widthBlocks > maxRow) {
+        if (x > 0.0f && (x + widthBlocks > maxRow || s.flowLayout == kStacked || s.flowLayout == kStaircase)) {
             rows.push_back(Row{});
             rows.back().first = f.words.size();
             x = 0.0f;
         }
         w.x = x + widthBlocks * 0.5f;
-        w.y = -static_cast<float>(rows.size() - 1) * base * 1.35f + (r3 - 0.5f) * base * 0.45f;
+        w.y = -static_cast<float>(rows.size() - 1) * base * 1.35f + (scattered ? (r3 - 0.5f) * base * 0.45f : 0.0f);
         x += widthBlocks + gap;
         rows.back().width = x - gap;
         ++rows.back().count;
         f.words.push_back(std::move(w));
     }
     const float totalH = static_cast<float>(rows.size() - 1) * base * 1.35f;
-    for (const Row& r : rows) {
+    float widest = 0.0f;
+    for (const Row& r : rows) widest = std::max(widest, r.width);
+    for (std::size_t ri = 0; ri < rows.size(); ++ri) {
+        const Row& r = rows[ri];
         for (std::size_t i = r.first; i < r.first + r.count && i < f.words.size(); ++i) {
-            f.words[i].x -= r.width * 0.5f;
-            f.words[i].y += totalH * 0.5f;
+            Word& w = f.words[i];
+            switch (s.flowLayout) {
+                case kLeft:  // every row starts at the same left edge
+                    w.x -= widest * 0.5f;
+                    break;
+                case kStaircase:  // each word a step to the right and down
+                    w.x += (static_cast<float>(ri) - static_cast<float>(rows.size() - 1) * 0.5f) * base * 1.6f - r.width * 0.5f;
+                    break;
+                default:  // centered rows (scattered, centered, arc, stacked)
+                    w.x -= r.width * 0.5f;
+                    break;
+            }
+            w.y += totalH * 0.5f;
+            if (s.flowLayout == kArc) {
+                // Along a gentle arc (like a rainbow): the farther from the
+                // center, the lower, and each word leans with the curve.
+                const float radius = std::max(maxRow * 0.9f, base * 6.0f);
+                const float angle = w.x / radius;
+                w.x = radius * std::sin(angle);
+                w.y += radius * (std::cos(angle) - 1.0f);
+                w.tilt = -angle;
+            }
         }
     }
     // WHEN IT LEAVES: it must be gone when the next line starts (so they never
@@ -692,7 +719,8 @@ void Draw(ImDrawList* draw, ImVec2 display) {
                          static_cast<std::uint64_t>(std::lround(s.flowLetterSpacing * 10.0f + 50.0f)) * 104729u +
                          static_cast<std::uint64_t>(std::lround(s.flowWordSpacing * 100.0f)) * 1299709u +
                          static_cast<std::uint64_t>(std::lround(s.flowSize * 10.0f)) * 15485863u +
-                         static_cast<std::uint64_t>(std::lround(s.flowTilt)) * 32452843u;
+                         static_cast<std::uint64_t>(std::lround(s.flowTilt)) * 32452843u +
+                         static_cast<std::uint64_t>(s.flowLayout) * 49979687u;
     if (look != lastLook) {
         lastLook = look;
         g_current.index = -2;  // forces a rebuild below

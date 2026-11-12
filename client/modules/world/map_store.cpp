@@ -4,6 +4,7 @@
 #include "modules/world/map_store.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -29,7 +30,7 @@ struct Region {
     std::uint64_t used = 0;          // the last "use" (for forgetting the oldest)
 };
 
-constexpr std::size_t kMaxRegions = 96;
+constexpr std::size_t kMaxRegions = 256;  // (256 KB each: 64 MB at most; only explored regions count)
 constexpr char kMagic[4] = {'L', 'M', 'R', '1'};
 
 std::unordered_map<std::uint64_t, std::unique_ptr<Region>> g_regions;
@@ -202,6 +203,37 @@ void Merge(const std::uint32_t* pixels, int side, int x0, int z0) {
     if (changed) ++g_version;
 }
 
+void MergeRing(const std::uint32_t* ring, int side, int x0, int z0, int x1, int z1) {
+    if (g_dir.empty() || ring == nullptr) return;
+    const int mask = side - 1;
+    bool changed = false;
+    for (int z = z0; z < z1; ++z) {
+        const int rz = RegionOf(z);
+        const int lz = z - rz * kRegion;
+        const std::uint32_t* src = ring + static_cast<std::size_t>(z & mask) * side;
+        for (int x = x0; x < x1;) {
+            const int rx = RegionOf(x);
+            const int end = std::min(x1, (rx + 1) * kRegion);
+            Region* reg = Get(rx, rz, true, true);
+            if (reg != nullptr) {
+                std::uint32_t* dst = reg->px.data() + static_cast<std::size_t>(lz) * kRegion;
+                for (int k = x; k < end; ++k) {
+                    const std::uint32_t v = src[k & mask];
+                    std::uint32_t& d = dst[k - rx * kRegion];
+                    if (v != 0 && d != v) {
+                        d = v;
+                        if (!reg->dirty) reg->changedAt = g_now;
+                        reg->dirty = true;
+                        changed = true;
+                    }
+                }
+            }
+            x = end;
+        }
+    }
+    if (changed) ++g_version;
+}
+
 std::uint32_t At(int x, int z, bool load) {
     const int rx = RegionOf(x), rz = RegionOf(z);
     Region* reg = Get(rx, rz, load, false);
@@ -217,18 +249,29 @@ const std::uint32_t* Row(int rx, int rz, int z) {
 
 bool Prefetch(int x0, int z0, int x1, int z1, int maxLoads) {
     if (g_dir.empty()) return true;
+    // The middle first (what you look at), for at most 3 ms.
+    const int rx0 = RegionOf(x0), rx1 = RegionOf(x1), rz0 = RegionOf(z0), rz1 = RegionOf(z1);
+    const int mx = (rx0 + rx1) / 2, mz = (rz0 + rz1) / 2;
+    const auto start = std::chrono::steady_clock::now();
     bool all = true;
-    for (int rz = RegionOf(z0); rz <= RegionOf(z1); ++rz) {
-        for (int rx = RegionOf(x0); rx <= RegionOf(x1); ++rx) {
-            const std::uint64_t key = KeyOf(rx, rz);
-            if (g_regions.count(key) != 0 || g_missing.count(key) != 0) continue;
-            if (maxLoads-- <= 0) {
-                all = false;
-                continue;
+    bool loaded = false;
+    const int reach = std::max(std::max(mx - rx0, rx1 - mx), std::max(mz - rz0, rz1 - mz));
+    for (int ring = 0; ring <= reach; ++ring) {
+        for (int rz = mz - ring; rz <= mz + ring; ++rz) {
+            for (int rx = mx - ring; rx <= mx + ring; ++rx) {
+                if (std::max(std::abs(rx - mx), std::abs(rz - mz)) != ring) continue;  // (only this ring)
+                if (rx < rx0 || rx > rx1 || rz < rz0 || rz > rz1) continue;
+                const std::uint64_t key = KeyOf(rx, rz);
+                if (g_regions.count(key) != 0 || g_missing.count(key) != 0) continue;
+                if (maxLoads-- <= 0 || std::chrono::steady_clock::now() - start > std::chrono::milliseconds(3)) {
+                    all = false;
+                    continue;
+                }
+                if (Get(rx, rz, true, false) != nullptr) loaded = true;
             }
-            if (Get(rx, rz, true, false) != nullptr) ++g_version;
         }
     }
+    if (loaded) ++g_version;
     return all;
 }
 

@@ -106,6 +106,7 @@ struct Hold {
 };
 Hold g_holds[2];
 std::atomic<bool> g_holdsSuspended{false};  // en un menú del juego o sin foco
+std::atomic<bool> g_dropPaused{false};      // Ctrl let go for a moment: you're dropping an item (Q)
 std::atomic<bool> g_wheelCapture{false};
 std::atomic<int> g_wheelDelta{0};  // en unidades de WHEEL_DELTA (120 = un paso)
 
@@ -349,6 +350,27 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         }
         if (HandleHoldKey(message, wParam, lParam)) {
             return 0;
+        }
+        // DROPPING AN ITEM while Luma holds Ctrl for you (toggle sprint): in
+        // Bedrock Ctrl+Q drops the WHOLE stack. So for the moment of the Q,
+        // Ctrl is let go for the game (the messages and GetKeyState agree),
+        // and pressed again after. Only if YOU aren't really holding Ctrl
+        // (then Ctrl+Q is on purpose).
+        if ((message == WM_KEYDOWN || message == WM_KEYUP) && wParam == 'Q') {
+            for (Hold& h : g_holds) {
+                const bool ctrl = SameKey(VK_CONTROL, h.vk.load());
+                const bool reallyHeld = (g_originalGetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                if (!ctrl || reallyHeld) continue;
+                if (message == WM_KEYDOWN && h.applied.load() && (lParam & (1 << 30)) == 0) {
+                    SendKeyToGame(window, h.appliedVk, false);
+                    h.applied.store(false);
+                    g_dropPaused.store(true);
+                } else if (message == WM_KEYUP && g_dropPaused.exchange(false)) {
+                    const LRESULT result = CallWindowProcW(g_originalWndProc.load(), window, message, wParam, lParam);
+                    SyncHolds(window);  // (Ctrl pressed again for the game: you keep sprinting)
+                    return result;
+                }
+            }
         }
         // Respaldo del contador de clics si no está la cola del mouse del juego.
         if (clicks::Wanted() && !sdk::mousequeue::Available()) {

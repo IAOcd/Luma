@@ -18,6 +18,7 @@
 #include "core/tr.h"
 #include "sdk/network.h"
 #include "sdk/players.h"
+#include "sdk/worldid.h"
 
 namespace luma::modules::world::waypoints {
 
@@ -137,8 +138,10 @@ void Update(double now, int dimension) {
     if (g_saveAt >= 0.0 && now >= g_saveAt) Save();
     if (now < g_nextCheck || now < g_holdUntil) return;
     g_nextCheck = now + 2.0;
-    // Where are we? A server by its address; a local world by its name.
-    std::string key, label;
+    // Where are we? A server by its address; a local world by its name AND
+    // its folder (many worlds share a name: see sdk/worldid.h).
+    sdk::worldid::Update();
+    std::string key, label, oldKey;
     if (sdk::network::OnServer()) {
         sdk::players::Server server;
         std::string name;
@@ -150,12 +153,27 @@ void Update(double now, int dimension) {
             // the world's name the server gives, kept apart from local worlds.)
             label = name;
             key = "servername_" + name;
+            std::int64_t seed = 0;
+            if (sdk::worldid::Seed(seed) && seed != 0) {
+                oldKey = key;
+                key += "#" + std::to_string(seed);
+            }
         }
     } else {
         std::string name;
         if (sdk::players::WorldName(name) && !name.empty()) {
             label = name;
             key = "world_" + name;
+            const std::string& folder = sdk::worldid::Folder();
+            if (folder.empty()) {
+                key.clear();  // (wait until the folder is known: a moment after joining)
+                static double since = 0.0;
+                if (since == 0.0) since = now;
+                if (now - since > 12.0) key = "world_" + name;  // (not found at all: the name alone, like before)
+            } else {
+                oldKey = key;
+                key += "#" + folder;
+            }
         }
     }
     // Change only when the same answer comes twice in a row (when you join a
@@ -169,6 +187,17 @@ void Update(double now, int dimension) {
     if (g_saveAt >= 0.0) Save();
     g_key = key;
     g_label = g_candidateLabel;
+    // The files of before (by name only): the first world of that name that
+    // comes takes them over (copied to its own name; the old ones stay).
+    std::error_code ec;
+    if (!oldKey.empty() && !fs::exists(FilePath(key), ec) && fs::exists(FilePath(oldKey), ec)) {
+        fs::copy_file(FilePath(oldKey), FilePath(key), ec);
+        const fs::path base = paths::DataDir() / L"worldmap";
+        const std::string oldMap = FileName(oldKey), newMap = FileName(key);
+        const fs::path from = base / oldMap.substr(0, oldMap.size() - 5), to = base / newMap.substr(0, newMap.size() - 5);
+        if (fs::exists(from, ec) && !fs::exists(to, ec)) fs::rename(from, to, ec);
+        log::Info("Waypoints: {} takes over the files saved by its name.", g_candidateLabel);
+    }
     Load(key);
     log::Info("Waypoints: {} ({} saved).", g_label, g_list.size());
 }

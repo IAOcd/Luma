@@ -28,7 +28,9 @@
 #include "sdk/inventory.h"
 #include "sdk/network.h"
 #include "sdk/player.h"
+#include "sdk/blocks.h"
 #include "sdk/players.h"
+#include "sdk/worldid.h"
 
 namespace luma::modules::hud {
 
@@ -157,7 +159,13 @@ ImVec2 DebugScreen::OnRenderHud(const HudFrame& frame) {
             left.Add("%s", Tr("Server: (address not available)"));
         } else {
             left.Add(Tr("Local world: %s"), world_.empty() ? "?" : world_.c_str());
+            // The seed: only in your own worlds (on a server it would help find
+            // structures and ores: an advantage).
+            std::int64_t seed = 0;
+            if (sdk::worldid::Seed(seed)) left.Add(Tr("Seed: %lld"), static_cast<long long>(seed));
         }
+        const std::string biome = sdk::blocks::PlayerBiome();
+        if (!biome.empty()) left.Add(Tr("Biome: %s"), biome.c_str());
         if (online) left.Add(Tr("Ping: %d ms"), sdk::network::PingMs());
         left.Add(Tr("Players: %d"), players_);
         sdk::inventory::Item item;
@@ -234,8 +242,7 @@ bool DebugScreen::DrawSettings() {
     changed |= ui::Toggle("Position", &showPosition_, "(XYZ, block, chunk, facing, speed, light)");
     changed |= ui::Toggle("World", &showWorld_, "(server or world, ping, players, item)");
     changed |= ui::Toggle("Your PC", &showSystem_, "(Windows, CPU, GPU, memory)");
-    ui::Hint("Press its key (F3 by default) to show or hide it. Biome, time of day and the block you look at aren't "
-             "available yet.");
+    ui::Hint("Press its key (F3 by default) to show or hide it. Time of day and the block you look at aren't available yet.");
     return changed;
 }
 

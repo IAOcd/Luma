@@ -77,6 +77,7 @@ void Save(nlohmann::json& out) {
            {"waterDepth", g_look.waterDepth},
            {"shores", g_look.shores},
            {"texture", g_look.texture},
+           {"biomes", g_look.biomes},
            {"brightness", g_look.brightness},
            {"contrast", g_look.contrast},
            {"saturation", g_look.saturation},
@@ -90,6 +91,7 @@ void Load(const nlohmann::json& in) {
     g_look.waterDepth = in.value("waterDepth", true);
     g_look.shores = in.value("shores", true);
     g_look.texture = in.value("texture", true);
+    g_look.biomes = in.value("biomes", true);
     g_look.brightness = std::clamp(in.value("brightness", 1.0f), 0.5f, 1.5f);
     g_look.contrast = std::clamp(in.value("contrast", 1.0f), 0.5f, 1.5f);
     g_look.saturation = std::clamp(in.value("saturation", 1.0f), 0.0f, 2.0f);

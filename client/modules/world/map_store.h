@@ -9,7 +9,7 @@
 //  REGIONS: the world is cut in squares of 256 x 256 blocks. Each one is
 //  256 x 256 colors (4 bytes each: 256 KB) in memory, and a file on disk:
 //      %APPDATA%\Luma\worldmap\<world>\dim<0|1|2>\r.<x>.<z>.bin
-//  Only the regions you're near or looking at are in memory (at most 96;
+//  Only the regions you're near or looking at are in memory (at most 256;
 //  the oldest go back to disk). Changed ones are saved a few seconds later,
 //  one per tick, so saving never stops a frame.
 //
@@ -38,6 +38,9 @@ void SetWorld(const std::string& storageName, int dimension);
 // A picture of the minimap: kSide x kSide colors (RGBA, R first; 0 =
 // unknown), row by row from the north-west corner at (x0, z0).
 void Merge(const std::uint32_t* pixels, int side, int x0, int z0);
+// The same from the minimap's "ring" picture (see sdk/blocks.h): the blocks
+// x0 <= x < x1, z0 <= z < z1, each at [(x & mask) + (z & mask) * side].
+void MergeRing(const std::uint32_t* ring, int side, int x0, int z0, int x1, int z1);
 
 // The color of one block (0 = not explored or not loaded). "load": read the
 // region from disk if it isn't in memory (the world map does; it's slow).

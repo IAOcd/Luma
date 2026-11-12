@@ -9,8 +9,9 @@
 //
 //  Nothing here gives an advantage: it's your own data and the world's light
 //  at your feet. It only costs while it's open (the slow facts are cached).
-//  Not available yet (Luma can't read them from the game): biome, time of
-//  day and the block you look at.
+//  Also the biome where you are (sdk/blocks) and, in your own worlds, the
+//  seed (sdk/worldid). Not available yet: time of day and the block you
+//  look at.
 // =============================================================================
 #pragma once
 

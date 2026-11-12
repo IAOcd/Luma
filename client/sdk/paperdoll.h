@@ -52,6 +52,9 @@ unsigned DeathScreenFrames();
 // How many times a "menu" screen was drawn (pause, chat, inventory... not
 // the ones always on top of the HUD: crosshair, debug, toasts). It only grows.
 unsigned MenuScreenFrames();
+// How many times the game drew its HUD ("hud_screen"). It stops growing when
+// the HUD is hidden (F1): render/hud follows it. It only grows.
+unsigned HudScreenFrames();
 
 // Devuelve el muñeco a su lugar original (al desactivar o al descargar Luma).
 void BeginUnload();

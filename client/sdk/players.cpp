@@ -180,6 +180,17 @@ bool UuidOf(const std::string& name, std::uint8_t out[16]) {
     return false;
 }
 
+std::uintptr_t Level() {
+    return LevelPtr();
+}
+
+std::uintptr_t LevelData() {
+    const std::uintptr_t level = LevelPtr();
+    std::uintptr_t data = 0;
+    if (level == 0 || !SafeRead(level + kLevelData, data) || !LooksLikePointer(data)) return 0;
+    return data;
+}
+
 bool WorldName(std::string& out) {
     const std::uintptr_t level = LevelPtr();
     std::uintptr_t data = 0;

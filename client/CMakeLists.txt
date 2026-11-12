@@ -87,6 +87,7 @@ add_library(Luma SHARED
     sdk/draw3d.cpp
     sdk/blocks.cpp
     sdk/radar.cpp
+    sdk/worldid.cpp
     sdk/entity.cpp
     sdk/inventory.cpp
     sdk/memory.cpp

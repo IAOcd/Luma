@@ -129,6 +129,7 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
     {
         const maplook::Look& look = maplook::Get();
         sdk::blocks::SetPainting(look.relief, look.heightTint, look.waterDepth, look.shores, look.texture);
+        sdk::blocks::SetBiomeTint(look.biomes);
     }
     // A new world: forget the waypoints and the world map of the old one at
     // once (and wait until it's sure which world this is).
@@ -146,6 +147,9 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
     }
     waypoints::Update(now, sdk::blocks::Dimension());
     if (render::worldmap::TakeSettingsChanged()) config::MarkDirty();  // (the world map's settings live here)
+    // The world map's memory follows the world and dimension at once (not
+    // only when new blocks are read: standing still, nothing new comes).
+    if (waypoints::HaveWorld() && sdk::blocks::Dimension() >= 0) mapstore::SetWorld(waypoints::StorageName(), sdk::blocks::Dimension());
     DrawWorldWaypoints();
     // --- Zoom (smooth) and where you are ---
     // How many blocks from the center to the edge. A turning square needs
@@ -175,10 +179,9 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
             if (pixels_.size() != static_cast<std::size_t>(kGrid) * kGrid) pixels_.assign(static_cast<std::size_t>(kGrid) * kGrid, 0);
             int cx = 0, cz = 0;
             std::uint32_t v = 0;
-            const int copyR = std::min(half, static_cast<int>(std::max(needR, target * 1.42f)) + 12);
             std::uint32_t copySession = 0;
             int copyDim = -1;
-            if (sdk::blocks::CopyGrid(version_, pixels_.data(), cx, cz, v, copyR, &copySession, &copyDim)) {
+            if (sdk::blocks::CopyGrid(version_, pixels_.data(), cx, cz, v, areas_, &copySession, &copyDim)) {
                 version_ = v;
                 textureX_ = cx;
                 textureZ_ = cz;
@@ -186,9 +189,11 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
                 // the world is known and the copy is of this world and
                 // dimension. The surface; in the Nether, what cave mode sees
                 // (there's always a roof there).
-                const bool sure = waypoints::HaveWorld() && copySession == sdk::blocks::Session() && copyDim >= 0;
-                if (sure) mapstore::SetWorld(waypoints::StorageName(), copyDim);
-                if (sure && (!sdk::blocks::CaveActive() || copyDim == 1)) mapstore::Merge(pixels_.data(), kGrid, cx - half, cz - half);
+                const bool sure = waypoints::HaveWorld() && copySession == sdk::blocks::Session() && copyDim >= 0 &&
+                                  copyDim == sdk::blocks::Dimension();
+                if (sure && (!sdk::blocks::CaveActive() || copyDim == 1)) {
+                    for (const sdk::blocks::Area& a : areas_) mapstore::MergeRing(pixels_.data(), kGrid, a.x0, a.z0, a.x1, a.z1);
+                }
                 repaint = true;
             }
         }
@@ -215,7 +220,8 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
             const bool plain = maplook::Plain();
             for (int j = 0; j < kTex; ++j) {
                 const int bz = static_cast<int>(std::floor(z0 + (j + 0.5) * step));
-                const int gr = bz - (textureZ_ - half);
+                const bool rowIn = bz >= textureZ_ - half && bz < textureZ_ + half;
+                const std::uint32_t* ringRow = pixels_.data() + static_cast<std::size_t>(bz & (kGrid - 1)) * kGrid;
                 std::uint32_t* dst = view_.data() + static_cast<std::size_t>(j) * kTex;
                 int lastBx = 0x7FFFFFFF;
                 std::uint32_t color = 0;
@@ -223,8 +229,8 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
                     const int bx = static_cast<int>(std::floor(x0 + (i + 0.5) * step));
                     if (bx != lastBx) {
                         lastBx = bx;
-                        const int gc = bx - (textureX_ - half);
-                        color = (gr >= 0 && gr < kGrid && gc >= 0 && gc < kGrid) ? pixels_[static_cast<std::size_t>(gr) * kGrid + gc] : 0;
+                        // (the minimap's picture is a ring like sdk/blocks' grid: valid only inside the window)
+                        color = (rowIn && bx >= textureX_ - half && bx < textureX_ + half) ? ringRow[bx & (kGrid - 1)] : 0;
                         if (color == 0 && !cave) color = mapstore::At(bx, bz, false);
                         if (color != 0 && !plain) color = maplook::Grade(color);
                     }

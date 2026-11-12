@@ -48,4 +48,8 @@ bool UuidOf(const std::string& name, std::uint8_t out[16]);
 // El nombre del mundo (en un mundo local; en un servidor es el que puso el servidor).
 bool WorldName(std::string& out);
 
+// The game's Level object and its LevelData (0 if there's no world). For sdk/worldid.
+std::uintptr_t Level();
+std::uintptr_t LevelData();
+
 }  // namespace luma::sdk::players

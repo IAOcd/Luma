@@ -192,6 +192,7 @@ void Apply(std::uintptr_t root) {
 // The screens seen (their names, to log each new one once) and the death screen.
 std::atomic<unsigned> g_deathFrames{0};
 std::atomic<unsigned> g_menuFrames{0};
+std::atomic<unsigned> g_hudFrames{0};
 bool g_loggedUnreadable = false;
 char g_seenNames[24][40]{};
 int g_seenCount = 0;
@@ -250,6 +251,7 @@ void __fastcall SetupAndRenderDetour(void* view, void* ctx) {
         NoteScreen(root);
         return;
     }
+    g_hudFrames.fetch_add(1, std::memory_order_relaxed);
     Apply(root);
     hudui::OnHudScreen(root);  // coordenadas y scoreboard del juego (sdk/hud_ui.h)
 }
@@ -258,6 +260,10 @@ void __fastcall SetupAndRenderDetour(void* view, void* ctx) {
 
 unsigned DeathScreenFrames() {
     return g_deathFrames.load(std::memory_order_relaxed);
+}
+
+unsigned HudScreenFrames() {
+    return g_hudFrames.load(std::memory_order_relaxed);
 }
 
 unsigned MenuScreenFrames() {

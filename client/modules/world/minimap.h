@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "modules/module.h"
+#include "sdk/blocks.h"
 #include "sdk/radar.h"
 
 namespace luma::render::pixel {
@@ -94,6 +95,7 @@ private:
     std::uint32_t version_ = 0;
     double nextUpload_ = 0.0;
     std::vector<std::uint32_t> pixels_;
+    std::vector<sdk::blocks::Area> areas_;  // (what the last copy updated)
     std::vector<sdk::radar::Entity> entities_;  // (kept between frames: no new memory each frame)
     std::vector<std::uint32_t> view_;  // the map's own picture (512 x 512): the square it shows
     int viewX_ = 0, viewZ_ = 0;        // its center (world block)

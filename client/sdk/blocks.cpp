@@ -40,6 +40,99 @@ void* GetBlock(void* region, int x, int y, int z) {
     }
 }
 
+// --- BIOMES (part F) ----------------------------------------------------------------------
+// In Minecraft grass, leaves and water are gray in their textures: the game
+// tints them with the color of their BIOME. To know the biome of a block
+// Luma asks the game itself: BlockSource::getBiome(BlockPos), a normal (not
+// virtual) function, found by its first bytes ("signature"). How it was
+// found (1.26.63): the scripting API's "getBiome" (Dimension.getBiome) is
+// registered with a small "invoker" made for it; among the functions it
+// calls there's one that asks the BlockSource for the chunk (its virtual
+// +0x140, getChunkAt), checks the height is between the world's min and
+// max (+0x3A, +0x38), and asks the chunk for the biome at (x & 15, y - min,
+// z & 15); without a chunk, the dimension's default biome. That's it.
+//
+// The answer is a Biome object; its NAME ("plains", "savanna"...) is found
+// the first time, like the block names: a text in the object that is one of
+// the biomes of sdk/biome_colors.inc (made by scripts/gen_biome_colors.py
+// from the game's files). The name gives the colors.
+//
+// If the signature isn't found (a game update), the maps keep the plains
+// colors: nothing else changes.
+struct BiomeColors {
+    const char* name;
+    std::uint32_t grass, foliage, water;
+};
+#include "sdk/biome_colors.inc"
+
+constexpr const char* kGetBiomeSignature =
+    "56 57 48 83 EC 28 48 89 D7 48 89 CE 48 8B 01 48 8B 80 40 01 00 00 FF 15 ?? ?? ?? ?? 48 85 C0 74 ?? 8B 4F 04 0F BF 56 3A";
+using GetBiomeFn = void*(__fastcall*)(void* region, const int* pos);
+std::uintptr_t g_getBiome = 0;
+std::atomic<bool> g_biomeTint{true};
+int g_biomeNameOffset = -2;  // -2 = not searched yet, -1 = gave up
+int g_biomeTries = 0;
+std::unordered_map<std::uintptr_t, std::uint8_t> g_biomes;  // Biome object -> index in kBiomeColors (0xFF = unknown)
+constexpr std::uint8_t kNoBiome = 0xFF;
+std::mutex g_playerBiomeMutex;
+std::string g_playerBiome;  // where you are (for F3)
+int g_playerBiomeTick = 0;
+
+void* GetBiomeObject(void* region, int x, int y, int z) {
+    if (g_getBiome == 0) return nullptr;
+    const int pos[3] = {x, y, z};
+    __try {
+        return reinterpret_cast<GetBiomeFn>(g_getBiome)(region, pos);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+int BiomeByName(const char* full) {
+    const char* name = std::strchr(full, ':') != nullptr ? std::strchr(full, ':') + 1 : full;
+    for (std::size_t i = 0; i < sizeof(kBiomeColors) / sizeof(kBiomeColors[0]); ++i) {
+        if (std::strcmp(kBiomeColors[i].name, name) == 0) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+// Which biome (index in kBiomeColors) a Biome object is.
+std::uint8_t BiomeIndexOf(void* biome) {
+    const auto key = reinterpret_cast<std::uintptr_t>(biome);
+    if (key == 0 || !LooksLikePointer(key)) return kNoBiome;
+    const auto it = g_biomes.find(key);
+    if (it != g_biomes.end()) return it->second;
+    char name[64];
+    if (g_biomeNameOffset == -2) {
+        // The first time: where in the object is its name?
+        for (int off = 0; off <= 0x400; off += 8) {
+            if (SafeReadString(key + static_cast<std::uintptr_t>(off), name, sizeof(name)) && name[0] != 0 && BiomeByName(name) >= 0) {
+                g_biomeNameOffset = off;
+                log::Info("Blocks: biome names found at Biome+0x{:X} (\"{}\").", off, name);
+                break;
+            }
+        }
+        if (g_biomeNameOffset == -2 && ++g_biomeTries >= 20) {
+            g_biomeNameOffset = -1;
+            log::Warn("Blocks: the biome names weren't found (plains colors for all).");
+        }
+        if (g_biomeNameOffset < 0) return kNoBiome;
+    }
+    if (g_biomeNameOffset < 0) return kNoBiome;
+    std::uint8_t index = kNoBiome;
+    if (SafeReadString(key + static_cast<std::uintptr_t>(g_biomeNameOffset), name, sizeof(name))) {
+        const int i = BiomeByName(name);
+        if (i >= 0) index = static_cast<std::uint8_t>(i);
+        static int unknown = 0;
+        if (i < 0 && unknown < 20) {
+            ++unknown;
+            log::Info("Blocks: biome \"{}\" isn't in the table (plains colors).", name);
+        }
+    }
+    if (g_biomes.size() < 4096) g_biomes.emplace(key, index);
+    return index;
+}
+
 // --- Finding the names ------------------------------------------------------------------
 // Where the name is: Block + legacyOffset -> BlockLegacy, + nameOffset -> std::string.
 // (legacyOffset = -1: the string is in the Block itself.)
@@ -92,6 +185,7 @@ struct Kind {
     bool water = false; // water: the map shows how deep it is
     bool own = false;   // the color comes from Luma's table (else: the game's map color, or gray)
     bool tree = false;  // leaves, logs, mushroom caps: NOT a roof (a tree over you isn't a cave)
+    std::uint8_t tint = 0;  // tinted by biome: 0 no, 1 grass, 2 leaves, 3 water
 };
 std::unordered_map<std::uintptr_t, Kind> g_kinds;
 
@@ -215,6 +309,16 @@ bool GameColor(const char* fullName, std::uint32_t& rgb) {
 
 Kind Classify(const char* name) {
     Kind k;
+    // Tinted by the biome? (In Bedrock birch, spruce, cherry, azalea and
+    // mangrove leaves have their own fixed color: not by biome.)
+    if (Has(name, "grass_block") || std::strcmp(name, "minecraft:grass") == 0) {
+        k.tint = 1;
+    } else if (Has(name, "leaves") && !Has(name, "birch") && !Has(name, "spruce") && !Has(name, "cherry") && !Has(name, "azalea") &&
+               !Has(name, "mangrove")) {
+        k.tint = 2;
+    } else if (Has(name, "water")) {
+        k.tint = 3;
+    }
     k.tree = Has(name, "leaves") || Has(name, "_log") || Has(name, ":log") || Has(name, "wood") || Has(name, "_stem") ||
              Has(name, "hyphae") || Has(name, "mushroom_block") || Has(name, "wart_block") || Has(name, "azalea");
     // Nothing there.
@@ -427,9 +531,47 @@ struct Column {
     bool known = false;         // something was found (false = unloaded chunk or only air)
     bool rock = false;          // cave mode: solid rock at your level (drawn dark)
     std::int16_t layer = 0;     // cave mode: your height when it was read
+    std::uint8_t tint = 0;      // its top block is tinted by biome (Kind::tint)
+    std::uint8_t biome = 0xFF;  // which biome (index in kBiomeColors; 0xFF = not known)
     float scannedAt = -1.0e9f;  // when it was last read (seconds)
 };
 std::vector<Column> g_cells(static_cast<std::size_t>(kGrid) * kGrid);
+// WHAT CHANGED since the last copy (CopyGrid): a few boxes of the world. Each
+// changed column marks itself and its 8 neighbors (the light from the
+// north-west and the cave walls look at neighbors). g_allDirty = everything.
+std::vector<Area> g_dirty;
+bool g_allDirty = true;
+void MarkArea(int x0, int z0, int x1, int z1) {
+    if (g_allDirty || x1 <= x0 || z1 <= z0) return;
+    // Joined with a box that's close (so they stay few).
+    for (Area& a : g_dirty) {
+        if (x0 <= a.x1 + 8 && x1 >= a.x0 - 8 && z0 <= a.z1 + 8 && z1 >= a.z0 - 8) {
+            a.x0 = std::min(a.x0, x0);
+            a.z0 = std::min(a.z0, z0);
+            a.x1 = std::max(a.x1, x1);
+            a.z1 = std::max(a.z1, z1);
+            return;
+        }
+    }
+    if (g_dirty.size() >= 24) {
+        // Too many: one box around all of them.
+        Area all = g_dirty[0];
+        for (const Area& a : g_dirty) {
+            all.x0 = std::min(all.x0, a.x0);
+            all.z0 = std::min(all.z0, a.z0);
+            all.x1 = std::max(all.x1, a.x1);
+            all.z1 = std::max(all.z1, a.z1);
+        }
+        g_dirty.clear();
+        g_dirty.push_back(all);
+        MarkArea(x0, z0, x1, z1);
+        return;
+    }
+    g_dirty.push_back(Area{x0, z0, x1, z1});
+}
+void MarkColumn(int x, int z) {
+    MarkArea(x - 1, z - 1, x + 2, z + 2);
+}
 int g_centerX = 0, g_centerZ = 0;
 int g_cursor = 0;  // where the next frame continues looking (cycles through the grid)
 // THE ORDER IN WHICH COLUMNS ARE LOOKED AT: from you outward (every cell of
@@ -540,6 +682,7 @@ bool PlayerFeet(int out[3]) {
 // Forgets everything read (a new world or dimension). Called with the grid locked.
 void ResetLocked(bool newWorld) {
     for (Column& col : g_cells) col = Column{};
+    g_allDirty = true;
     g_haveAnchor = false;
     g_cursor = 0;
     g_cave = false;
@@ -549,6 +692,7 @@ void ResetLocked(bool newWorld) {
     if (newWorld) {
         // A server can bring its own blocks: what each Block address means may change.
         g_kinds.clear();
+        g_biomes.clear();
         g_worldSession.fetch_add(1, std::memory_order_relaxed);
     }
     g_session.fetch_add(1, std::memory_order_relaxed);
@@ -580,6 +724,33 @@ bool Available() {
     return g_legacyOffset >= -1;
 }
 
+void Init() {
+    const ScanResult r = FindPattern(kGetBiomeSignature);
+    if (r.address != 0 && r.matches == 1) {
+        g_getBiome = r.address;
+        log::Info("Blocks: BlockSource::getBiome at game+0x{:X} (biome colors on).", r.address - GameBase());
+    } else {
+        log::Warn("Blocks: BlockSource::getBiome not found ({} matches): grass, leaves and water keep the plains colors.", r.matches);
+    }
+}
+
+void SetBiomeTint(bool on) {
+    if (g_biomeTint.exchange(on) != on) {
+        std::lock_guard lock(g_mutex);
+        g_allDirty = true;
+        ++g_version;
+    }
+}
+
+bool BiomeTintAvailable() {
+    return g_getBiome != 0;
+}
+
+std::string PlayerBiome() {
+    std::lock_guard lock(g_playerBiomeMutex);
+    return g_playerBiome;
+}
+
 void SetPainting(float relief, bool heightTint, bool waterDepth, bool shores, bool texture) {
     std::lock_guard lock(g_mutex);
     if (relief == g_relief && heightTint == g_heightTint && waterDepth == g_waterDepth && shores == g_shores && texture == g_texture) return;
@@ -588,6 +759,7 @@ void SetPainting(float relief, bool heightTint, bool waterDepth, bool shores, bo
     g_waterDepth = waterDepth;
     g_shores = shores;
     g_texture = texture;
+    g_allDirty = true;
     ++g_version;  // (the minimap copies and repaints)
 }
 
@@ -623,6 +795,24 @@ void OnRegion(void* region) {
         }
         g_lastPlayer = player;
         if (dim >= 0) g_lastDimension = dim;
+    }
+    // (Once: where the BlockSource's table of functions is, for finding more of them.)
+    static bool vtLogged = false;
+    if (!vtLogged) {
+        std::uintptr_t vt = 0;
+        if (SafeRead(reinterpret_cast<std::uintptr_t>(region), vt)) {
+            vtLogged = true;
+            log::Info("Blocks: BlockSource table of functions at game+0x{:X}.", vt - GameBase());
+        }
+    }
+    // The biome where you are (twice a second, for F3).
+    if (g_getBiome != 0 && g_biomeNameOffset >= 0 && g_playerBiomeTick++ % 30 == 0) {
+        void* b = GetBiomeObject(region, feet[0], feet[1], feet[2]);
+        char name[64];
+        if (b != nullptr && SafeReadString(reinterpret_cast<std::uintptr_t>(b) + static_cast<std::uintptr_t>(g_biomeNameOffset), name, sizeof(name))) {
+            std::lock_guard lock(g_playerBiomeMutex);
+            g_playerBiome = name;
+        }
     }
     LARGE_INTEGER t0;
     QueryPerformanceCounter(&t0);
@@ -661,6 +851,7 @@ void OnRegion(void* region) {
             g_caveVotes = 0;
             g_caveShown.store(want, std::memory_order_relaxed);
             for (Column& col : g_cells) col = Column{};  // read everything again, the other way
+            g_allDirty = true;
             changed = true;
             log::Info("Blocks: cave mode {}.", want ? "on" : "off");
         }
@@ -737,6 +928,7 @@ void OnRegion(void* region) {
                 if (!open) {
                     if (y <= feet[1] - 10) {  // solid all the way: rock
                         fresh.rgb = k->rgb;
+                fresh.tint = k->tint;
                         fresh.height = static_cast<std::int16_t>(ctop);
                         fresh.known = fresh.rock = true;
                         break;
@@ -744,6 +936,7 @@ void OnRegion(void* region) {
                     continue;  // still inside the ceiling
                 }
                 fresh.rgb = k->rgb;
+                fresh.tint = k->tint;
                 fresh.height = static_cast<std::int16_t>(y);
                 fresh.known = true;
                 if (k->water) {
@@ -767,6 +960,7 @@ void OnRegion(void* region) {
             const Kind* k = KindOf(b);
             if (k->air || k->skip) continue;
             fresh.rgb = k->rgb;
+                fresh.tint = k->tint;
             fresh.height = static_cast<std::int16_t>(y);
             fresh.known = true;
             if (k->water) {
@@ -781,9 +975,14 @@ void OnRegion(void* region) {
             }
             break;
         }
+        // Its biome (only for grass, leaves and water; kept if it's the same column).
+        if (fresh.known && fresh.tint != 0 && !fresh.rock && g_getBiome != 0 && g_biomeTint.load(std::memory_order_relaxed)) {
+            fresh.biome = (same && col.biome != kNoBiome) ? col.biome : BiomeIndexOf(GetBiomeObject(region, wx, fresh.height, wz));
+        }
         if (fresh.known != col.known || fresh.rgb != col.rgb || fresh.height != col.height || fresh.depth != col.depth ||
-            fresh.rock != col.rock || !same) {
+            fresh.rock != col.rock || fresh.biome != col.biome || !same) {
             changed = true;
+            MarkColumn(wx, wz);
         }
         col = fresh;
         LARGE_INTEGER t;
@@ -794,6 +993,20 @@ void OnRegion(void* region) {
     QueryPerformanceCounter(&t1);
     const float us = static_cast<float>(static_cast<double>(t1.QuadPart - t0.QuadPart) * 1.0e6 / static_cast<double>(Freq().QuadPart));
     g_costUs += (us - g_costUs) * 0.05f;
+    // Walking: the strips that came into the grid were other columns before
+    // (the grid is a ring): they must be copied again (as empty, until read).
+    if (cx != g_centerX || cz != g_centerZ) {
+        const int h = kGrid / 2;
+        if (std::abs(cx - g_centerX) >= kGrid || std::abs(cz - g_centerZ) >= kGrid) {
+            g_allDirty = true;
+        } else {
+            if (cx > g_centerX) MarkArea(g_centerX + h, cz - h, cx + h, cz + h);
+            if (cx < g_centerX) MarkArea(cx - h, cz - h, g_centerX - h, cz + h);
+            if (cz > g_centerZ) MarkArea(cx - h, g_centerZ + h, cx + h, cz + h);
+            if (cz < g_centerZ) MarkArea(cx - h, cz - h, cx + h, g_centerZ - h);
+        }
+        changed = true;
+    }
     g_centerX = cx;
     g_centerZ = cz;
     if (changed) ++g_version;
@@ -801,8 +1014,8 @@ void OnRegion(void* region) {
     if (++logs % 600 == 0) log::Info("Blocks: minimap work {:.0f} us/frame ({} kinds of blocks known).", g_costUs, g_kinds.size());
 }
 
-bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, int& centerZ, std::uint32_t& version, int radius,
-              std::uint32_t* session, int* dimension) {
+bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* ringOut, int& centerX, int& centerZ, std::uint32_t& version,
+              std::vector<Area>& areas, std::uint32_t* session, int* dimension) {
     std::lock_guard lock(g_mutex);
     if (g_version == knownVersion) return false;
     if (session != nullptr) *session = g_session.load(std::memory_order_relaxed);
@@ -823,15 +1036,8 @@ bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, 
         const Column& c = g_cells[static_cast<std::size_t>((wx & (kGrid - 1)) + (wz & (kGrid - 1)) * kGrid)];
         return c.known && c.x == wx && c.z == wz ? &c : nullptr;
     };
-    radius = std::clamp(radius, 1, kGrid / 2);
-    for (int r = 0; r < kGrid; ++r) {
-        const bool rowIn = std::abs(r - kGrid / 2) <= radius;
-        for (int c = 0; c < kGrid; ++c) {
-            if (!rowIn || std::abs(c - kGrid / 2) > radius) {
-                rgbaOut[r * kGrid + c] = 0;
-                continue;
-            }
-            const int wx = centerX - kGrid / 2 + c, wz = centerZ - kGrid / 2 + r;
+    // One column, colored and shaded (0 = nothing known there).
+    auto paint = [&](int wx, int wz) -> std::uint32_t {
             const Column* col = cellAt(wx, wz);
             std::uint32_t px = 0;
             if (col != nullptr) {
@@ -846,6 +1052,17 @@ bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, 
                         for (float& ch : rgb) ch *= 215.0f / lum;
                     }
                 }
+                // BIOME COLORS: the table's grass/leaves were painted with the
+                // plains tint; turn that into this biome's (channel by channel).
+                const bool tinted = col->tint != 0 && col->biome != kNoBiome && g_biomeTint.load(std::memory_order_relaxed);
+                if (tinted && col->tint != 3) {
+                    const BiomeColors& bc = kBiomeColors[col->biome];
+                    const std::uint32_t want = col->tint == 1 ? bc.grass : bc.foliage;
+                    const float base[3] = {col->tint == 1 ? 121.0f : 89.0f, col->tint == 1 ? 192.0f : 174.0f, col->tint == 1 ? 90.0f : 48.0f};
+                    const float w[3] = {static_cast<float>((want >> 16) & 0xFF), static_cast<float>((want >> 8) & 0xFF),
+                                        static_cast<float>(want & 0xFF)};
+                    for (int k = 0; k < 3; ++k) rgb[k] = std::clamp(rgb[k] * w[k] / base[k], 0.0f, 255.0f);
+                }
                 float shade = 1.0f;
                 if (col->rock) {
                     // Cave mode: the solid rock around the cave is black, so the
@@ -854,7 +1071,17 @@ bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, 
                 } else if (col->depth > 0 && g_waterDepth) {
                     // Water: from light turquoise (1 block) to deep blue (12+).
                     const float t = std::clamp((static_cast<float>(col->depth) - 1.0f) / 11.0f, 0.0f, 1.0f);
-                    const float shallow[3] = {86.0f, 170.0f, 230.0f}, deep[3] = {22.0f, 48.0f, 140.0f};
+                    float shallow[3] = {86.0f, 170.0f, 230.0f}, deep[3] = {22.0f, 48.0f, 140.0f};
+                    if (tinted && col->tint == 3) {
+                        // This biome's water: lighter where shallow, darker where deep.
+                        const std::uint32_t wc = kBiomeColors[col->biome].water;
+                        const float w[3] = {static_cast<float>((wc >> 16) & 0xFF), static_cast<float>((wc >> 8) & 0xFF),
+                                            static_cast<float>(wc & 0xFF)};
+                        for (int k = 0; k < 3; ++k) {
+                            shallow[k] = std::min(255.0f, w[k] * 1.12f + 14.0f);
+                            deep[k] = w[k] * 0.33f;
+                        }
+                    }
                     for (int k = 0; k < 3; ++k) rgb[k] = shallow[k] + (deep[k] - shallow[k]) * t;
                     // Waves: a faint pattern.
                     const unsigned h = static_cast<unsigned>(wx * 73856093) ^ static_cast<unsigned>(wz * 19349663);
@@ -899,7 +1126,25 @@ bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, 
                 const auto ch = [&](int k) { return static_cast<std::uint32_t>(std::clamp(rgb[k] * shade, 0.0f, 255.0f)); };
                 px = ch(0) | (ch(1) << 8) | (ch(2) << 16) | 0xFF000000u;  // RGBA in memory (R first)
             }
-            rgbaOut[r * kGrid + c] = px;
+            return px;
+    };
+    // What to copy: what changed (or everything), inside the window.
+    const int h = kGrid / 2;
+    areas.clear();
+    if (g_allDirty) {
+        areas.push_back(Area{centerX - h, centerZ - h, centerX + h, centerZ + h});
+    } else {
+        for (const Area& a : g_dirty) {
+            Area c{std::max(a.x0, centerX - h), std::max(a.z0, centerZ - h), std::min(a.x1, centerX + h), std::min(a.z1, centerZ + h)};
+            if (c.x1 > c.x0 && c.z1 > c.z0) areas.push_back(c);
+        }
+    }
+    g_dirty.clear();
+    g_allDirty = false;
+    for (const Area& a : areas) {
+        for (int wz = a.z0; wz < a.z1; ++wz) {
+            std::uint32_t* row = ringOut + static_cast<std::size_t>(wz & (kGrid - 1)) * kGrid;
+            for (int wx = a.x0; wx < a.x1; ++wx) row[wx & (kGrid - 1)] = paint(wx, wz);
         }
     }
     return true;

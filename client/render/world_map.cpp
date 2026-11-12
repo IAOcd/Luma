@@ -29,6 +29,7 @@
 #include "render/icons.h"
 #include "render/pixel_art.h"
 #include "render/theme.h"
+#include "sdk/blocks.h"
 #include "sdk/network.h"
 #include "sdk/player.h"
 #include "sdk/radar.h"
@@ -293,9 +294,11 @@ void Draw() {
 
     // --- The picture: filled again only when the view or the blocks changed ---
     {
-        const double halfW = w * 0.5 / g_shownZoom, halfH = h * 0.5 / g_shownZoom;
+        // What you see and a margin around it (so dragging finds it ready),
+        // read from disk for up to 3 ms a frame, the middle first.
+        const double halfW = w * 0.75 / g_shownZoom, halfH = h * 0.75 / g_shownZoom;
         mapstore::Prefetch(static_cast<int>(std::floor(g_centerX - halfW)), static_cast<int>(std::floor(g_centerZ - halfH)),
-                           static_cast<int>(std::floor(g_centerX + halfW)), static_cast<int>(std::floor(g_centerZ + halfH)), 2);
+                           static_cast<int>(std::floor(g_centerX + halfW)), static_cast<int>(std::floor(g_centerZ + halfH)), 64);
     }
     // WHILE YOU DRAG OR ZOOM, the picture already made is just moved and
     // scaled by the GPU (almost free); the crisp one is made again at most 8
@@ -318,7 +321,8 @@ void Draw() {
         covers = g_centerX - viewW >= g_drawnX - halfW && g_centerX + viewW <= g_drawnX + halfW && g_centerZ - viewH >= g_drawnZ - halfH &&
                  g_centerZ + viewH <= g_drawnZ + halfH && g_shownZoom <= g_drawnZoom * 1.6f;
     }
-    const bool due = interacting ? (!covers && now - g_lastFill > 0.25) : (moved || fresh);
+    // (New data alone, like regions arriving from disk: at most 5 times a second.)
+    const bool due = interacting ? (!covers && now - g_lastFill > 0.12) : (moved || (fresh && now - g_lastFill > 0.2));
     if (due || tw != g_texW || th != g_texH || g_texture == ImTextureID{}) {
         const std::int64_t t0 = perf::Now();
         g_lastFill = now;
@@ -682,6 +686,8 @@ void Draw() {
             lookChanged |= f.Toggle(Tr("Water by depth"), &look.waterDepth);
             lookChanged |= f.Toggle(Tr("Dark shores"), &look.shores);
             lookChanged |= f.Toggle(Tr("Block texture"), &look.texture);
+            lookChanged |= f.Toggle(Tr("Biome colors"), &look.biomes);
+            if (!sdk::blocks::BiomeTintAvailable()) f.Hint(Tr("(Not available in this game version: plains colors.)"));
             f.Hint(Tr("Brightness, contrast and saturation change everything at once. Relief, water, shores and texture repaint the minimap now; the world map shows them where you walk again."));
             if (f.ButtonRow(Tr("Reset the look"))) {
                 const float bg[3] = {look.background[0], look.background[1], look.background[2]};

@@ -25,8 +25,19 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace luma::sdk::blocks {
+
+// Finds BlockSource::getBiome by its signature (call once at start, on
+// Luma's own thread: scanning the game's code takes a moment).
+void Init();
+// Grass, leaves and water in the color of their biome (true) or of plains.
+void SetBiomeTint(bool on);
+bool BiomeTintAvailable();
+// The biome where you are ("" if unknown), for the debug screen (F3).
+std::string PlayerBiome();
 
 // Who wants blocks read (the work only happens while someone does).
 void Want(bool want);
@@ -68,13 +79,22 @@ struct Cell {
     std::int16_t height = 0;
 };
 
-// Copies the grid around (centerX, centerZ) (row by row, north at the top),
-// if it changed since "knownVersion". Thread-safe.
-// Only the blocks within "radius" of the center are copied (the rest: 0):
-// shading the whole grid costs more than the minimap needs at a small zoom.
+// A part of the world (blocks x0 <= x < x1, z0 <= z < z1).
+struct Area {
+    int x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+};
+
+// ONLY WHAT CHANGED: copies (colored and shaded) the columns that changed
+// since the last call, and the ones that came into the grid as you walked,
+// into "ringOut": a kGrid x kGrid picture laid out like the grid itself, "in
+// a ring" (the column x, z is at [(x & 511) + (z & 511) * 512]), so walking
+// never forces a full copy. Only the window around (centerX, centerZ),
+// 256 blocks to each side, is valid. "areas" says what was updated (the world
+// map stores exactly that). False if nothing changed. Thread-safe; only ONE
+// user (the minimap): what it copies isn't copied again.
 // "session" / "dimension": which start and dimension the copy belongs to.
-bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, int& centerZ, std::uint32_t& version,
-              int radius = kGrid / 2, std::uint32_t* session = nullptr, int* dimension = nullptr);
+bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* ringOut, int& centerX, int& centerZ, std::uint32_t& version,
+              std::vector<Area>& areas, std::uint32_t* session = nullptr, int* dimension = nullptr);
 
 // How long the work took in the last frames (microseconds, average).
 float CostUs();

@@ -3,6 +3,7 @@
 // =============================================================================
 #include "render/hud.h"
 #include "sdk/game_crosshair.h"
+#include "sdk/paperdoll.h"
 #include "render/font_fallback.h"
 #include "render/theme.h"
 #include "render/rainbow.h"
@@ -117,12 +118,17 @@ bool F1Hidden() {
 void UpdateGameHudState(bool playing, bool firstPerson) {
     static unsigned int last = 0;
     static int still = 0;
-    if (!sdk::gamecrosshair::Available()) {
+    // THE SIGNAL: how many times the game drew its HUD screen ("hud_screen",
+    // sdk/paperdoll sees it). With F1 the game stops drawing it. (Before, it
+    // was the crosshair's drawing; in 1.26 the crosshair is a screen of its
+    // own and that signal stopped working.) Fallback: the crosshair.
+    const bool screens = sdk::paperdoll::Available();
+    if (!screens && !sdk::gamecrosshair::Available()) {
         g_gameHudKnown = false;
         return;
     }
-    const unsigned int calls = sdk::gamecrosshair::RenderCalls();
-    if (!playing || !firstPerson) {
+    const unsigned int calls = screens ? sdk::paperdoll::HudScreenFrames() : sdk::gamecrosshair::RenderCalls();
+    if (!playing || (!screens && !firstPerson)) {
         // In menus or in third person the game may not draw its crosshair
         // for other reasons: keep what we knew.
         last = calls;

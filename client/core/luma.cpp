@@ -47,6 +47,7 @@
 #include "sdk/draw3d.h"
 #include "sdk/hud_ui.h"
 #include "sdk/game_crosshair.h"
+#include "sdk/blocks.h"
 #include "sdk/dynlight.h"
 #include "sdk/skin_apply.h"
 #include "sdk/paperdoll.h"
@@ -232,6 +233,7 @@ bool Startup(HMODULE module) {
         sdk::skinapply::Init();  // Equip changes the skin instantly
         sdk::gamecrosshair::Init();  // hiding the game's crosshair (crosshair module)
         sdk::dynlight::Init();       // dynamic lights (dynamic lights module)
+        sdk::blocks::Init();         // the biome of each block (map colors)
         std::lock_guard lock(StateMutex());
         modules::Manager::DisableUnavailable();
     }

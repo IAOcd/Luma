@@ -28,6 +28,7 @@ struct Look {
     bool waterDepth = true;  // water from light (shallow) to dark blue (deep)
     bool shores = true;      // a darker rim on land next to water
     bool texture = true;     // each block a tiny bit lighter or darker, like pixels of a texture
+    bool biomes = true;      // grass, leaves and water in the color of their biome
     // 2. Color
     float brightness = 1.0f;  // 0.5 .. 1.5
     float contrast = 1.0f;    // 0.5 .. 1.5

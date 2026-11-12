@@ -184,7 +184,7 @@ struct Kind {
     bool skip = false;  // something you see through on a map (grass, flowers, torches...): keep going down
     bool water = false; // water: the map shows how deep it is
     bool own = false;   // the color comes from Luma's table (else: the game's map color, or gray)
-    bool tree = false;  // leaves, logs, mushroom caps: NOT a roof (a tree over you isn't a cave)
+    bool tree = false;  // leaves, logs, mushroom caps...: a tree over you means you're NOT in a cave
     std::uint8_t tint = 0;  // tinted by biome: 0 no, 1 grass, 2 leaves, 3 water
 };
 std::unordered_map<std::uintptr_t, Kind> g_kinds;
@@ -320,7 +320,8 @@ Kind Classify(const char* name) {
         k.tint = 3;
     }
     k.tree = Has(name, "leaves") || Has(name, "_log") || Has(name, ":log") || Has(name, "wood") || Has(name, "_stem") ||
-             Has(name, "hyphae") || Has(name, "mushroom_block") || Has(name, "wart_block") || Has(name, "azalea");
+             Has(name, "hyphae") || Has(name, "mushroom_block") || Has(name, "wart_block") || Has(name, "azalea") ||
+             Has(name, "cocoa") || Has(name, "mangrove_roots") || Has(name, "bee_nest") || Has(name, "hanging_moss");
     // Nothing there.
     if (Has(name, ":air") || Has(name, "cave_air") || Has(name, "void_air") || Has(name, "structure_void") ||
         Has(name, "light_block") || Has(name, "barrier") ||
@@ -607,7 +608,10 @@ float g_costUs = 0.0f;
 // the map shows instead the FLOOR of the cave at your level, and the rock
 // around it dark. Twice a second Luma looks up from 5 columns (yours and 4
 // around, 3 blocks away); a roof over at least 4 of them = you're under
-// ground. In the Nether there's always a roof (the bedrock), so it's always on.
+// ground. In each column, the FIRST thing found above decides: if it's part
+// of a tree (leaves, a log, cocoa...), that column is "open": you're in a
+// forest, not in a cave, whatever is higher up (snow on the leaves, the
+// crown of a taller tree...). In the Nether there's always a roof (the bedrock), so it's always on.
 // To avoid flickering at a cave's mouth, it changes only after two equal
 // looks in a row. When it changes, the whole grid is read again.
 // How the terrain is painted (SetPainting).
@@ -651,8 +655,8 @@ bool HasRoof(void* region, const int feet[3]) {
             void* b = GetBlock(region, feet[0] + d[0], y, feet[2] + d[1]);
             if (b == nullptr) break;
             const Kind* k = KindOf(b);
-            if (k->air || k->skip || k->water || k->tree) continue;
-            ++roofs;
+            if (k->air || k->skip || k->water) continue;
+            if (!k->tree) ++roofs;  // (a tree: this column isn't a roof)
             break;
         }
     }

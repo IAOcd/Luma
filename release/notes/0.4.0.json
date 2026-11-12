@@ -1,0 +1,107 @@
+{
+  "date": "12.11.2026",
+  "notes": {
+    "en": [
+      {
+        "title": "Luma Music",
+        "body": "See what's playing (Spotify, Liner, browsers...), control it from the menu or the radial Halo, and show it on the HUD in 7 styles. Album colors can tint the HUD, the menu, the crosshair and the watermark."
+      },
+      {
+        "title": "Word-by-word lyrics",
+        "body": "Synced lyrics from LiriQo (Apple Music, NetEase...) and LRCLIB, word by word when available, with smooth animations. They appear in about a second."
+      },
+      {
+        "title": "Lyric Flow",
+        "body": "The lyrics written in the sky as real pixel letters of the world: 15 fonts, 6 layouts, appear and leave effects, colors, outline, shadow, and a sky mode that follows you like the skybox."
+      },
+      {
+        "title": "Visualizer in the sky",
+        "body": "A ring around you that dances with your music (it ignores Minecraft's own sounds): bars, waves, aurora, rings and more, with the album's palette."
+      },
+      {
+        "title": "Spotify (optional)",
+        "body": "Connect your own Spotify app to see your queue (Up next) and get the next songs' lyrics ready before they start. Everything stays on your PC."
+      },
+      {
+        "title": "Dynamic lights and F3",
+        "body": "A torch or any light item in your hand lights the world around you. And a Java-style debug screen with exact position, chunk, light, world and PC data."
+      },
+      {
+        "title": "Efficiency modes",
+        "body": "One switch to make Luma as light as possible, and a separate one for the music, each with advanced options."
+      },
+      {
+        "title": "Polish",
+        "body": "New icons, reactive buttons, letters of every alphabet (Japanese, Korean, Chinese, Arabic...), F1 hides Luma's HUD, the menu reopens where you left it, and the crosshair hides in third person."
+      }
+    ],
+    "es": [
+      {
+        "title": "Luma Music",
+        "body": "Mira lo que suena (Spotify, Liner, navegadores...), contrólalo desde el menú o desde el Halo del menú radial, y muéstralo en el HUD con 7 estilos. Los colores del álbum pueden teñir el HUD, el menú, la mira y la marca de agua."
+      },
+      {
+        "title": "Letras palabra por palabra",
+        "body": "Letras sincronizadas de LiriQo (Apple Music, NetEase...) y LRCLIB, palabra por palabra cuando existen, con animaciones suaves. Aparecen en alrededor de un segundo."
+      },
+      {
+        "title": "Lyric Flow",
+        "body": "La letra escrita en el cielo con letras de píxeles reales del mundo: 15 fuentes, 6 disposiciones, efectos de entrada y salida, colores, borde, sombra y un modo cielo que te sigue como la skybox."
+      },
+      {
+        "title": "Visualizer en el cielo",
+        "body": "Un anillo a tu alrededor que baila con tu música (ignora los sonidos del propio Minecraft): barras, ondas, aurora, anillos y más, con la paleta del álbum."
+      },
+      {
+        "title": "Spotify (opcional)",
+        "body": "Conecta tu propia app de Spotify para ver tu cola (A continuación) y tener listas las letras de las próximas canciones. Todo queda en tu PC."
+      },
+      {
+        "title": "Luces dinámicas y F3",
+        "body": "Una antorcha o cualquier ítem de luz en la mano ilumina el mundo a tu alrededor. Y una pantalla de depuración como la de Java, con posición exacta, chunk, luz, mundo y datos de la PC."
+      },
+      {
+        "title": "Modos de eficiencia",
+        "body": "Un interruptor para que Luma sea lo más liviana posible, y otro aparte para la música, cada uno con opciones avanzadas."
+      },
+      {
+        "title": "Pulido",
+        "body": "Íconos nuevos, botones reactivos, letras de todos los alfabetos (japonés, coreano, chino, árabe...), F1 oculta el HUD de Luma, el menú se reabre donde lo dejaste y la mira se oculta en tercera persona."
+      }
+    ],
+    "pt": [
+      {
+        "title": "Luma Music",
+        "body": "Veja o que está tocando (Spotify, Liner, navegadores...), controle pelo menu ou pelo Halo do menu radial, e mostre no HUD em 7 estilos. As cores do álbum podem tingir o HUD, o menu, a mira e a marca d'água."
+      },
+      {
+        "title": "Letras palavra por palavra",
+        "body": "Letras sincronizadas do LiriQo (Apple Music, NetEase...) e do LRCLIB, palavra por palavra quando existem, com animações suaves. Aparecem em cerca de um segundo."
+      },
+      {
+        "title": "Lyric Flow",
+        "body": "A letra escrita no céu com letras de pixels reais do mundo: 15 fontes, 6 disposições, efeitos de entrada e saída, cores, contorno, sombra e um modo céu que te segue como a skybox."
+      },
+      {
+        "title": "Visualizador no céu",
+        "body": "Um anel ao seu redor que dança com sua música (ignora os sons do próprio Minecraft): barras, ondas, aurora, anéis e mais, com a paleta do álbum."
+      },
+      {
+        "title": "Spotify (opcional)",
+        "body": "Conecte seu próprio app do Spotify para ver sua fila (A seguir) e deixar prontas as letras das próximas músicas. Tudo fica no seu PC."
+      },
+      {
+        "title": "Luzes dinâmicas e F3",
+        "body": "Uma tocha ou qualquer item de luz na mão ilumina o mundo ao seu redor. E uma tela de depuração como a do Java, com posição exata, chunk, luz, mundo e dados do PC."
+      },
+      {
+        "title": "Modos de eficiência",
+        "body": "Um interruptor para deixar o Luma o mais leve possível, e outro separado para a música, cada um com opções avançadas."
+      },
+      {
+        "title": "Polimento",
+        "body": "Ícones novos, botões reativos, letras de todos os alfabetos (japonês, coreano, chinês, árabe...), F1 esconde o HUD do Luma, o menu reabre onde você parou e a mira some em terceira pessoa."
+      }
+    ]
+  }
+}

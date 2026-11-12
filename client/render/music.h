@@ -93,7 +93,8 @@ struct Settings {
     int flowResolution = 16;      // (Windows fonts) how many "pixels" tall a letter is: more = smoother, more lines
     float flowLetterSpacing = 0.0f;  // extra space between letters, in letter pixels (-1..4)
     float flowWordSpacing = 0.4f;    // space between words, in word heights
-    float flowLeaveTime = 0.45f;     // how long a line takes to leave (seconds)
+    float flowLeaveTime = 0.45f;
+    float flowPauseHide = 10.0f;  // paused this long (s): the lyrics leave the sky (0 = never)     // how long a line takes to leave (seconds)
     bool flowAlbumColor = false;  // (old setting: now flowColorMode = 1)
     int flowMaterial = 0;         // (unused: the letters are lines with the outline material)
     // --- Visualizer in the sky (render/visualizer.h) ---

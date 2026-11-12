@@ -68,7 +68,8 @@ If something breaks in a weird way, delete the `build/` folder and run both comm
   - the *Theme*, *Profiles*, *Settings*, *Benchmark* and *Diagnostics* pages.
 - **Top bar:** search (across all categories), profile picker and **Edit HUD**.
 - **Module cards:** their own SVG icon, assigned key and switch. Clicking one opens its page, with description, switch, key and options. Modules can be shown as blocks or as a list.
-- **Icons:** SVG "paths" drawn as vectors (`client/render/icons.h`). The ones starting with `F` are filled, like the Luma logo.
+- **Icons:** most come from [Lucide](https://lucide.dev) (`client/render/lucide_icons.inc`), drawn with nanosvg into one shared texture: smooth edges, round line ends, and as cheap as a letter (`client/render/icons.h`).
+- **Reactive buttons:** they sink when pressed, spring back and leave a ripple (all of it can be turned off).
 - **Toasts, sounds and animations:**
   - The glass sounds are **synthesized** at startup and played with XAudio2, so there are no third-party audio files.
   - Everything can be turned off in *Theme*.
@@ -124,6 +125,16 @@ About CPS:
 - **When it releases by itself:**
   - in the inventory, the chat and the pause screen, because the game "releases" the mouse (otherwise a held Shift would make every inventory click move items);
   - when the window loses focus; when it comes back, it presses again.
+
+### Luma Music
+The music module (*Now playing*) shows what Windows says is playing (Spotify, Liner, browsers...) and lets you control it (`client/core/media.cpp`, Windows' media sessions).
+- **Where:** a big *Music* page in the menu, a ring around the radial menu (*Halo*), and a HUD element with 7 styles.
+- **Lyrics** (`client/core/lyrics.cpp`): LiriQo and LRCLIB are asked at the same time. LRCLIB answers in about a second; if LiriQo brings word-by-word timings (Apple Music, NetEase, Kuwo...), they replace it. Found lyrics are saved in `%APPDATA%\Luma\lyrics\`, so each song is looked up once.
+- **Lyric Flow** (`client/render/lyric_flow.cpp`): the lyrics written in the sky as real geometry of the world (pixel letters made of lines, drawn by the game through `sdk/draw3d`), so terrain and clouds cover them.
+- **Visualizer** (`client/render/visualizer.cpp`, `client/core/audio_viz.cpp`): a ring in the sky that dances with the music. It listens to everything your PC plays **except Minecraft** (Windows' process loopback) and analyzes it with an FFT; nothing is recorded.
+- **Spotify (optional)** (`client/core/spotify.cpp`): with your own Spotify app's Client ID, Luma reads your queue (*Up next*) and looks up the next songs' lyrics in advance. The login is OAuth with PKCE on `127.0.0.1`, and the pass is stored encrypted with DPAPI. No Luma server is involved.
+- **Every alphabet** (`client/render/font_fallback.cpp`, `client/core/text_bidi.cpp`): the letters a song needs (Japanese, Korean, Chinese, Thai, Hindi, Arabic, Hebrew...) are added to the fonts on demand from Windows fonts; Arabic and Hebrew are shown right to left, with joined Arabic letters.
+- **Privacy:** to find lyrics, only the song's title, artist, album and length are sent to LiriQo and LRCLIB; for HD album art, the title and artist go to Apple's iTunes catalog. Each of these can be turned off.
 
 ### Settings and profiles
 - `%APPDATA%\Luma\config\luma.json` stores which profile is active.

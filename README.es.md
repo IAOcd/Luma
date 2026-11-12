@@ -124,6 +124,16 @@ Sobre el CPS:
   - en el inventario, el chat y la pausa, porque el juego "suelta" el mouse (si no, un Shift sostenido haría que cada clic en el inventario mueva ítems);
   - al perder el foco; al volver, se aprieta de nuevo.
 
+### Luma Music
+El módulo de música (*Reproduciendo*) muestra lo que Windows dice que está sonando (Spotify, Liner, navegadores...) y deja controlarlo (`client/core/media.cpp`, las sesiones de medios de Windows).
+- **Dónde:** una página grande de *Música* en el menú, un anillo alrededor del menú radial (*Halo*) y un elemento del HUD con 7 estilos.
+- **Letras** (`client/core/lyrics.cpp`): se consultan LiriQo y LRCLIB a la vez. LRCLIB responde en un segundo; si LiriQo trae tiempos palabra por palabra (Apple Music, NetEase, Kuwo...), la reemplaza. Las letras encontradas se guardan en `%APPDATA%\Luma\lyrics\`, así cada canción se busca una vez.
+- **Lyric Flow** (`client/render/lyric_flow.cpp`): la letra escrita en el cielo como geometría real del mundo (letras de píxeles hechas de líneas, que dibuja el juego mediante `sdk/draw3d`), así el terreno y las nubes la tapan.
+- **Visualizer** (`client/render/visualizer.cpp`, `client/core/audio_viz.cpp`): un anillo en el cielo que baila con la música. Escucha todo lo que suena en tu PC **menos Minecraft** (process loopback de Windows) y lo analiza con una FFT; no se graba nada.
+- **Spotify (opcional)** (`client/core/spotify.cpp`): con el Client ID de tu propia app de Spotify, Luma lee tu cola (*A continuación*) y busca por adelantado las letras de las próximas canciones. El inicio de sesión es OAuth con PKCE en `127.0.0.1` y el pase se guarda cifrado con DPAPI. No pasa por ningún servidor de Luma.
+- **Todos los alfabetos** (`client/render/font_fallback.cpp`, `client/core/text_bidi.cpp`): las letras que necesita una canción (japonés, coreano, chino, tailandés, hindi, árabe, hebreo...) se agregan a las fuentes a demanda desde fuentes de Windows; el árabe y el hebreo se muestran de derecha a izquierda, con las letras árabes unidas.
+- **Privacidad:** para buscar letras solo se envían el título, el artista, el álbum y la duración a LiriQo y LRCLIB; para las portadas HD, el título y el artista van al catálogo de iTunes de Apple. Cada cosa se puede apagar.
+
 ### Configuración y perfiles
 - `%APPDATA%\Luma\config\luma.json` guarda qué perfil está activo.
 - `%APPDATA%\Luma\config\profiles\<nombre>.json` guarda un perfil completo: módulos activos, sus opciones y teclas, el tema y las teclas de Luma.

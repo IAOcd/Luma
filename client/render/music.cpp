@@ -982,6 +982,7 @@ bool DrawLyricsSettings() {
         changed |= ui::Choice("Motion", &s.flowMotion, {"None", "Float", "Wave", "Sway", "Pulse"});
         changed |= ui::Slider("Effect speed", &s.flowSpeed, 0.3f, 3.0f, "%.1fx");
         changed |= ui::Slider("Leave time (s)", &s.flowLeaveTime, 0.15f, 1.5f, "%.2f");
+        changed |= ui::Slider("Hide when paused (s)", &s.flowPauseHide, 0.0f, 60.0f, "%.0f");
         ui::Hint("A line starts leaving just before the next one arrives and is gone when it appears: they never overlap.");
         ui::Section("Lyric Flow: colors");
         changed |= ui::Choice("Color", &s.flowColorMode, {"One color", "Album", "Album gradient", "Two colors", "Rainbow"});

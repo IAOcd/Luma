@@ -709,6 +709,34 @@ void Draw(ImDrawList* draw, ImVec2 display) {
     const bool animate = music::LyricAnimations();
     const double now = rainbow::Seconds();
 
+    // PAUSED: if the music stays paused for a while (10 s by default), the
+    // lyrics leave the sky (with the leave effect). When it plays again, the
+    // line being sung is written again, in front of where you look then.
+    static double pausedSince = -1.0;
+    static bool hiddenByPause = false;
+    float pauseLeave = 1.0f;
+    if (!t.playing) {
+        if (pausedSince < 0.0) pausedSince = now;
+        const double waited = now - pausedSince - static_cast<double>(s.flowPauseHide);
+        if (s.flowPauseHide > 0.0f && waited > 0.0) {
+            pauseLeave = animate ? 1.0f - Clamp01(static_cast<float>(waited) / std::max(0.15f, s.flowLeaveTime)) : 0.0f;
+            if (pauseLeave <= 0.0f) {
+                if (!hiddenByPause) {
+                    hiddenByPause = true;
+                    sdk::draw3d::SetWorldShapes({});
+                }
+                return;
+            }
+        }
+    } else {
+        pausedSince = -1.0;
+        if (hiddenByPause) {
+            hiddenByPause = false;
+            g_current.index = -2;  // write it again
+            g_previous = FlowLine{};
+        }
+    }
+
     // A new line: the old one starts leaving, the new one is written in front of you.
     const bool isPause =
         index >= 0 && ly.lines[static_cast<std::size_t>(index)].text.find_first_not_of(' ') == std::string::npos;
@@ -763,7 +791,7 @@ void Draw(ImDrawList* draw, ImVec2 display) {
     };
     std::vector<sdk::draw3d::WorldShapes> shapes;
     if (!g_previous.words.empty()) {
-        const float leave = leaveOf(g_previous);
+        const float leave = std::min(leaveOf(g_previous), pauseLeave);
         if (leave <= 0.0f) {
             g_previous = FlowLine{};
         } else {
@@ -771,7 +799,7 @@ void Draw(ImDrawList* draw, ImVec2 display) {
         }
     }
     if (!g_current.words.empty()) {
-        const float leave = leaveOf(g_current);
+        const float leave = std::min(leaveOf(g_current), pauseLeave);
         if (leave > 0.0f) AddLine(shapes, g_current, ms, leave, s, animate, view, display.y, now);
     }
     sdk::draw3d::SetWorldShapes(std::move(shapes));

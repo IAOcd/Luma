@@ -81,6 +81,7 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
 
     // --- The picture from sdk/blocks: at most 5 times a second, and only if it changed ---
     const double now = rainbow::Seconds();
+    sdk::blocks::SetCaveMode(caveMode_);
     if (now >= nextUpload_) {
         nextUpload_ = now + 0.2;
         if (pixels_.size() != static_cast<std::size_t>(kGrid) * kGrid) pixels_.assign(static_cast<std::size_t>(kGrid) * kGrid, 0);
@@ -241,6 +242,7 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
         y += m.capHeight + 3.0f * u;
         height += m.capHeight + 3.0f * u;
     };
+    if (sdk::blocks::CaveActive() && caveMode_ == 0) lineUnder(Tr("Cave"), rh::TextColor(0.7f));
     if (coords_ && havePlayer) {
         char text[64];
         std::snprintf(text, sizeof(text), "%d, %d, %d", static_cast<int>(std::floor(p.feet[0])), static_cast<int>(std::floor(p.feet[1])),
@@ -261,6 +263,9 @@ bool Minimap::DrawSettings() {
     changed |= ui::Toggle("Rotate with you", &rotate_, "(up = where you look; off = north up)");
     changed |= ui::Slider("Zoom (blocks to the edge)", &zoom_, 12.0f, 60.0f, "%.0f");
     changed |= ui::Slider("Size", &size_, 60.0f, 220.0f, "%.0f");
+    changed |= ui::Choice("Cave mode", &caveMode_, {"Auto", "Off", "Always"});
+    ui::Hint("Auto: when there's a roof over you (a cave, a mine, the Nether), the map shows the floor at your level and "
+             "the rock around it dark.");
     changed |= ui::Toggle("N, E, S, W", &cardinals_);
     changed |= ui::Toggle("Coordinates under it", &coords_);
     changed |= ui::Toggle("Show its cost", &showCost_, "(microseconds per frame)");
@@ -277,6 +282,7 @@ void Minimap::SaveSettings(nlohmann::json& out) const {
     out["zoom"] = zoom_;
     out["cardinals"] = cardinals_;
     out["coords"] = coords_;
+    out["cave"] = caveMode_;
 }
 
 void Minimap::LoadSettings(const nlohmann::json& in) {
@@ -287,6 +293,7 @@ void Minimap::LoadSettings(const nlohmann::json& in) {
     zoom_ = std::clamp(in.value("zoom", 40.0f), 12.0f, 60.0f);
     cardinals_ = in.value("cardinals", true);
     coords_ = in.value("coords", false);
+    caveMode_ = std::clamp(in.value("cave", 0), 0, 2);
 }
 
 }  // namespace luma::modules::world

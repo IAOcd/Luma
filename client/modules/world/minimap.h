@@ -44,6 +44,7 @@ private:
     float shownZoom_ = 0.0f;  // (animated toward zoom_)
     bool cardinals_ = true;   // N, E, S, W on the edge
     bool coords_ = false;     // your coordinates under the map
+    int caveMode_ = 0;        // 0 auto (a roof over you), 1 off, 2 always
     bool showCost_ = false;   // how many microseconds it costs per frame
     int textureX_ = 0, textureZ_ = 0;  // the world column at the texture's center
     ImTextureID texture_{};

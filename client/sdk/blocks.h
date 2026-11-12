@@ -39,6 +39,11 @@ bool Available();
 // game's BlockSource. Does this frame's share of the minimap's work.
 void OnRegion(void* region);
 
+// Cave mode (see blocks.cpp): 0 = automatic (when there's a roof over you),
+// 1 = never, 2 = always. CaveActive(): what the grid shows now.
+void SetCaveMode(int mode);
+bool CaveActive();
+
 // --- The minimap's grid (filled by OnRegion) --------------------------------------
 inline constexpr int kGrid = 128;  // blocks per side
 

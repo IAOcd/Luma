@@ -1553,6 +1553,8 @@ void DrawSettingsPage() {
     RowLabel("Unload Luma");
     KeybindButton("##unloadkey", config::g_unloadKey.load(), g_capture == CaptureTarget::UnloadKey,
                   CaptureTarget::UnloadKey, nullptr);
+    RowLabel("F1 also hides Luma's HUD");
+    if (Toggle("##f1hud", &theme::Get().f1HidesHud, ImGui::GetFrameHeight() * 0.95f)) config::MarkDirty();
     RowLabel("Reopen where you left it (s)");
     if (ImGui::SliderFloat("##reopen", &theme::Get().reopenSeconds, 0.0f, 15.0f, "%.1f")) config::MarkDirty();
     ImGui::PushTextWrapPos(0.0f);

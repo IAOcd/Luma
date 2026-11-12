@@ -2,6 +2,7 @@
 //  hud.cpp - Implementación del estilo del HUD
 // =============================================================================
 #include "render/hud.h"
+#include "render/font_fallback.h"
 #include "render/theme.h"
 #include "render/rainbow.h"
 #include "render/music.h"
@@ -9,6 +10,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cfloat>
 #include <cmath>
@@ -78,6 +80,9 @@ void LoadFonts(ImGuiIO& io, float uiScale) {
         const std::string utf8 = paths::ToUtf8(pixelPath);
         for (int k = 1; k <= kPixelSizes; ++k) {
             g_pixel[k - 1] = io.Fonts->AddFontFromFileTTF(utf8.c_str(), kPixelUnits * static_cast<float>(k), &config);
+            // Other alphabets (only the 4 smaller sizes: the bigger ones are
+            // rarely used and would make the font picture much bigger).
+            if (g_pixel[k - 1] != nullptr && k <= 4) fontfallback::MergeInto(io, kPixelUnits * static_cast<float>(k));
         }
         g_pixelAvailable = g_pixel[0] != nullptr;
     }
@@ -88,8 +93,19 @@ void LoadFonts(ImGuiIO& io, float uiScale) {
     if (std::filesystem::exists(smoothPath, ec)) {
         // Grande (36 px a 1080p): achicarla al dibujar se ve bien.
         g_smooth = io.Fonts->AddFontFromFileTTF(paths::ToUtf8(smoothPath).c_str(), 36.0f * uiScale);
+        if (g_smooth != nullptr) fontfallback::MergeInto(io, 36.0f * uiScale);
     }
     log::Info("HUD: fuente pixelada del juego {}.", g_pixelAvailable ? "encontrada" : "no encontrada (se usa la de Luma)");
+}
+
+std::atomic<bool> g_f1Hidden{false};
+
+void ToggleF1Hidden() {
+    g_f1Hidden.store(!g_f1Hidden.load());
+}
+
+bool F1Hidden() {
+    return g_f1Hidden.load();
 }
 
 ImFont* PixelFont() {

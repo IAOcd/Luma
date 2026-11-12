@@ -116,6 +116,13 @@ bool PixelFontAvailable();
 // The game's pixel font at its native size (11 units), or nullptr.
 ImFont* PixelFont();
 
+// F1: the game hides its HUD with F1 (for clean screenshots). Luma follows:
+// each F1 while playing flips this, and the HUD modules aren't drawn while
+// it's on. (The lyrics and the visualizer in the sky stay: they're part of
+// the world, like the clouds.)
+void ToggleF1Hidden();
+bool F1Hidden();
+
 void Save(nlohmann::json& out);
 void Load(const nlohmann::json& in);
 

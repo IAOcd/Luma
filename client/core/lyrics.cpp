@@ -24,6 +24,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/logger.h"
+#include "core/text_bidi.h"
 #include "core/media.h"
 #include "core/paths.h"
 #include "core/version.h"
@@ -242,6 +243,15 @@ Result ToResult(const Found& f, std::uint32_t trackId) {
         while (std::getline(in, raw)) {
             if (!raw.empty() && raw.back() == '\r') raw.pop_back();
             r.lines.push_back(Line{0, raw, {}});
+        }
+    }
+    // Right-to-left lines (Arabic, Hebrew): joined letters, in drawing order.
+    // Their word timings are dropped (the words were in the other order): the
+    // whole line lights up instead.
+    for (Line& line : r.lines) {
+        if (bidi::HasRtl(line.text)) {
+            line.text = bidi::Visual(line.text);
+            line.words.clear();
         }
     }
     r.status = r.lines.empty() ? Status::NotFound : Status::Found;

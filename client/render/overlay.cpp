@@ -55,7 +55,9 @@
 #include "render/input.h"
 #include "render/item_icons.h"
 #include "render/loading.h"
+#include "render/font_fallback.h"
 #include "render/menu.h"
+#include "render/music.h"
 #include "render/notifications.h"
 #include "render/postfx.h"
 #include "render/theme.h"
@@ -254,6 +256,7 @@ void LoadFonts() {
     io.Fonts->Clear();
     theme::Fonts& fonts = theme::GetFonts();
     fonts = theme::Fonts{};
+    fontfallback::BeginBuild();  // the letters of other alphabets that songs needed (render/font_fallback.h)
 
     wchar_t windowsDir[MAX_PATH];
     GetWindowsDirectoryW(windowsDir, MAX_PATH);
@@ -264,7 +267,9 @@ void LoadFonts() {
         if (!std::filesystem::exists(path, ec)) {
             return nullptr;
         }
-        return io.Fonts->AddFontFromFileTTF(paths::ToUtf8(path).c_str(), size);
+        ImFont* font = io.Fonts->AddFontFromFileTTF(paths::ToUtf8(path).c_str(), size);
+        if (font != nullptr) fontfallback::MergeInto(io, size);  // + Japanese, Korean, Arabic... if needed
+        return font;
     };
 
     const float base = theme::Get().fontSize * theme::UiScale();
@@ -437,7 +442,9 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     // En los menús del juego (el juego soltó el mouse) el HUD se esconde para
     // no quedar encima de ellos. Con el menú de Luma abierto sí se dibuja.
     const bool inGameMenu = !menuOpen && hud::GetStyle().hideInGameMenus && sdk::mouse::GameMouseState() == 0;
-    if (!inGameMenu && !(cinematic::HideHud() && !menuOpen)) {
+    music::DrawWorldEffects();  // lyrics and visualizer in the sky (also with the HUD hidden)
+    const bool f1Hidden = hud::F1Hidden() && theme::Get().f1HidesHud && !menuOpen;
+    if (!inGameMenu && !(cinematic::HideHud() && !menuOpen) && !f1Hidden) {
         modules::Manager::RenderHud(menuOpen && hudeditor::IsActive());
     }
     cinematic::Draw();  // barras de cine / catalejo del zoom

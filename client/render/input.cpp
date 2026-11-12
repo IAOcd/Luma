@@ -21,6 +21,7 @@
 //  la historia completa está en el README.
 // =============================================================================
 #include "render/input.h"
+#include "render/hud.h"
 
 #include <intrin.h>  // _ReturnAddress: desde dónde nos llamaron
 
@@ -285,6 +286,10 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
                 overlay::ToggleMenu();
             }
             return 0;
+        }
+        // F1: the game hides its HUD; Luma's HUD follows (the key still reaches the game).
+        if (vk == VK_F1 && keyDown && !isRepeat && !overlay::IsMenuOpen() && PlayingInGame()) {
+            hud::ToggleF1Hidden();
         }
         // 3. La tecla del menú. Si ImGui espera texto (la caja de búsqueda),
         //    la letra se escribe en vez de cerrar el menú.

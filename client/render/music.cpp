@@ -15,8 +15,10 @@
 #include "core/spotify.h"
 #include "core/tr.h"
 #include "render/gpu.h"
+#include "render/font_fallback.h"
 #include "render/icons.h"
 #include "render/lyric_flow.h"
+#include "render/visualizer.h"
 #include "render/rainbow.h"
 #include "render/theme.h"
 #include "render/ui.h"
@@ -610,6 +612,17 @@ const lyrics::Result& CurrentLyrics() {
     if (lyrics::Snapshot(version, fresh, v)) {
         result = std::move(fresh);
         version = v;
+        // Lyrics in another alphabet: make sure the fonts have its letters.
+        for (const lyrics::Line& line : result.lines) fontfallback::Need(line.text.c_str());
+    }
+    // ... and the song's name, artist and album.
+    static std::uint32_t lastTrack = 0;
+    const media::Track t = media::Current();
+    if (t.trackId != lastTrack) {
+        lastTrack = t.trackId;
+        fontfallback::Need(t.title);
+        fontfallback::Need(t.artist);
+        fontfallback::Need(t.album);
     }
     return result;
 }
@@ -1018,6 +1031,10 @@ const std::vector<spotify::QueueItem>& CurrentQueue() {
     if (spotify::Queue(version, fresh, v)) {
         queue = std::move(fresh);
         version = v;
+        for (const auto& item : queue) {
+            fontfallback::Need(item.title.c_str());
+            fontfallback::Need(item.artist.c_str());
+        }
     }
     return queue;
 }
@@ -1079,6 +1096,22 @@ void DrawUpNext(ImVec2 min, ImVec2 max) {
         draw->AddText(mid, mid->FontSize, ImVec2(textX, y), U(p.text, a), title);
         draw->AddText(reg, reg->FontSize, ImVec2(textX, y + mid->FontSize + fs * 0.1f), U(p.textDim, a), artist);
         y += rowH;
+    }
+}
+
+void DrawWorldEffects() {
+    const Settings& s = Get();
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    if (s.active && s.lyricFlow) {
+        lyrics::Want(lyrics::kHud, true);
+        render::lyricflow::Draw(ImGui::GetForegroundDrawList(), display);
+    } else {
+        render::lyricflow::Stop();
+    }
+    if (s.active && VisualizerOn()) {
+        render::visualizer::Draw(display);
+    } else {
+        render::visualizer::Stop();
     }
 }
 

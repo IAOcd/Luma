@@ -23,6 +23,7 @@ add_library(Luma SHARED
     core/media.cpp                          # la música que suena en Windows (módulo de música)
     core/lyrics.cpp                         # las letras de la canción (LRCLIB)
     core/audio_viz.cpp                      # el sonido de la musica, para el visualizer
+    core/text_bidi.cpp                      # arabe y hebreo: de derecha a izquierda
     core/spotify.cpp                        # conexión opcional con Spotify (la cola: "A continuación")
     ${PROJECT_SOURCE_DIR}/shared/skin_pack.cpp  # tus skins como paquete del juego
     ${PROJECT_SOURCE_DIR}/shared/i18n.cpp   # textos en inglés, español y portugués (los mismos del launcher)
@@ -60,6 +61,7 @@ add_library(Luma SHARED
     render/hud_editor.cpp
     render/icons.cpp
     render/lyric_flow.cpp
+    render/font_fallback.cpp
     render/visualizer.cpp
     render/nanosvg_impl.cpp
     render/input.cpp

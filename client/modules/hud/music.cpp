@@ -152,16 +152,8 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
     const float frac = t.duration > 0.0 ? static_cast<float>(t.position / t.duration) : 0.0f;
     const int style = std::clamp(s.hudStyle, 0, 6);
     lyrics::Want(lyrics::kHud, style == 5 || style == 6 || s.lyricFlow);
-    if (s.lyricFlow) {
-        render::lyricflow::Draw(frame.draw, ImGui::GetIO().DisplaySize);  // the lyrics in the sky
-    } else {
-        render::lyricflow::Stop();
-    }
-    if (mu::VisualizerOn()) {
-        render::visualizer::Draw(ImGui::GetIO().DisplaySize);  // the visualizer around you
-    } else {
-        render::visualizer::Stop();
-    }
+    // (Lyric Flow and the visualizer are drawn by render::music::DrawWorldEffects,
+    // every frame, even while the HUD is hidden: they're part of the world.)
 
 
 

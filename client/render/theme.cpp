@@ -195,6 +195,7 @@ void Save(nlohmann::json& out) {
     t["backgroundDim"] = g_settings.backgroundDim;
     t["moduleView"] = g_settings.moduleView;
     t["reopenSeconds"] = g_settings.reopenSeconds;
+    t["f1HidesHud"] = g_settings.f1HidesHud;
     t["efficiency"] = {{"on", g_settings.efficiency}, {"animations", g_settings.effAnimations},
                        {"blur", g_settings.effBlur}, {"shadows", g_settings.effShadows}, {"sounds", g_settings.effSounds}};
     out["theme"] = std::move(t);
@@ -223,6 +224,7 @@ void Load(const nlohmann::json& in) {
         g_settings.backgroundDim = std::clamp(t.value("backgroundDim", defaults.backgroundDim), 0.0f, 0.8f);
         g_settings.moduleView = std::clamp(t.value("moduleView", defaults.moduleView), 0, 1);
         g_settings.reopenSeconds = std::clamp(t.value("reopenSeconds", defaults.reopenSeconds), 0.0f, 15.0f);
+        g_settings.f1HidesHud = t.value("f1HidesHud", defaults.f1HidesHud);
         if (t.contains("efficiency") && t["efficiency"].is_object()) {
             const nlohmann::json& e = t["efficiency"];
             g_settings.efficiency = e.value("on", defaults.efficiency);

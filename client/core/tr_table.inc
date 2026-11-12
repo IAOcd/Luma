@@ -240,6 +240,7 @@
 {"Frames en el gráfico", "Frames in the graph", "Quadros no gráfico"},
 {"Con un elemento del HUD activo, Luma dibuja cada frame y su costo sube un poco.", "With a HUD element on, Luma draws every frame and its cost goes up a little.", "Com um elemento do HUD ativo, o Luma desenha cada quadro e o custo sobe um pouco."},
 {"Tiempo de GPU", "GPU time", "Tempo de GPU"},
+{"F1 también oculta el HUD de Luma", "F1 also hides Luma's HUD", "F1 também esconde o HUD do Luma"},
 {"Paleta del álbum", "Album palette", "Paleta do álbum"},
 {"Colores del álbum cambiando", "Album colors changing", "Cores do álbum mudando"},
 {"Álbum + mi color", "Album + my color", "Álbum + minha cor"},

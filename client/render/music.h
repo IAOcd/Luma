@@ -236,6 +236,10 @@ bool DrawSpotifySettings();
 // The visualizer section (Music > Styles).
 bool DrawVisualizerSettings();
 bool VisualizerOn();
+// Lyric Flow and the visualizer (things IN the world): the overlay calls it
+// every frame, also while the HUD is hidden (F1, a game menu), so they never
+// freeze half-way. Nothing happens if the music module is off.
+void DrawWorldEffects();
 
 // The lyrics panel of the Music page: synced lyrics scroll by themselves.
 // Draws in the current ImGui window, inside min..max.

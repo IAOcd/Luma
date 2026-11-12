@@ -89,11 +89,126 @@ struct Kind {
     bool air = false;   // nothing: keep going down
     bool skip = false;  // something you see through on a map (grass, flowers, torches...): keep going down
     bool water = false; // water: the map shows how deep it is
+    bool own = false;   // the color comes from Luma's table (else: the game's map color, or gray)
 };
 std::unordered_map<std::uintptr_t, Kind> g_kinds;
 
 bool Has(const char* name, const char* part) {
     return std::strstr(name, part) != nullptr;
+}
+
+// --- Every block's color, from the game's own textures --------------------------------
+// client/sdk/block_colors.inc is made by scripts/gen_block_colors.py: the
+// average color of each block's top texture (1300+ blocks, every version).
+// Lookup: the exact name first; then the textures whose name has all the
+// words of the block ("orange_wool" -> "wool_colored_orange"), the shortest
+// one; a few renamed blocks by hand. Done once per kind of block.
+struct BlockColor {
+    const char* name;
+    std::uint32_t rgb;
+};
+#include "sdk/block_colors.inc"
+
+struct ColorIndex {
+    std::unordered_map<std::string, std::uint32_t> blocks, textures;
+    std::vector<std::pair<std::vector<std::string>, std::uint32_t>> words;  // texture -> its words
+};
+
+std::vector<std::string> Words(const std::string& s) {
+    std::vector<std::string> out;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const std::size_t j = s.find('_', i);
+        const std::string w = s.substr(i, j == std::string::npos ? std::string::npos : j - i);
+        if (!w.empty()) out.push_back(w);
+        if (j == std::string::npos) break;
+        i = j + 1;
+    }
+    return out;
+}
+
+const ColorIndex& Index() {
+    static const ColorIndex index = [] {
+        ColorIndex x;
+        for (const BlockColor& b : kBlockColors) x.blocks.emplace(b.name, b.rgb);
+        for (const BlockColor& t : kTextureColors) {
+            x.textures.emplace(t.name, t.rgb);
+            x.words.emplace_back(Words(t.name), t.rgb);
+        }
+        return x;
+    }();
+    return index;
+}
+
+bool GameColor(const char* fullName, std::uint32_t& rgb) {
+    const ColorIndex& x = Index();
+    std::string name = fullName;
+    const std::size_t colon = name.find(':');
+    if (colon != std::string::npos) name = name.substr(colon + 1);
+    // Renamed blocks (the textures file keeps their old names).
+    static const std::pair<const char*, const char*> kAliases[] = {
+        {"grass_block", "grass"}, {"dirt_path", "grass_path"}, {"oak_log", "log"}, {"oak_planks", "planks"},
+        {"oak_leaves", "leaves"}, {"stone_bricks", "stonebrick"}, {"bricks", "brick_block"}, {"sea_lantern", "seaLantern"},
+        {"magma", "magma"}, {"terracotta", "hardened_clay"}, {"snow_layer", "snow_layer"}, {"powder_snow", "snow"},
+    };
+    for (const auto& [from, to] : kAliases) {
+        if (name == from) {
+            const auto it = x.blocks.find(to);
+            if (it != x.blocks.end()) {
+                rgb = it->second;
+                return true;
+            }
+        }
+    }
+    if (const auto it = x.blocks.find(name); it != x.blocks.end()) {
+        rgb = it->second;
+        return true;
+    }
+    if (const auto it = x.textures.find(name); it != x.textures.end()) {
+        rgb = it->second;
+        return true;
+    }
+    // Shapes made of a material ("oak_stairs", "stone_brick_slab"): the material's words.
+    std::vector<std::string> words = Words(name);
+    static const char* const kShapes[] = {"stairs", "slab", "double", "wall", "fence", "gate", "door", "trapdoor",
+                                          "button", "pressure", "plate", "block", "lit", "waxed"};
+    std::vector<std::string> wanted;
+    for (const std::string& w : words) {
+        bool shape = false;
+        for (const char* sh : kShapes) shape |= w == sh;
+        if (!shape) wanted.push_back(w);
+    }
+    if (wanted.empty()) wanted = words;
+    // The texture with all those words (a word may be part of a longer one:
+    // "brick" in "bricks"), the one with fewest extra words; "top" textures win.
+    int best = 1 << 20;
+    std::uint32_t bestRgb = 0;
+    for (const auto& [twords, color] : x.words) {
+        bool all = true;
+        for (const std::string& w : wanted) {
+            bool found = false;
+            for (const std::string& t : twords) found |= t.find(w) != std::string::npos || w.find(t) != std::string::npos && t.size() >= 4;
+            if (!found) {
+                all = false;
+                break;
+            }
+        }
+        if (!all) continue;
+        int score = static_cast<int>(twords.size()) * 4;
+        for (const std::string& t : twords) {
+            if (t == "top") score -= 3;
+            if (t == "side" || t == "bottom" || t == "carried" || t == "inner") score += 2;
+        }
+        if (score < best) {
+            best = score;
+            bestRgb = color;
+        }
+    }
+    if (best < (1 << 20)) {
+        rgb = bestRgb;
+        return true;
+    }
+    return false;
 }
 
 Kind Classify(const char* name) {
@@ -105,15 +220,22 @@ Kind Classify(const char* name) {
         return k;
     }
     // Small things a map looks through.
-    static const char* const kSee[] = {"short_grass", "tall_grass", "fern", "flower", "poppy", "dandelion", "tulip",
-                                       "orchid", "allium", "bluet", "daisy", "torch", "rail", "button", "lever",
-                                       "sapling", "mushroom", "vine", "dead_bush", "sugar_cane", "carpet", "pressure_plate",
-                                       "tripwire", "redstone_wire", "glass_pane", "sign", "banner", "bush"};
+    static const char* const kSee[] = {"short_grass", "tall_grass", "tallgrass", "fern", "torch", "rail", "button", "lever",
+                                       "sapling", "vine", "dead_bush", "pressure_plate", "tripwire", "redstone_wire",
+                                       "glass_pane", "sign", "banner", "bush", "seagrass", "kelp"};
     for (const char* s : kSee) {
         if (Has(name, s)) {
             k.skip = true;
             return k;
         }
+    }
+    // The game's own color (from its textures), for every block it knows.
+    std::uint32_t game = 0;
+    if (GameColor(name, game)) {
+        k.rgb = game;
+        k.own = true;
+        k.water = Has(name, "water");
+        return k;
     }
     struct Rule {
         const char* part;
@@ -145,6 +267,7 @@ Kind Classify(const char* name) {
         for (const Rule& r : kColors) {
             if (Has(name, r.part)) {
                 k.rgb = r.rgb;
+                k.own = true;
                 return k;
             }
         }
@@ -153,10 +276,101 @@ Kind Classify(const char* name) {
         if (Has(name, r.part)) {
             k.rgb = r.rgb;
             k.water = std::strcmp(r.part, "water") == 0;
+            k.own = true;
             return k;
         }
     }
     return k;  // anything else: a neutral gray
+}
+
+// --- The game's own MAP COLOR ----------------------------------------------------------
+// Every kind of block (BlockLegacy) keeps the color the game uses for the
+// paper maps: 4 numbers 0..1 (red, green, blue, opacity). Luma uses it for
+// every block its own table doesn't know, so NO block is left gray (also the
+// ones a future update adds). Where it is isn't known in this version, so
+// it's FOUND: among the kinds of blocks already seen, the place where grass
+// is green, water is blue, sand is light yellow and stone is gray, all at
+// the same offset, is the map color. What it finds goes to the log.
+int g_colorOffset = -1;  // (off: in this version the map color is not a plain field; the textures table is used instead)
+std::unordered_map<std::string, std::uintptr_t> g_legacyByName;  // a few known kinds (for the search)
+
+// A color as 4 floats 0..1 (red, green, blue, opacity).
+bool ReadColor(std::uintptr_t base, int offset, float c[4]) {
+    if (!SafeCopy(base + static_cast<std::uintptr_t>(offset), c, sizeof(float) * 4)) return false;
+    for (int i = 0; i < 4; ++i) {
+        if (!std::isfinite(c[i]) || c[i] < 0.0f || c[i] > 1.0001f) return false;
+    }
+    return c[0] + c[1] + c[2] > 0.05f;
+}
+
+// Where the color is: in the BlockLegacy (true) or in the Block itself (false).
+bool g_colorInLegacy = true;
+std::unordered_map<std::string, std::uintptr_t> g_blockByName;  // a few known Blocks (for the search)
+int g_colorTries = 0;
+
+bool LooksLike(const char* what, const float c[4]) {
+    const float r = c[0], g = c[1], b = c[2];
+    if (std::strcmp(what, "grass") == 0) return g > r + 0.06f && g > b + 0.06f;
+    if (std::strcmp(what, "water") == 0) return b > r + 0.15f && b > g + 0.05f;
+    if (std::strcmp(what, "sand") == 0) return r > 0.65f && g > 0.55f && b < r && b < g;
+    if (std::strcmp(what, "stone") == 0) return std::fabs(r - g) < 0.08f && std::fabs(g - b) < 0.08f && r > 0.25f && r < 0.75f;
+    if (std::strcmp(what, "dirt") == 0) return r > g && g > b && r > 0.3f;
+    return false;
+}
+
+void FindMapColor() {
+    struct Sample {
+        const char* what;
+        const char* name;
+    };
+    const Sample kSamples[] = {{"grass", "minecraft:grass_block"}, {"water", "minecraft:water"}, {"sand", "minecraft:sand"},
+                               {"stone", "minecraft:stone"},       {"dirt", "minecraft:dirt"}};
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool inLegacy = pass == 0;
+        const auto& table = inLegacy ? g_legacyByName : g_blockByName;
+        std::vector<std::pair<const char*, std::uintptr_t>> have;
+        for (const Sample& smp : kSamples) {
+            const auto it = table.find(smp.name);
+            if (it != table.end()) have.emplace_back(smp.what, it->second);
+        }
+        if (have.size() < 3 || std::strcmp(have[0].first, "grass") != 0) return;  // grass + 2 others: wait for more
+        const int limit = inLegacy ? 0x1000 : 0x400;
+        for (int off = 0; off < limit; off += 4) {
+            bool ok = true;
+            float c[4];
+            for (const auto& [what, base] : have) {
+                if (!ReadColor(base, off, c) || !LooksLike(what, c)) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (!ok) continue;
+            ReadColor(have[0].second, off, c);
+            g_colorOffset = off;
+            g_colorInLegacy = inLegacy;
+            log::Info("Blocks: the game's map color found at {}+0x{:X} (grass {:.2f} {:.2f} {:.2f}, checked with {} blocks).",
+                      inLegacy ? "BlockLegacy" : "Block", off, c[0], c[1], c[2], have.size());
+            g_kinds.clear();  // classify again, now with the map colors
+            return;
+        }
+    }
+    // Not found with these blocks: try again when more kinds are known (a few times).
+    if (++g_colorTries >= 6) {
+        g_colorOffset = -1;
+        // A clue for the next try: colors that look green in the grass's BlockLegacy.
+        const auto it = g_legacyByName.find("minecraft:grass_block");
+        if (it != g_legacyByName.end()) {
+            int shown = 0;
+            for (int off = 0; off < 0x1000 && shown < 12; off += 4) {
+                float c[4];
+                if (ReadColor(it->second, off, c) && LooksLike("grass", c)) {
+                    log::Info("Blocks: greenish at BlockLegacy+0x{:X}: {:.3f} {:.3f} {:.3f} {:.3f}", off, c[0], c[1], c[2], c[3]);
+                    ++shown;
+                }
+            }
+        }
+        log::Warn("Blocks: the game's map color wasn't found (unknown blocks stay gray).");
+    }
 }
 
 const Kind* KindOf(void* block) {
@@ -167,6 +381,20 @@ const Kind* KindOf(void* block) {
     Kind k;
     if (NameAt(key, g_legacyOffset, g_nameOffset, name, sizeof(name))) {
         k = Classify(name);
+        std::uintptr_t legacy = 0;
+        if (g_legacyOffset >= 0 && SafeRead(key + static_cast<std::uintptr_t>(g_legacyOffset), legacy) && LooksLikePointer(legacy)) {
+            if (g_colorOffset == -2 && g_legacyByName.size() < 256) {
+                const bool fresh = g_legacyByName.emplace(name, legacy).second;
+                g_blockByName.emplace(name, key);
+                if (fresh) FindMapColor();
+            }
+            // Not in Luma's table: the game's own map color.
+            float c[4];
+            if (!k.own && !k.air && !k.skip && g_colorOffset >= 0 && ReadColor(g_colorInLegacy ? legacy : key, g_colorOffset, c)) {
+                k.rgb = (static_cast<std::uint32_t>(c[0] * 255.0f) << 16) | (static_cast<std::uint32_t>(c[1] * 255.0f) << 8) |
+                        static_cast<std::uint32_t>(c[2] * 255.0f);
+            }
+        }
     }
     if (g_kinds.size() > 20000) g_kinds.clear();  // (never in practice: a safety net)
     return &(g_kinds[key] = k);
@@ -270,7 +498,11 @@ void OnRegion(void* region) {
         const float age = now - col.scannedAt;
         const bool isNew = !same || (!col.known && age > 2.0f);
         if (!isNew) {
-            if (age < 6.0f || refreshed >= 24) continue;
+            // Near you (12 blocks): every second, so what you place or break
+            // shows at once. The rest: every 6 seconds.
+            const int ddx = wx - cx, ddz = wz - cz;
+            const bool isNear = ddx * ddx + ddz * ddz <= 12 * 12;
+            if (age < (isNear ? 1.0f : 6.0f) || refreshed >= (isNear ? 96 : 24)) continue;
             ++refreshed;
         }
         int start = top;

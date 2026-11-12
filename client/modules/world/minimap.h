@@ -21,6 +21,10 @@
 
 #include "modules/module.h"
 
+namespace luma::render::pixel {
+struct Form;
+}
+
 namespace luma::modules::world {
 
 class Minimap : public Module {
@@ -40,6 +44,9 @@ public:
 
 private:
     bool DrawWaypointSettings();
+    // Its page in the world map's sidebar (everything to customize it).
+    bool DrawMapPanel(render::pixel::Form& form);
+    static bool MapPanel(render::pixel::Form& form);
     void DrawWorldWaypoints();
     float size_ = 110.0f;     // HUD pixels per side
     int shape_ = 1;           // 0 square, 1 round
@@ -49,6 +56,14 @@ private:
     bool cardinals_ = true;   // N, E, S, W on the edge
     bool coords_ = false;     // your coordinates under the map
     int caveMode_ = 0;        // 0 auto (a roof over you), 1 off, 2 always
+    // The look of the minimap itself (set up in the world map's sidebar)
+    int frameMode_ = 1;               // the ring around it: 0 accent, 1 text color, 2 own color, 3 none
+    float frameColor_[3] = {1.0f, 1.0f, 1.0f};
+    int frameWidth_ = 1;              // HUD pixels
+    float backOpacity_ = 0.6f;        // the background behind the map
+    float mapOpacity_ = 1.0f;         // the map itself
+    float arrowColor_[3] = {0.98f, 1.0f, 1.0f};  // you
+    bool northRed_ = true;            // the N in red
     bool waypoints_ = true;   // show the waypoints (modules/world/waypoints.h)
     bool waypointNames_ = true;  // and the name of the nearest ones
     int addKey_ = 'B';        // the key that saves a waypoint where you are
@@ -65,7 +80,8 @@ private:
     double releasedAt_ = -1.0;    // when the game let go of the mouse (-1 = it has it)
     unsigned menusSeen_ = 0;
     bool hiddenScreen_ = false;
-    int aliveDim_ = -1;   // the mouse is free and no known screen is drawn
+    int aliveDim_ = -1;
+    std::uint32_t hiddenWorld_ = 0;  // (which world it was when the mouse was freed)   // the mouse is free and no known screen is drawn
     bool showCost_ = false;   // how many microseconds it costs per frame
     int textureX_ = 0, textureZ_ = 0;  // the world column at the texture's center
     ImTextureID texture_{};
@@ -75,6 +91,8 @@ private:
     std::vector<std::uint32_t> view_;  // the map's own picture (512 x 512): the square it shows
     int viewX_ = 0, viewZ_ = 0;        // its center (world block)
     float viewR_ = 0.0f;               // blocks from its center to its edge
+    std::uint32_t lookVersion_ = 0;    // (repaint when the look changes)
+    std::uint32_t session_ = 0, worldSession_ = 0;  // (sdk/blocks' new starts)
 };
 
 }  // namespace luma::modules::world

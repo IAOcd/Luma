@@ -25,12 +25,16 @@
 #include "core/tr.h"
 #include "render/gpu.h"
 #include "render/hud.h"
+#include "core/config.h"
 #include "core/logger.h"
 #include "render/notifications.h"
+#include "render/pixel_art.h"
+#include "render/theme.h"
 #include "render/overlay.h"
 #include "render/icons.h"
 #include "render/rainbow.h"
 #include "render/ui.h"
+#include "modules/world/map_look.h"
 #include "modules/world/map_store.h"
 #include "modules/world/waypoints.h"
 #include "render/input.h"
@@ -51,92 +55,19 @@ namespace {
 
 constexpr float kPi = 3.14159265358979f;
 
+Minimap* g_minimap = nullptr;  // (for its page in the world map's sidebar)
+
 ImU32 WithAlpha(ImU32 c, float a) {
     const ImU32 alpha = static_cast<ImU32>(((c >> IM_COL32_A_SHIFT) & 0xFF) * std::clamp(a, 0.0f, 1.0f));
     return (c & ~IM_COL32_A_MASK) | (alpha << IM_COL32_A_SHIFT);
 }
 
-// --- Waypoint drawing, made of Minecraft pixels (the minimap and the world) ---------
-// Everything sits on a grid of "q" screen pixels, so nothing looks blurry.
-struct PixelText {
-    ImFont* font = nullptr;
-    float size = 0, capTop = 0, capHeight = 0, q = 1;
-    bool pixel = false;
-};
-
-// The game's font with q screen pixels per font pixel (or the smooth one).
-PixelText TextAt(int qi) {
-    PixelText t;
-    t.q = static_cast<float>(qi);
-    t.font = render::hud::PixelFontAt(qi);
-    t.pixel = t.font != nullptr;
-    if (!t.pixel) t.font = render::hud::SmoothFont();
-    t.size = t.pixel ? 11.0f * t.q : 9.0f * t.q;
-    t.capTop = t.pixel ? 2.0f * t.q : 0.2f * t.size;
-    t.capHeight = t.pixel ? 7.0f * t.q : 0.55f * t.size;
-    return t;
-}
-
-// A text's visible width (the pixel font leaves one pixel after each letter).
-float TextWidth(const PixelText& t, const char* text) {
-    const float w = t.font->CalcTextSizeA(t.size, FLT_MAX, 0.0f, text).x;
-    return t.pixel ? w - t.q : w;
-}
-
-ImU32 Shade(const float* rgb, float k, int alpha) {
-    return IM_COL32(static_cast<int>(std::clamp(rgb[0] * k, 0.0f, 1.0f) * 255.0f),
-                    static_cast<int>(std::clamp(rgb[1] * k, 0.0f, 1.0f) * 255.0f),
-                    static_cast<int>(std::clamp(rgb[2] * k, 0.0f, 1.0f) * 255.0f), alpha);
-}
-
-// The banner: a 7 x 8 body (lighter top row, darker bottom, like the game's
-// buttons) and a point of 2 steps whose tip touches the place; a hard shadow
-// one pixel down-right; the initial inside, white with the game's text
-// shadow (dark on light colors).
-void Banner(ImDrawList* draw, ImVec2 tip, const PixelText& t, const float* rgb, int alpha, const char* name) {
-    const float q = t.q;
-    auto rect = [&](ImVec2 o, float x0, float y0, float x1, float y1, ImU32 color) {
-        draw->AddRectFilled(ImVec2(o.x + x0 * q, o.y + y0 * q), ImVec2(o.x + x1 * q, o.y + y1 * q), color);
-    };
-    auto shape = [&](ImVec2 o, ImU32 body, ImU32 top, ImU32 bottom) {
-        rect(o, -3, -10, 4, -2, body);
-        rect(o, -3, -10, 4, -9, top);
-        rect(o, -3, -3, 4, -2, bottom);
-        rect(o, -2, -2, 3, -1, bottom);
-        rect(o, -1, -1, 2, 0, bottom);
-    };
-    const ImU32 shadow = IM_COL32(0, 0, 0, alpha * 110 / 255);
-    shape(ImVec2(tip.x + q, tip.y + q), shadow, shadow, shadow);
-    shape(tip, Shade(rgb, 1.0f, alpha), Shade(rgb, 1.3f, alpha), Shade(rgb, 0.68f, alpha));
-    char initial[8] = {0};
-    const unsigned char first = static_cast<unsigned char>(name[0]);
-    if (first >= 0x80) {
-        const int n = first >= 0xF0 ? 4 : first >= 0xE0 ? 3 : 2;  // (a letter of another alphabet)
-        for (int i = 0; i < n && name[i] != 0; ++i) initial[i] = name[i];
-    } else {
-        initial[0] = first != 0 ? static_cast<char>(std::toupper(first)) : '?';
-    }
-    const float lum = 0.299f * rgb[0] + 0.587f * rgb[1] + 0.114f * rgb[2];
-    const ImVec2 tp(std::floor(tip.x + 0.5f * q - TextWidth(t, initial) * 0.5f), tip.y - 9.0f * q - t.capTop);
-    if (lum > 0.7f) {
-        draw->AddText(t.font, t.size, tp, IM_COL32(40, 40, 40, alpha), initial);
-    } else {
-        draw->AddText(t.font, t.size, ImVec2(tp.x + q, tp.y + q), Shade(rgb, 0.25f, alpha), initial);
-        draw->AddText(t.font, t.size, tp, IM_COL32(255, 255, 255, alpha), initial);
-    }
-}
-
-// A line of text like the game's name tags: white on a dark see-through
-// band, centered on "cx", its bottom at "bottom", kept between minX and maxX.
-void NameTag(ImDrawList* draw, float cx, float bottom, const PixelText& t, const char* text, ImU32 color, float minX, float maxX) {
-    const float q = t.q;
-    const float w = TextWidth(t, text);
-    float x0 = std::floor(cx - w * 0.5f) - q;
-    x0 = std::clamp(x0, minX, std::max(minX, maxX - w - 2.0f * q));
-    bottom = std::floor(bottom);
-    draw->AddRectFilled(ImVec2(x0, bottom - t.capHeight - 2.0f * q), ImVec2(x0 + w + 2.0f * q, bottom), IM_COL32(0, 0, 0, 100));
-    draw->AddText(t.font, t.size, ImVec2(x0 + q, bottom - t.capHeight - q - t.capTop), color, text);
-}
+// The pixel-art pieces (banners, name tags) live in render/pixel_art.h.
+using render::pixel::Banner;
+using render::pixel::NameTag;
+using render::pixel::PixelText;
+using render::pixel::Shade;
+using render::pixel::TextAt;
 
 }  // namespace
 
@@ -150,6 +81,11 @@ Minimap::Minimap()
     l.y = 0.16f;
     l.anchorX = 1.0f;
     SetDefaultLayout(l);
+    g_minimap = this;
+}
+
+bool Minimap::MapPanel(render::pixel::Form& form) {
+    return g_minimap != nullptr && g_minimap->DrawMapPanel(form);
 }
 
 const char* Minimap::IconSvg() const {
@@ -158,11 +94,13 @@ const char* Minimap::IconSvg() const {
 
 void Minimap::OnEnable() {
     sdk::blocks::Want(true);
+    render::worldmap::SetMinimapPanel(&Minimap::MapPanel);
     version_ = 0;
 }
 
 void Minimap::OnDisable() {
     sdk::blocks::Want(false);
+    render::worldmap::SetMinimapPanel(nullptr);
     waypoints::Flush();
     mapstore::Flush();
     sdk::draw3d::SetWorldShapes({}, sdk::draw3d::kChannelWaypoints);
@@ -183,8 +121,26 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
     // --- The picture from sdk/blocks: at most 5 times a second, and only if it changed ---
     const double now = rainbow::Seconds();
     sdk::blocks::SetCaveMode(caveMode_);
+    {
+        const maplook::Look& look = maplook::Get();
+        sdk::blocks::SetPainting(look.relief, look.heightTint, look.waterDepth, look.shores, look.texture);
+    }
+    // A new world: forget the waypoints and the world map of the old one at
+    // once (and wait until it's sure which world this is).
+    if (sdk::blocks::WorldSession() != worldSession_) {
+        worldSession_ = sdk::blocks::WorldSession();
+        waypoints::ForgetWorld(now);
+        mapstore::SetWorld("", -1);
+    }
+    // A new start (world or dimension): the picture of before is dropped.
+    if (sdk::blocks::Session() != session_) {
+        session_ = sdk::blocks::Session();
+        std::fill(pixels_.begin(), pixels_.end(), 0u);
+        version_ = 0;
+        viewR_ = 0.0f;
+    }
     waypoints::Update(now, sdk::blocks::Dimension());
-    mapstore::SetWorld(waypoints::StorageName(), sdk::blocks::Dimension());
+    if (render::worldmap::TakeSettingsChanged()) config::MarkDirty();  // (the world map's settings live here)
     DrawWorldWaypoints();
     // --- Zoom (smooth) and where you are ---
     // How many blocks from the center to the edge. A turning square needs
@@ -215,18 +171,29 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
             int cx = 0, cz = 0;
             std::uint32_t v = 0;
             const int copyR = std::min(half, static_cast<int>(std::max(needR, target * 1.42f)) + 12);
-            if (sdk::blocks::CopyGrid(version_, pixels_.data(), cx, cz, v, copyR)) {
+            std::uint32_t copySession = 0;
+            int copyDim = -1;
+            if (sdk::blocks::CopyGrid(version_, pixels_.data(), cx, cz, v, copyR, &copySession, &copyDim)) {
                 version_ = v;
                 textureX_ = cx;
                 textureZ_ = cz;
-                // The world map remembers it (the surface only: not cave mode).
-                if (!sdk::blocks::CaveActive()) mapstore::Merge(pixels_.data(), kGrid, cx - half, cz - half);
+                // The world map remembers it, ONLY when it's sure where this is:
+                // the world is known and the copy is of this world and
+                // dimension. The surface; in the Nether, what cave mode sees
+                // (there's always a roof there).
+                const bool sure = waypoints::HaveWorld() && copySession == sdk::blocks::Session() && copyDim >= 0;
+                if (sure) mapstore::SetWorld(waypoints::StorageName(), copyDim);
+                if (sure && (!sdk::blocks::CaveActive() || copyDim == 1)) mapstore::Merge(pixels_.data(), kGrid, cx - half, cz - half);
                 repaint = true;
             }
         }
         const float wantR = std::min(static_cast<float>(half - 1), needR + 8.0f);
         const float pxNow = havePlayer ? p.feet[0] : static_cast<float>(textureX_);
         const float pzNow = havePlayer ? p.feet[2] : static_cast<float>(textureZ_);
+        if (maplook::Version() != lookVersion_) {
+            lookVersion_ = maplook::Version();
+            repaint = true;
+        }
         if (std::fabs(wantR - viewR_) > viewR_ * 0.08f || std::fabs(pxNow - static_cast<float>(viewX_)) > viewR_ * 0.12f ||
             std::fabs(pzNow - static_cast<float>(viewZ_)) > viewR_ * 0.12f || wantR > viewR_) {
             repaint = true;
@@ -240,6 +207,7 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
             const double step = 2.0 * viewR_ / kTex;  // blocks per texel
             const double x0 = viewX_ - viewR_, z0 = viewZ_ - viewR_;
             const bool cave = sdk::blocks::CaveActive();
+            const bool plain = maplook::Plain();
             for (int j = 0; j < kTex; ++j) {
                 const int bz = static_cast<int>(std::floor(z0 + (j + 0.5) * step));
                 const int gr = bz - (textureZ_ - half);
@@ -253,6 +221,7 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
                         const int gc = bx - (textureX_ - half);
                         color = (gr >= 0 && gr < kGrid && gc >= 0 && gc < kGrid) ? pixels_[static_cast<std::size_t>(gr) * kGrid + gc] : 0;
                         if (color == 0 && !cave) color = mapstore::At(bx, bz, false);
+                        if (color != 0 && !plain) color = maplook::Grade(color);
                     }
                     dst[i] = color;
                 }
@@ -292,13 +261,12 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
 
     // --- Background and the map itself ---
     const rh::Style& style = rh::CurrentStyle();
-    const ImU32 back = ImGui::ColorConvertFloat4ToU32(
-        ImVec4(style.backgroundColor[0], style.backgroundColor[1], style.backgroundColor[2], std::max(0.35f, style.background)));
+    const ImU32 back = ImGui::ColorConvertFloat4ToU32(ImVec4(style.backgroundColor[0], style.backgroundColor[1], style.backgroundColor[2], backOpacity_));
     const float inner = radiusPx - 2.0f * u;  // the map, inside the frame
     if (round) {
         draw->AddCircleFilled(c, radiusPx, back, 64);
     } else {
-        rh::Box(draw, m, o, ImVec2(o.x + side, o.y + side));
+        draw->AddRectFilled(o, ImVec2(o.x + side, o.y + side), back, 3.0f * u);
     }
     if (texture_ != ImTextureID{}) {
         // A fan: the center and the edge (a circle of 72 points, or the 4 corners).
@@ -306,7 +274,7 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
         draw->PushTextureID(texture_);
         draw->PrimReserve(n * 3, n + 1);
         const ImDrawIdx base = static_cast<ImDrawIdx>(draw->_VtxCurrentIdx);
-        const ImU32 white = IM_COL32(255, 255, 255, 255);
+        const ImU32 white = IM_COL32(255, 255, 255, static_cast<int>(std::clamp(mapOpacity_, 0.0f, 1.0f) * 255.0f));
         draw->PrimWriteVtx(c, toUv(toWorld(0.0f, 0.0f)), white);
         for (int i = 0; i < n; ++i) {
             float dx, dy;
@@ -328,11 +296,15 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
         draw->PopTextureID();
     }
     // The frame: a thin ring (or square line) in the HUD's text color.
-    const ImU32 ring = WithAlpha(rh::TextColor(), 0.55f);
+    const ImU32 ring = frameMode_ == 0   ? ImGui::ColorConvertFloat4ToU32(theme::Accent(1.0f))
+                       : frameMode_ == 2 ? IM_COL32(static_cast<int>(frameColor_[0] * 255), static_cast<int>(frameColor_[1] * 255),
+                                                    static_cast<int>(frameColor_[2] * 255), 255)
+                                         : WithAlpha(rh::TextColor(), 0.55f);
+    const float ringW = std::max(1.0f, u * static_cast<float>(frameWidth_));
     if (round) {
-        draw->AddCircle(c, inner + 0.5f * u, ring, 72, std::max(1.0f, u));
+        if (frameMode_ != 3) draw->AddCircle(c, inner + 0.5f * ringW, ring, 72, ringW);
     } else {
-        draw->AddRect(ImVec2(c.x - inner, c.y - inner), ImVec2(c.x + inner, c.y + inner), ring, 0.0f, 0, std::max(1.0f, u));
+        if (frameMode_ != 3) draw->AddRect(ImVec2(c.x - inner, c.y - inner), ImVec2(c.x + inner, c.y + inner), ring, 0.0f, 0, ringW);
     }
     if (!sdk::blocks::Available()) {
         rh::CenteredText(draw, m, ImVec2(c.x - inner, c.y - 6.0f * u), ImVec2(c.x + inner, c.y + 6.0f * u), Tr("Reading the world..."),
@@ -359,7 +331,7 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
             const bool north = cd.letter[0] == 'N';
             draw->AddCircleFilled(at, 4.6f * u, WithAlpha(back, 0.9f), 16);
             rh::Text(draw, m, ImVec2(at.x - w * 0.5f, at.y - m.capHeight * 0.5f - m.capTop), cd.letter,
-                     north ? IM_COL32(240, 96, 80, 255) : rh::TextColor(0.85f));
+                     north && northRed_ ? IM_COL32(240, 96, 80, 255) : rh::TextColor(0.85f));
         }
     }
 
@@ -470,8 +442,8 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
         draw->AddTriangleFilled(tip, notch, rightPt, IM_COL32(20, 20, 24, 230));
         const float k = 0.62f;
         auto in = [&](ImVec2 q) { return ImVec2(c.x + (q.x - c.x) * k, c.y + (q.y - c.y) * k); };
-        draw->AddTriangleFilled(in(tip), in(left), in(notch), IM_COL32(255, 255, 255, 255));
-        draw->AddTriangleFilled(in(tip), in(notch), in(rightPt), IM_COL32(220, 220, 220, 255));
+        draw->AddTriangleFilled(in(tip), in(left), in(notch), render::pixel::Shade(arrowColor_, 1.0f, 255));
+        draw->AddTriangleFilled(in(tip), in(notch), in(rightPt), render::pixel::Shade(arrowColor_, 0.86f, 255));
     }
 
     // --- Under the map: coordinates and (optional) the cost ---
@@ -513,6 +485,41 @@ bool Minimap::DrawSettings() {
     ui::Hint("Move it and scale it with Edit HUD. It reads the blocks a little every frame on the game's own drawing "
              "thread, and only rereads what's new or old.");
     changed |= DrawWaypointSettings();
+    return changed;
+}
+
+// --- Its page in the world map's sidebar: everything to customize it ---
+bool Minimap::DrawMapPanel(render::pixel::Form& f) {
+    bool changed = false;
+    static const char* const kShapes[] = {"Square", "Round"};
+    const char* shapes[] = {Tr(kShapes[0]), Tr(kShapes[1])};
+    changed |= f.Choice(Tr("Shape"), &shape_, shapes, 2);
+    changed |= f.Slider(Tr("Size"), &size_, 60.0f, 220.0f, "%.0f");
+    changed |= f.Slider(Tr("Zoom (blocks to the edge)"), &zoom_, 12.0f, 200.0f, "%.0f");
+    changed |= f.Toggle(Tr("Rotate with you"), &rotate_);
+    f.Section(Tr("Frame"));
+    const char* frames[] = {Tr("Accent"), Tr("Text"), Tr("Color"), Tr("None")};
+    changed |= f.Choice(Tr("Ring"), &frameMode_, frames, 4);
+    if (frameMode_ == 2) changed |= f.Colors(Tr("Ring color"), frameColor_);
+    if (frameMode_ != 3) changed |= f.SliderInt(Tr("Ring width"), &frameWidth_, 1, 4, "%d px");
+    changed |= f.Slider(Tr("Background"), &backOpacity_, 0.0f, 1.0f, "%.2f");
+    changed |= f.Slider(Tr("Map opacity"), &mapOpacity_, 0.3f, 1.0f, "%.2f");
+    f.Section(Tr("On the map"));
+    changed |= f.Toggle(Tr("N, E, S, W"), &cardinals_);
+    changed |= f.Toggle(Tr("Red N"), &northRed_);
+    changed |= f.Toggle(Tr("Coordinates under it"), &coords_);
+    changed |= f.Colors(Tr("Your arrow"), arrowColor_);
+    changed |= f.Toggle(Tr("Show its cost"), &showCost_);
+    f.Section(Tr("Cave mode"));
+    const char* caves[] = {Tr("Auto"), Tr("Off"), Tr("Always")};
+    changed |= f.Choice(Tr("When"), &caveMode_, caves, 3);
+    f.Section(Tr("Waypoints"));
+    changed |= f.Toggle(Tr("Show waypoints"), &waypoints_);
+    changed |= f.Toggle(Tr("Names on the map"), &waypointNames_);
+    changed |= f.Toggle(Tr("Beams in the world"), &beams_);
+    changed |= f.Toggle(Tr("Labels in the world"), &worldLabels_);
+    changed |= f.Toggle(Tr("Death point"), &deathPoint_);
+    f.Hint(Tr("The keys (save a waypoint, open this map) are in Luma's menu, in the Minimap module."));
     return changed;
 }
 
@@ -558,6 +565,7 @@ void Minimap::OnTick() {
             menusSeen_ = menus;
         } else if (now - releasedAt_ > 0.4 && !hiddenScreen_) {
             hiddenScreen_ = true;
+            hiddenWorld_ = sdk::blocks::WorldSession();
             log::Info("Waypoints: the mouse is free and no known screen is drawn (death screen?).");
         }
     } else if (mouse == 1) {
@@ -565,7 +573,8 @@ void Minimap::OnTick() {
             const float ddx = p.feet[0] - alive_[0], ddy = p.feet[1] - alive_[1], ddz = p.feet[2] - alive_[2];
             const float moved = std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
             log::Info("Waypoints: back to playing, {:.1f} blocks from before.", moved);
-            if (moved > 3.0f && dim == aliveDim_) saveDeath();
+            // (Not if you went to another world meanwhile: that's a loading screen.)
+            if (moved > 3.0f && dim == aliveDim_ && hiddenWorld_ == sdk::blocks::WorldSession()) saveDeath();
         }
         hiddenScreen_ = false;
         releasedAt_ = -1.0;
@@ -759,6 +768,19 @@ void Minimap::SaveSettings(nlohmann::json& out) const {
     out["waypointNames"] = waypointNames_;
     out["waypointKey"] = addKey_;
     out["mapKey"] = mapKey_;
+    const render::worldmap::Settings& wm = render::worldmap::Config();
+    out["worldmap"] = {{"waypoints", wm.waypoints}, {"names", wm.names},       {"bannerSize", wm.bannerSize}, {"deathPoint", wm.deathPoint},
+                       {"chunkGrid", wm.chunkGrid}, {"regionGrid", wm.regionGrid}, {"rulers", wm.rulers},        {"coords", wm.coords},
+                       {"follow", wm.follow},       {"cost", wm.cost},             {"zoomSpeed", wm.zoomSpeed},  {"startZoom", wm.startZoom},
+                       {"remember", wm.remember},   {"sidebar", wm.sidebar},       {"tab", wm.tab}};
+    maplook::Save(out["look"]);
+    out["frameMode"] = frameMode_;
+    out["frameColor"] = {frameColor_[0], frameColor_[1], frameColor_[2]};
+    out["frameWidth"] = frameWidth_;
+    out["backOpacity"] = backOpacity_;
+    out["mapOpacity"] = mapOpacity_;
+    out["arrowColor"] = {arrowColor_[0], arrowColor_[1], arrowColor_[2]};
+    out["northRed"] = northRed_;
     out["beams"] = beams_;
     out["worldLabels"] = worldLabels_;
     out["deathPoint"] = deathPoint_;
@@ -777,6 +799,38 @@ void Minimap::LoadSettings(const nlohmann::json& in) {
     waypointNames_ = in.value("waypointNames", true);
     addKey_ = in.value("waypointKey", static_cast<int>('B'));
     mapKey_ = in.value("mapKey", static_cast<int>('M'));
+    if (in.contains("worldmap") && in["worldmap"].is_object()) {
+        const auto& j = in["worldmap"];
+        render::worldmap::Settings& wm = render::worldmap::Config();
+        wm.waypoints = j.value("waypoints", true);
+        wm.names = j.value("names", true);
+        wm.chunkGrid = j.value("chunkGrid", false);
+        wm.coords = j.value("coords", true);
+        wm.follow = j.value("follow", false);
+        wm.cost = j.value("cost", false);
+        wm.bannerSize = std::clamp(j.value("bannerSize", 0), 0, 2);
+        wm.deathPoint = j.value("deathPoint", true);
+        wm.regionGrid = j.value("regionGrid", false);
+        wm.rulers = j.value("rulers", true);
+        wm.zoomSpeed = std::clamp(j.value("zoomSpeed", 1.0f), 0.25f, 2.0f);
+        wm.startZoom = std::clamp(j.value("startZoom", 2.0f), 0.25f, 8.0f);
+        wm.remember = j.value("remember", true);
+        wm.sidebar = j.value("sidebar", true);
+        wm.tab = std::clamp(j.value("tab", 0), 0, 4);
+    }
+    if (in.contains("look")) maplook::Load(in["look"]);
+    auto color3 = [&](const char* key, float* out3) {
+        if (in.contains(key) && in[key].is_array() && in[key].size() == 3) {
+            for (int k = 0; k < 3; ++k) out3[k] = std::clamp(in[key][k].get<float>(), 0.0f, 1.0f);
+        }
+    };
+    frameMode_ = std::clamp(in.value("frameMode", 1), 0, 3);
+    color3("frameColor", frameColor_);
+    frameWidth_ = std::clamp(in.value("frameWidth", 1), 1, 4);
+    backOpacity_ = std::clamp(in.value("backOpacity", 0.6f), 0.0f, 1.0f);
+    mapOpacity_ = std::clamp(in.value("mapOpacity", 1.0f), 0.3f, 1.0f);
+    color3("arrowColor", arrowColor_);
+    northRed_ = in.value("northRed", true);
     beams_ = in.value("beams", true);
     worldLabels_ = in.value("worldLabels", true);
     deathPoint_ = in.value("deathPoint", true);

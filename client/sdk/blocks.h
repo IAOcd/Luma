@@ -39,6 +39,10 @@ bool Available();
 // game's BlockSource. Does this frame's share of the minimap's work.
 void OnRegion(void* region);
 
+// How the terrain is painted (modules/world/map_look.h): relief strength (0 =
+// flat), height tint, water by depth, shores, texture. A change repaints.
+void SetPainting(float relief, bool heightTint, bool waterDepth, bool shores, bool texture);
+
 // Cave mode (see blocks.cpp): 0 = automatic (when there's a roof over you),
 // 1 = never, 2 = always. CaveActive(): what the grid shows now.
 void SetCaveMode(int mode);
@@ -47,6 +51,14 @@ bool CaveActive();
 // Which dimension the game is drawing: 0 Overworld, 1 Nether, 2 End, -1 not
 // known (asked to the BlockSource once a second, like sdk/dynlight does).
 int Dimension();
+
+// A NEW START: every time you enter another world (the local player changes)
+// or another dimension, everything read so far is forgotten (the same x, z
+// is another place there!). These count those starts: whoever keeps a copy
+// of the grid must drop it when they change. WorldSession only counts new
+// worlds (not dimension changes).
+std::uint32_t Session();
+std::uint32_t WorldSession();
 
 // --- The minimap's grid (filled by OnRegion) --------------------------------------
 inline constexpr int kGrid = 512;  // blocks per side (256 on each side of you: the minimap reaches 200)
@@ -60,8 +72,9 @@ struct Cell {
 // if it changed since "knownVersion". Thread-safe.
 // Only the blocks within "radius" of the center are copied (the rest: 0):
 // shading the whole grid costs more than the minimap needs at a small zoom.
+// "session" / "dimension": which start and dimension the copy belongs to.
 bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, int& centerZ, std::uint32_t& version,
-              int radius = kGrid / 2);
+              int radius = kGrid / 2, std::uint32_t* session = nullptr, int* dimension = nullptr);
 
 // How long the work took in the last frames (microseconds, average).
 float CostUs();

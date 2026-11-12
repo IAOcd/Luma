@@ -51,6 +51,7 @@
 #include "render/gpu.h"
 #include "render/hud.h"
 #include "render/hud_editor.h"
+#include "render/world_map.h"
 #include "render/icons.h"
 #include "render/input.h"
 #include "render/item_icons.h"
@@ -679,6 +680,7 @@ bool HandleEscape() {
         hudeditor::End();
         return true;
     }
+    if (worldmap::IsActive() && worldmap::Escape()) return true;  // (closes the map's open window first)
     return false;
 }
 

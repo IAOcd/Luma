@@ -57,6 +57,11 @@ void Remove(std::size_t index);
 // Where you died: replaces the previous death point of this world.
 void SetDeathPoint(int x, int y, int z);
 
+// You left the world (or joined another): save, forget it, and wait a few
+// seconds before deciding which world this is (when you join a server, the
+// first seconds can look like a local world).
+void ForgetWorld(double now);
+
 // Something changed: saved to disk a second later (and when leaving the world).
 void MarkDirty();
 // Saves now if something is pending (when Luma unloads or the module turns off).

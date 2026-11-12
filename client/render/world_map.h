@@ -17,9 +17,43 @@
 // =============================================================================
 #pragma once
 
+namespace luma::render::pixel {
+struct Form;
+}
+
 namespace luma::render::worldmap {
 
+// What the world map shows (saved with the minimap's settings).
+struct Settings {
+    bool waypoints = true;    // the waypoint banners
+    bool names = true;        // their names
+    int bannerSize = 0;       // 0 = like the minimap, 1-2 = bigger
+    bool deathPoint = true;   // the "Death" waypoint
+    bool chunkGrid = false;   // lines every 16 blocks (when zoomed in)
+    bool regionGrid = false;  // lines every 512 blocks
+    bool rulers = true;       // coordinates along the top and right edges
+    bool coords = true;       // the block under the cursor
+    bool follow = false;      // keep the map centered on you
+    bool cost = false;        // how long it takes to paint (ms)
+    float zoomSpeed = 1.0f;   // how much each wheel step zooms
+    float startZoom = 2.0f;   // pixels per block when it opens
+    bool remember = true;     // open where you left it (in the same world)
+    bool sidebar = true;      // the sidebar open
+    int tab = 0;              // which page of the sidebar
+};
+Settings& Config();
+// Were the settings changed in the map since the last call? (to save them)
+bool TakeSettingsChanged();
+
+// The "Minimap" page of the sidebar: the minimap module draws its own
+// settings there (nullptr = the module is off). Returns true if changed.
+using MinimapPanel = bool (*)(render::pixel::Form& form);
+void SetMinimapPanel(MinimapPanel panel);
+
 bool IsActive();
+// Esc: closes an open window of the map (true) or nothing (false: Esc
+// then closes the whole map).
+bool Escape();
 // Starts it (centered on you). The caller opens Luma's menu.
 void Open();
 void Close();

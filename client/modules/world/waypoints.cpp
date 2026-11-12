@@ -34,6 +34,7 @@ std::string g_candidateLabel;
 int g_dimension = -1;
 double g_nextCheck = 0.0;
 double g_saveAt = -1.0;  // when to save (-1 = nothing pending)
+double g_holdUntil = 0.0;  // (after a new world: don't decide which one before this)
 double g_now = 0.0;
 
 // The palette for new waypoints (one after another).
@@ -134,15 +135,21 @@ void Update(double now, int dimension) {
     g_dimension = dimension;
     g_now = now;
     if (g_saveAt >= 0.0 && now >= g_saveAt) Save();
-    if (now < g_nextCheck) return;
+    if (now < g_nextCheck || now < g_holdUntil) return;
     g_nextCheck = now + 2.0;
     // Where are we? A server by its address; a local world by its name.
     std::string key, label;
     if (sdk::network::OnServer()) {
         sdk::players::Server server;
+        std::string name;
         if (sdk::players::ReadServer(server) && !server.address.empty()) {
             label = server.address + ":" + std::to_string(server.port);
             key = "server_" + label;
+        } else if (sdk::players::WorldName(name) && !name.empty()) {
+            // (Some servers and Realms don't let Luma read their address: then
+            // the world's name the server gives, kept apart from local worlds.)
+            label = name;
+            key = "servername_" + name;
         }
     } else {
         std::string name;
@@ -158,12 +165,22 @@ void Update(double now, int dimension) {
         g_candidateLabel = label;
         return;
     }
-    if (key == g_key || key.empty()) return;  // (empty: in a menu; keep the last list until another world)
+    if (key == g_key || key.empty()) return;  // (empty: in a menu or loading)
     if (g_saveAt >= 0.0) Save();
     g_key = key;
     g_label = g_candidateLabel;
     Load(key);
     log::Info("Waypoints: {} ({} saved).", g_label, g_list.size());
+}
+
+void ForgetWorld(double now) {
+    if (g_saveAt >= 0.0) Save();
+    if (!g_key.empty()) log::Info("Waypoints: left {}.", g_label);
+    g_key.clear();
+    g_label.clear();
+    g_candidate.clear();
+    g_list.clear();
+    g_holdUntil = now + 6.0;
 }
 
 bool HaveWorld() {

@@ -219,7 +219,8 @@ Kind Classify(const char* name) {
              Has(name, "hyphae") || Has(name, "mushroom_block") || Has(name, "wart_block") || Has(name, "azalea");
     // Nothing there.
     if (Has(name, ":air") || Has(name, "cave_air") || Has(name, "void_air") || Has(name, "structure_void") ||
-        Has(name, "light_block") || Has(name, "barrier")) {
+        Has(name, "light_block") || Has(name, "barrier") ||
+        Has(name, "placeholder")) {  // (the game's stand-in while a chunk is still arriving)
         k.air = true;
         return k;
     }
@@ -236,6 +237,13 @@ Kind Classify(const char* name) {
     // The game's own color (from its textures), for every block it knows.
     std::uint32_t game = 0;
     if (GameColor(name, game)) {
+        // (Very light colors written to the log once: to find white patches that shouldn't be.)
+        static int light = 0;
+        const int lum = static_cast<int>(((game >> 16) & 0xFF) * 3 + ((game >> 8) & 0xFF) * 6 + (game & 0xFF)) / 10;
+        if (lum > 225 && light < 40) {
+            ++light;
+            log::Info("Blocks: \"{}\" is very light (#{:06X}).", name, game);
+        }
         k.rgb = game;
         k.own = true;
         k.water = Has(name, "water");
@@ -283,6 +291,12 @@ Kind Classify(const char* name) {
             k.own = true;
             return k;
         }
+    }
+    // (Not found anywhere: written to the log once, to add it to the table.)
+    static int logged = 0;
+    if (logged < 60) {
+        ++logged;
+        log::Info("Blocks: no color for \"{}\" (gray).", name);
     }
     return k;  // anything else: a neutral gray
 }
@@ -426,6 +440,7 @@ std::vector<std::uint32_t> g_order;  // (dx + 256) | (dz + 256) << 16
 // if it followed you every frame, walking would leave rings of holes. It
 // starts again from where you are when you're 48 blocks away from it.
 int g_anchorX = 0, g_anchorZ = 0;
+int g_nearCursor = 0;  // (the pass over what's near you, every frame)
 bool g_haveAnchor = false;
 void MakeOrder() {
     g_order.reserve(static_cast<std::size_t>(kGrid) * kGrid);
@@ -453,6 +468,10 @@ float g_costUs = 0.0f;
 // ground. In the Nether there's always a roof (the bedrock), so it's always on.
 // To avoid flickering at a cave's mouth, it changes only after two equal
 // looks in a row. When it changes, the whole grid is read again.
+// How the terrain is painted (SetPainting).
+float g_relief = 1.0f;
+bool g_heightTint = true, g_waterDepth = true, g_shores = true, g_texture = true;
+
 std::atomic<int> g_caveMode{0};       // 0 auto, 1 off, 2 always
 std::atomic<bool> g_caveShown{false};  // what the minimap shows now
 bool g_cave = false;
@@ -464,6 +483,10 @@ float g_nextRoofCheck = 0.0f;
 // the game's own code.
 std::atomic<int> g_dimension{-1};
 int g_dimensionTick = 0;
+// New starts (see blocks.h).
+std::atomic<std::uint32_t> g_session{1}, g_worldSession{1};
+std::uintptr_t g_lastPlayer = 0;
+int g_lastDimension = -1;
 using GetDimensionFn = int*(__fastcall*)(void* source, int* out);
 
 void ReadDimension(void* region) {
@@ -514,6 +537,35 @@ bool PlayerFeet(int out[3]) {
     return true;
 }
 
+// Forgets everything read (a new world or dimension). Called with the grid locked.
+void ResetLocked(bool newWorld) {
+    for (Column& col : g_cells) col = Column{};
+    g_haveAnchor = false;
+    g_cursor = 0;
+    g_cave = false;
+    g_caveVotes = 0;
+    g_caveShown.store(false, std::memory_order_relaxed);
+    g_nextRoofCheck = 0.0f;
+    if (newWorld) {
+        // A server can bring its own blocks: what each Block address means may change.
+        g_kinds.clear();
+        g_worldSession.fetch_add(1, std::memory_order_relaxed);
+    }
+    g_session.fetch_add(1, std::memory_order_relaxed);
+    ++g_version;
+}
+
+}  // namespace
+
+std::uint32_t Session() {
+    return g_session.load(std::memory_order_relaxed);
+}
+
+std::uint32_t WorldSession() {
+    return g_worldSession.load(std::memory_order_relaxed);
+}
+
+namespace {
 }  // namespace
 
 void Want(bool want) {
@@ -526,6 +578,17 @@ bool Wanted() {
 
 bool Available() {
     return g_legacyOffset >= -1;
+}
+
+void SetPainting(float relief, bool heightTint, bool waterDepth, bool shores, bool texture) {
+    std::lock_guard lock(g_mutex);
+    if (relief == g_relief && heightTint == g_heightTint && waterDepth == g_waterDepth && shores == g_shores && texture == g_texture) return;
+    g_relief = relief;
+    g_heightTint = heightTint;
+    g_waterDepth = waterDepth;
+    g_shores = shores;
+    g_texture = texture;
+    ++g_version;  // (the minimap copies and repaints)
 }
 
 void SetCaveMode(int mode) {
@@ -546,7 +609,21 @@ void OnRegion(void* region) {
     }
     int feet[3];
     if (!PlayerFeet(feet)) return;
-    if (g_dimensionTick++ % 60 == 0) ReadDimension(region);
+    // A new world (another local player) or another dimension: start again.
+    {
+        const std::uintptr_t player = sdk::player::LocalPlayer();
+        const bool newWorld = player != g_lastPlayer;
+        if (newWorld || g_dimensionTick++ % 4 == 0) ReadDimension(region);
+        const int dim = g_dimension.load(std::memory_order_relaxed);
+        const bool newDimension = dim >= 0 && g_lastDimension >= 0 && dim != g_lastDimension;
+        if (newWorld || newDimension) {
+            std::lock_guard lock(g_mutex);
+            ResetLocked(newWorld);
+            log::Info("Blocks: {} - starting the map again.", newWorld ? "another world" : "another dimension");
+        }
+        g_lastPlayer = player;
+        if (dim >= 0) g_lastDimension = dim;
+    }
     LARGE_INTEGER t0;
     QueryPerformanceCounter(&t0);
 
@@ -590,22 +667,37 @@ void OnRegion(void* region) {
     }
     const int cx = feet[0], cz = feet[2];
     const int top = std::min(feet[1] + 40, 319);
-    const int bottom = std::max(feet[1] - 80, -64);
+    const int bottom = -64;  // (all the way down: flying high, the ground can be far below)
     const LONGLONG budget = Freq().QuadPart / 2000;  // 0.5 ms
     int visited = 0, refreshed = 0;
+    // EVERY FRAME, FIRST, what's near you (30 blocks around, ~2800 columns):
+    // the big round can take a long while to come back, and a column read
+    // while its chunk was still loading (after a portal, say) would stay
+    // empty until then. Looking at a known column costs nothing.
+    constexpr int kNear = 2828;
+    int nearVisits = 0;
     while (visited < 16384) {  // (looking at a column costs nothing; reading it is what costs)
         if (g_order.empty()) MakeOrder();
-        if (!g_haveAnchor || std::abs(cx - g_anchorX) > 48 || std::abs(cz - g_anchorZ) > 48 || g_cursor == 0) {
-            g_haveAnchor = true;
-            g_anchorX = cx;
-            g_anchorZ = cz;
-            g_cursor = 0;
+        int wx = 0, wz = 0;
+        if (nearVisits < kNear) {
+            const std::uint32_t o = g_order[static_cast<std::size_t>(g_nearCursor)];
+            g_nearCursor = (g_nearCursor + 1) % kNear;
+            ++nearVisits;
+            wx = cx + static_cast<int>(o & 0xFFFF) - kGrid / 2;
+            wz = cz + static_cast<int>(o >> 16) - kGrid / 2;
+        } else {
+            if (!g_haveAnchor || std::abs(cx - g_anchorX) > 48 || std::abs(cz - g_anchorZ) > 48 || g_cursor == 0) {
+                g_haveAnchor = true;
+                g_anchorX = cx;
+                g_anchorZ = cz;
+                g_cursor = 0;
+            }
+            const std::uint32_t o = g_order[static_cast<std::size_t>(g_cursor)];
+            g_cursor = (g_cursor + 1) % (kGrid * kGrid);
+            wx = g_anchorX + static_cast<int>(o & 0xFFFF) - kGrid / 2;
+            wz = g_anchorZ + static_cast<int>(o >> 16) - kGrid / 2;
         }
-        const std::uint32_t o = g_order[static_cast<std::size_t>(g_cursor)];
-        g_cursor = (g_cursor + 1) % (kGrid * kGrid);
         ++visited;
-        const int wx = g_anchorX + static_cast<int>(o & 0xFFFF) - kGrid / 2;
-        const int wz = g_anchorZ + static_cast<int>(o >> 16) - kGrid / 2;
         Column& col = g_cells[static_cast<std::size_t>((wx & (kGrid - 1)) + (wz & (kGrid - 1)) * kGrid)];
         const bool same = col.x == wx && col.z == wz;
         const float age = now - col.scannedAt;
@@ -630,7 +722,8 @@ void OnRegion(void* region) {
             // wall (dark). Otherwise: the first block under open space is
             // the cave's floor.
             const int ctop = std::min(feet[1] + 3, 319);
-            const int cbottom = std::max(feet[1] - 32, -64);
+            // (The Nether: always "under a roof", with big open caves: looks deeper.)
+            const int cbottom = std::max(feet[1] - (g_lastDimension == 1 ? 64 : 32), -64);
             bool open = false, any = false;
             for (int y = ctop; y >= cbottom; --y) {
                 void* b = GetBlock(region, wx, y, wz);
@@ -708,9 +801,12 @@ void OnRegion(void* region) {
     if (++logs % 600 == 0) log::Info("Blocks: minimap work {:.0f} us/frame ({} kinds of blocks known).", g_costUs, g_kinds.size());
 }
 
-bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, int& centerZ, std::uint32_t& version, int radius) {
+bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, int& centerZ, std::uint32_t& version, int radius,
+              std::uint32_t* session, int* dimension) {
     std::lock_guard lock(g_mutex);
     if (g_version == knownVersion) return false;
+    if (session != nullptr) *session = g_session.load(std::memory_order_relaxed);
+    if (dimension != nullptr) *dimension = g_lastDimension;
     centerX = g_centerX;
     centerZ = g_centerZ;
     version = g_version;
@@ -741,12 +837,21 @@ bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, 
             if (col != nullptr) {
                 float rgb[3] = {static_cast<float>((col->rgb >> 16) & 0xFF), static_cast<float>((col->rgb >> 8) & 0xFF),
                                 static_cast<float>(col->rgb & 0xFF)};
+                {
+                    // Snow and other almost-white blocks: a little below white, or
+                    // the light from the north-west would have nothing to brighten
+                    // (the relief would vanish and it would look flat).
+                    const float lum = rgb[0] * 0.3f + rgb[1] * 0.59f + rgb[2] * 0.11f;
+                    if (lum > 215.0f) {
+                        for (float& ch : rgb) ch *= 215.0f / lum;
+                    }
+                }
                 float shade = 1.0f;
                 if (col->rock) {
                     // Cave mode: the solid rock around the cave is black, so the
                     // open space (the cave itself) is what stands out.
                     rgb[0] = rgb[1] = rgb[2] = 8.0f;
-                } else if (col->depth > 0) {
+                } else if (col->depth > 0 && g_waterDepth) {
                     // Water: from light turquoise (1 block) to deep blue (12+).
                     const float t = std::clamp((static_cast<float>(col->depth) - 1.0f) / 11.0f, 0.0f, 1.0f);
                     const float shallow[3] = {86.0f, 170.0f, 230.0f}, deep[3] = {22.0f, 48.0f, 140.0f};
@@ -769,7 +874,7 @@ bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, 
                         //    of height draws a contour, like a relief map);
                         //  - the deeper under your feet, the darker;
                         //  - next to the rock (the cave's wall), a darker rim.
-                        shade = std::clamp(1.0f + slope * 0.16f, 0.5f, 1.45f);
+                        shade = std::clamp(1.0f + slope * 0.16f * g_relief, 0.5f, 1.45f);
                         const Column* east = cellAt(wx + 1, wz);
                         const Column* south = cellAt(wx, wz + 1);
                         bool step = false, wall = false;
@@ -783,13 +888,13 @@ bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, 
                         const float below = static_cast<float>(col->layer - 1 - col->height);
                         shade *= std::clamp(1.0f - below * 0.03f, 0.45f, 1.1f);
                     } else {
-                        shade = std::clamp(1.0f + slope * 0.09f, 0.55f, 1.3f);
-                        shade *= std::clamp(1.0f + (static_cast<float>(col->height) - 64.0f) * 0.004f, 0.8f, 1.15f);
+                        shade = std::clamp(1.0f + slope * 0.09f * g_relief, 0.4f, 1.5f);
+                        if (g_heightTint) shade *= std::clamp(1.0f + (static_cast<float>(col->height) - 64.0f) * 0.004f, 0.8f, 1.15f);
                     }
                     const unsigned h = static_cast<unsigned>(wx * 73856093) ^ static_cast<unsigned>(wz * 19349663) ^ 0x9E3779B9u;
-                    shade *= 0.95f + static_cast<float>((h >> 7) % 11) * 0.01f;
+                    if (g_texture) shade *= 0.95f + static_cast<float>((h >> 7) % 11) * 0.01f;
                     // The edge of water: a slightly darker rim on land.
-                    if ((north != nullptr && north->depth > 0) || (west != nullptr && west->depth > 0)) shade *= 0.88f;
+                    if (g_shores && col->depth == 0 && ((north != nullptr && north->depth > 0) || (west != nullptr && west->depth > 0))) shade *= 0.88f;
                 }
                 const auto ch = [&](int k) { return static_cast<std::uint32_t>(std::clamp(rgb[k] * shade, 0.0f, 255.0f)); };
                 px = ch(0) | (ch(1) << 8) | (ch(2) << 16) | 0xFF000000u;  // RGBA in memory (R first)

@@ -38,7 +38,9 @@ add_library(Luma SHARED
     modules/world/minimap.cpp
     modules/world/waypoints.cpp
     modules/world/map_store.cpp
+    modules/world/map_look.cpp
     render/world_map.cpp
+    render/pixel_art.cpp
     modules/hud/scoreboard.cpp
     modules/hud/player_hud.cpp
     modules/hud/watermark.cpp

@@ -418,6 +418,28 @@ struct Column {
 std::vector<Column> g_cells(static_cast<std::size_t>(kGrid) * kGrid);
 int g_centerX = 0, g_centerZ = 0;
 int g_cursor = 0;  // where the next frame continues looking (cycles through the grid)
+// THE ORDER IN WHICH COLUMNS ARE LOOKED AT: from you outward (every cell of
+// the grid, as an offset from you, sorted by distance). So the map fills
+// around you first, and the far edge last.
+std::vector<std::uint32_t> g_order;  // (dx + 256) | (dz + 256) << 16
+// Each round goes out from a FIXED point (where you were when it started):
+// if it followed you every frame, walking would leave rings of holes. It
+// starts again from where you are when you're 48 blocks away from it.
+int g_anchorX = 0, g_anchorZ = 0;
+bool g_haveAnchor = false;
+void MakeOrder() {
+    g_order.reserve(static_cast<std::size_t>(kGrid) * kGrid);
+    for (int dz = -kGrid / 2; dz < kGrid / 2; ++dz) {
+        for (int dx = -kGrid / 2; dx < kGrid / 2; ++dx) {
+            g_order.push_back(static_cast<std::uint32_t>(dx + kGrid / 2) | (static_cast<std::uint32_t>(dz + kGrid / 2) << 16));
+        }
+    }
+    std::stable_sort(g_order.begin(), g_order.end(), [](std::uint32_t a, std::uint32_t b) {
+        const int ax = static_cast<int>(a & 0xFFFF) - kGrid / 2, az = static_cast<int>(a >> 16) - kGrid / 2;
+        const int bx = static_cast<int>(b & 0xFFFF) - kGrid / 2, bz = static_cast<int>(b >> 16) - kGrid / 2;
+        return ax * ax + az * az < bx * bx + bz * bz;
+    });
+}
 std::mutex g_mutex;
 std::uint32_t g_version = 0;
 float g_costUs = 0.0f;
@@ -571,12 +593,19 @@ void OnRegion(void* region) {
     const int bottom = std::max(feet[1] - 80, -64);
     const LONGLONG budget = Freq().QuadPart / 2000;  // 0.5 ms
     int visited = 0, refreshed = 0;
-    while (visited < 4096) {  // (looking at a column costs nothing; reading it is what costs)
-        const int i = g_cursor;
+    while (visited < 16384) {  // (looking at a column costs nothing; reading it is what costs)
+        if (g_order.empty()) MakeOrder();
+        if (!g_haveAnchor || std::abs(cx - g_anchorX) > 48 || std::abs(cz - g_anchorZ) > 48 || g_cursor == 0) {
+            g_haveAnchor = true;
+            g_anchorX = cx;
+            g_anchorZ = cz;
+            g_cursor = 0;
+        }
+        const std::uint32_t o = g_order[static_cast<std::size_t>(g_cursor)];
         g_cursor = (g_cursor + 1) % (kGrid * kGrid);
         ++visited;
-        const int wx = cx - kGrid / 2 + i % kGrid;
-        const int wz = cz - kGrid / 2 + i / kGrid;
+        const int wx = g_anchorX + static_cast<int>(o & 0xFFFF) - kGrid / 2;
+        const int wz = g_anchorZ + static_cast<int>(o >> 16) - kGrid / 2;
         Column& col = g_cells[static_cast<std::size_t>((wx & (kGrid - 1)) + (wz & (kGrid - 1)) * kGrid)];
         const bool same = col.x == wx && col.z == wz;
         const float age = now - col.scannedAt;
@@ -679,7 +708,7 @@ void OnRegion(void* region) {
     if (++logs % 600 == 0) log::Info("Blocks: minimap work {:.0f} us/frame ({} kinds of blocks known).", g_costUs, g_kinds.size());
 }
 
-bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, int& centerZ, std::uint32_t& version) {
+bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, int& centerZ, std::uint32_t& version, int radius) {
     std::lock_guard lock(g_mutex);
     if (g_version == knownVersion) return false;
     centerX = g_centerX;
@@ -698,8 +727,14 @@ bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, 
         const Column& c = g_cells[static_cast<std::size_t>((wx & (kGrid - 1)) + (wz & (kGrid - 1)) * kGrid)];
         return c.known && c.x == wx && c.z == wz ? &c : nullptr;
     };
+    radius = std::clamp(radius, 1, kGrid / 2);
     for (int r = 0; r < kGrid; ++r) {
+        const bool rowIn = std::abs(r - kGrid / 2) <= radius;
         for (int c = 0; c < kGrid; ++c) {
+            if (!rowIn || std::abs(c - kGrid / 2) > radius) {
+                rgbaOut[r * kGrid + c] = 0;
+                continue;
+            }
             const int wx = centerX - kGrid / 2 + c, wz = centerZ - kGrid / 2 + r;
             const Column* col = cellAt(wx, wz);
             std::uint32_t px = 0;

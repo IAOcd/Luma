@@ -44,6 +44,8 @@ void Update(double now, int dimension);
 bool HaveWorld();
 const std::string& WorldLabel();
 int Dimension();  // the one given to Update
+// A folder-safe name for this world ("" = none): the world map uses it too.
+std::string StorageName();
 
 // This world's waypoints (all dimensions).
 std::vector<Waypoint>& List();

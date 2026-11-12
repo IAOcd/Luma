@@ -53,6 +53,8 @@ private:
     bool waypointNames_ = true;  // and the name of the nearest ones
     int addKey_ = 'B';        // the key that saves a waypoint where you are
     bool keyWasDown_ = false;
+    int mapKey_ = 'M';        // the key that opens the world map
+    bool mapKeyWasDown_ = false;
     bool beams_ = true;        // a column of light at each waypoint, in the world
     bool worldLabels_ = true;  // its banner, name and distance, in the world
     bool deathPoint_ = true;   // a waypoint where you died
@@ -70,7 +72,9 @@ private:
     std::uint32_t version_ = 0;
     double nextUpload_ = 0.0;
     std::vector<std::uint32_t> pixels_;
-    std::vector<std::uint32_t> big_;  // the same, 4x bigger (crisp blocks)
+    std::vector<std::uint32_t> view_;  // the map's own picture (512 x 512): the square it shows
+    int viewX_ = 0, viewZ_ = 0;        // its center (world block)
+    float viewR_ = 0.0f;               // blocks from its center to its edge
 };
 
 }  // namespace luma::modules::world

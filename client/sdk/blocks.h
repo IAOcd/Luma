@@ -49,7 +49,7 @@ bool CaveActive();
 int Dimension();
 
 // --- The minimap's grid (filled by OnRegion) --------------------------------------
-inline constexpr int kGrid = 128;  // blocks per side
+inline constexpr int kGrid = 512;  // blocks per side (256 on each side of you: the minimap reaches 200)
 
 struct Cell {
     std::uint32_t rgba = 0;  // 0 = not known yet (unloaded chunk or not scanned)
@@ -58,7 +58,10 @@ struct Cell {
 
 // Copies the grid around (centerX, centerZ) (row by row, north at the top),
 // if it changed since "knownVersion". Thread-safe.
-bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, int& centerZ, std::uint32_t& version);
+// Only the blocks within "radius" of the center are copied (the rest: 0):
+// shading the whole grid costs more than the minimap needs at a small zoom.
+bool CopyGrid(std::uint32_t knownVersion, std::uint32_t* rgbaOut, int& centerX, int& centerZ, std::uint32_t& version,
+              int radius = kGrid / 2);
 
 // How long the work took in the last frames (microseconds, average).
 float CostUs();

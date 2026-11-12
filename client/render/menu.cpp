@@ -67,6 +67,7 @@
 #include "render/glass.h"
 #include "render/hud.h"
 #include "render/hud_editor.h"
+#include "render/world_map.h"
 #include "render/icons.h"
 #include "render/music.h"
 #include "render/module_options.h"
@@ -2704,7 +2705,7 @@ void OnOpened() {
     const double closedFor = g_closedAt == 0 ? 1.0e9 : perf::TicksToMs(perf::Now() - g_closedAt) / 1000.0;
     const bool quick = closedFor <= static_cast<double>(theme::Get().reopenSeconds);
     g_radial = quick ? g_radialWhenClosed : !hudeditor::IsActive();
-    if (hudeditor::IsActive()) g_radial = false;
+    if (hudeditor::IsActive() || worldmap::IsActive()) g_radial = false;
     g_closetDirty = true;
     g_openedAt = perf::Now();
     g_pageChangedAt = g_openedAt;
@@ -2718,6 +2719,13 @@ void OnClosed() {
     lyrics::Want(lyrics::kMenu, false);
     if (hudeditor::IsActive()) {
         hudeditor::End();
+    }
+    if (worldmap::IsActive()) {
+        worldmap::Close();
+        g_closing.store(false);  // (the map just goes: no menu fading out)
+        g_closedAt = 0;          // (and the next menu opens at the start, not "where you were")
+        sound::Play(sound::Effect::Close);
+        return;
     }
     g_closedAt = perf::Now();
     g_radialWhenClosed = g_radial;
@@ -2780,6 +2788,11 @@ void OnKeyCaptured(int vk) {
 
 void Draw(const RenderInfo& info) {
     const bool closing = g_closing.load(std::memory_order_relaxed);
+    // The world map: replaces the menu while it's open.
+    if (worldmap::IsActive()) {
+        worldmap::Draw();
+        return;
+    }
     // Editor de HUD: reemplaza al menú mientras está abierto.
     if (hudeditor::IsActive() && !closing) {
         hudeditor::Draw();

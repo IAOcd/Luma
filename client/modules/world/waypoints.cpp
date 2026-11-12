@@ -178,6 +178,12 @@ int Dimension() {
     return g_dimension;
 }
 
+std::string StorageName() {
+    if (g_key.empty()) return {};
+    std::string name = FileName(g_key);
+    return name.substr(0, name.size() - 5);  // (without ".json")
+}
+
 std::vector<Waypoint>& List() {
     return g_list;
 }

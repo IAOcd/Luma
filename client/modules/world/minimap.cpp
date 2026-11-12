@@ -31,7 +31,10 @@
 #include "render/icons.h"
 #include "render/rainbow.h"
 #include "render/ui.h"
+#include "modules/world/map_store.h"
 #include "modules/world/waypoints.h"
+#include "render/input.h"
+#include "render/world_map.h"
 #include "sdk/blocks.h"
 #include "sdk/camera.h"
 #include "sdk/draw3d.h"
@@ -161,6 +164,7 @@ void Minimap::OnEnable() {
 void Minimap::OnDisable() {
     sdk::blocks::Want(false);
     waypoints::Flush();
+    mapstore::Flush();
     sdk::draw3d::SetWorldShapes({}, sdk::draw3d::kChannelWaypoints);
     beamsSent_ = false;
 }
@@ -180,44 +184,87 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
     const double now = rainbow::Seconds();
     sdk::blocks::SetCaveMode(caveMode_);
     waypoints::Update(now, sdk::blocks::Dimension());
+    mapstore::SetWorld(waypoints::StorageName(), sdk::blocks::Dimension());
     DrawWorldWaypoints();
-    if (now >= nextUpload_) {
-        nextUpload_ = now + 0.2;
-        if (pixels_.size() != static_cast<std::size_t>(kGrid) * kGrid) pixels_.assign(static_cast<std::size_t>(kGrid) * kGrid, 0);
-        int cx = 0, cz = 0;
-        std::uint32_t v = 0;
-        if (sdk::blocks::CopyGrid(version_, pixels_.data(), cx, cz, v)) {
-            version_ = v;
-            textureX_ = cx;
-            textureZ_ = cz;
-            // Each block becomes 4 x 4 pixels: the GPU smooths textures when
-            // it enlarges them, and a map of blocks should look crisp, like
-            // pixel art. (512 x 512, uploaded at most 5 times a second.)
-            constexpr int kUp = 4, kSide = kGrid * kUp;
-            big_.resize(static_cast<std::size_t>(kSide) * kSide);
-            for (int y = 0; y < kSide; ++y) {
-                const std::uint32_t* src = pixels_.data() + static_cast<std::size_t>(y / kUp) * kGrid;
-                std::uint32_t* dst = big_.data() + static_cast<std::size_t>(y) * kSide;
-                for (int x = 0; x < kSide; ++x) dst[x] = src[x / kUp];
-            }
-            const auto* rgba = reinterpret_cast<const std::uint8_t*>(big_.data());
-            if (texture_ == ImTextureID{}) {
-                texture_ = render::gpu::CreateTexture(rgba, kSide, kSide);
-            } else {
-                render::gpu::UpdateTexture(texture_, rgba, kSide, kSide);
-            }
-        }
-    }
-
     // --- Zoom (smooth) and where you are ---
     // How many blocks from the center to the edge. A turning square needs
     // its corners inside the 128 x 128 we know (so less).
-    const float maxRadius = round ? 60.0f : (rotate_ ? 42.0f : 60.0f);
+    // (A turning square shows its corners too: they must fit in what's known.)
+    const float maxRadius = (rotate_ && !round) ? 175.0f : 200.0f;
     const float target = std::clamp(zoom_, 12.0f, maxRadius);
     const float dt = std::min(ImGui::GetIO().DeltaTime, 0.1f);
     shownZoom_ = shownZoom_ <= 0.0f ? target : shownZoom_ + (target - shownZoom_) * std::min(1.0f, dt * 10.0f);
     sdk::player::Snapshot p;
     const bool havePlayer = sdk::player::Read(p);
+
+    // --- The picture ---
+    // 1. Every 0.2 s, the blocks around you from sdk/blocks (only as far as
+    //    the zoom needs), also given to the world map's memory.
+    // 2. THE MAP'S OWN TEXTURE (512 x 512): the square around you that the
+    //    map shows, painted block by block (each block a crisp square, at
+    //    any zoom). What the game hasn't loaded comes from the world map's
+    //    memory (places you explored before). Painted again when new blocks
+    //    arrive, when the zoom changes, or when you walked away from its center.
+    const float needR = shownZoom_ * ((rotate_ && !round) ? 1.42f : 1.0f);
+    {
+        const int half = kGrid / 2;
+        bool repaint = false;
+        if (now >= nextUpload_) {
+            nextUpload_ = now + 0.2;
+            if (pixels_.size() != static_cast<std::size_t>(kGrid) * kGrid) pixels_.assign(static_cast<std::size_t>(kGrid) * kGrid, 0);
+            int cx = 0, cz = 0;
+            std::uint32_t v = 0;
+            const int copyR = std::min(half, static_cast<int>(std::max(needR, target * 1.42f)) + 12);
+            if (sdk::blocks::CopyGrid(version_, pixels_.data(), cx, cz, v, copyR)) {
+                version_ = v;
+                textureX_ = cx;
+                textureZ_ = cz;
+                // The world map remembers it (the surface only: not cave mode).
+                if (!sdk::blocks::CaveActive()) mapstore::Merge(pixels_.data(), kGrid, cx - half, cz - half);
+                repaint = true;
+            }
+        }
+        const float wantR = std::min(static_cast<float>(half - 1), needR + 8.0f);
+        const float pxNow = havePlayer ? p.feet[0] : static_cast<float>(textureX_);
+        const float pzNow = havePlayer ? p.feet[2] : static_cast<float>(textureZ_);
+        if (std::fabs(wantR - viewR_) > viewR_ * 0.08f || std::fabs(pxNow - static_cast<float>(viewX_)) > viewR_ * 0.12f ||
+            std::fabs(pzNow - static_cast<float>(viewZ_)) > viewR_ * 0.12f || wantR > viewR_) {
+            repaint = true;
+        }
+        if (repaint && !pixels_.empty()) {
+            viewR_ = std::max(8.0f, std::ceil(wantR));
+            viewX_ = static_cast<int>(std::floor(pxNow));
+            viewZ_ = static_cast<int>(std::floor(pzNow));
+            constexpr int kTex = 512;
+            view_.resize(static_cast<std::size_t>(kTex) * kTex);
+            const double step = 2.0 * viewR_ / kTex;  // blocks per texel
+            const double x0 = viewX_ - viewR_, z0 = viewZ_ - viewR_;
+            const bool cave = sdk::blocks::CaveActive();
+            for (int j = 0; j < kTex; ++j) {
+                const int bz = static_cast<int>(std::floor(z0 + (j + 0.5) * step));
+                const int gr = bz - (textureZ_ - half);
+                std::uint32_t* dst = view_.data() + static_cast<std::size_t>(j) * kTex;
+                int lastBx = 0x7FFFFFFF;
+                std::uint32_t color = 0;
+                for (int i = 0; i < kTex; ++i) {
+                    const int bx = static_cast<int>(std::floor(x0 + (i + 0.5) * step));
+                    if (bx != lastBx) {
+                        lastBx = bx;
+                        const int gc = bx - (textureX_ - half);
+                        color = (gr >= 0 && gr < kGrid && gc >= 0 && gc < kGrid) ? pixels_[static_cast<std::size_t>(gr) * kGrid + gc] : 0;
+                        if (color == 0 && !cave) color = mapstore::At(bx, bz, false);
+                    }
+                    dst[i] = color;
+                }
+            }
+            const auto* rgba = reinterpret_cast<const std::uint8_t*>(view_.data());
+            if (texture_ == ImTextureID{}) {
+                texture_ = render::gpu::CreateTexture(rgba, kTex, kTex);
+            } else {
+                render::gpu::UpdateTexture(texture_, rgba, kTex, kTex);
+            }
+        }
+    }
     const float yaw = havePlayer ? p.yaw * kPi / 180.0f : 0.0f;
     // The game's yaw: 0 looks south (+Z), 90 west (-X).
     const ImVec2 forward(-std::sin(yaw), std::cos(yaw));  // world x, z
@@ -234,7 +281,8 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
         return ImVec2(px + dx * blocksPerPx, pz + dy * blocksPerPx);  // north up: right = east (+X), down = south (+Z)
     };
     auto toUv = [&](ImVec2 w) {
-        return ImVec2((w.x - static_cast<float>(textureX_ - kGrid / 2)) / kGrid, (w.y - static_cast<float>(textureZ_ - kGrid / 2)) / kGrid);
+        const float side = 2.0f * viewR_;
+        return ImVec2((w.x - (static_cast<float>(viewX_) - viewR_)) / side, (w.y - (static_cast<float>(viewZ_) - viewR_)) / side);
     };
     // And the other way: a direction of the world -> the map (for N, E, S, W).
     auto toScreenDir = [&](float wx, float wz) {
@@ -400,6 +448,13 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
             }
         }
         keyWasDown_ = down;
+        // The world map (full screen): opens Luma's menu in "map mode".
+        const bool mapDown = mapKey_ != keys::kNone && (GetAsyncKeyState(mapKey_) & 0x8000) != 0;
+        if (mapDown && !mapKeyWasDown_ && sdk::mouse::GameMouseState() == 1 && !render::overlay::IsMenuOpen()) {
+            render::worldmap::Open();
+            render::input::RequestMenuToggle();
+        }
+        mapKeyWasDown_ = mapDown;
     }
 
     // --- You: an arrow in the middle ---
@@ -447,7 +502,7 @@ bool Minimap::DrawSettings() {
     bool changed = false;
     changed |= ui::Choice("Shape", &shape_, {"Square", "Round"});
     changed |= ui::Toggle("Rotate with you", &rotate_, "(up = where you look; off = north up)");
-    changed |= ui::Slider("Zoom (blocks to the edge)", &zoom_, 12.0f, 60.0f, "%.0f");
+    changed |= ui::Slider("Zoom (blocks to the edge)", &zoom_, 12.0f, 200.0f, "%.0f");
     changed |= ui::Slider("Size", &size_, 60.0f, 220.0f, "%.0f");
     changed |= ui::Choice("Cave mode", &caveMode_, {"Auto", "Off", "Always"});
     ui::Hint("Auto: when there's a roof over you (a cave, a mine, the Nether), the map shows the floor at your level and "
@@ -474,6 +529,7 @@ bool Minimap::DrawSettings() {
 //     else (more than 3 blocks away, same dimension), you respawned: you died.
 // The point saved is the last place you stood while playing.
 void Minimap::OnTick() {
+    mapstore::Tick(rainbow::Seconds());  // saves one changed region of the world map, if any
     sdk::player::Snapshot p;
     if (!sdk::player::Read(p)) return;
     const double now = rainbow::Seconds();
@@ -643,6 +699,7 @@ bool Minimap::DrawWaypointSettings() {
     changed |= ui::Toggle("Labels in the world", &worldLabels_, "(name and distance, seen through walls)");
     changed |= ui::Toggle("Death point", &deathPoint_, "(a waypoint where you died; only the last one)");
     ui::Key("Save one where you are", &addKey_);
+    ui::Key("World map", &mapKey_, "(full screen: everything you explored)");
     if (!waypoints::HaveWorld()) {
         ui::Hint("Join a world: each world and each server has its own waypoints.");
         return changed;
@@ -701,6 +758,7 @@ void Minimap::SaveSettings(nlohmann::json& out) const {
     out["waypoints"] = waypoints_;
     out["waypointNames"] = waypointNames_;
     out["waypointKey"] = addKey_;
+    out["mapKey"] = mapKey_;
     out["beams"] = beams_;
     out["worldLabels"] = worldLabels_;
     out["deathPoint"] = deathPoint_;
@@ -711,13 +769,14 @@ void Minimap::LoadSettings(const nlohmann::json& in) {
     showCost_ = in.value("cost", false);
     shape_ = std::clamp(in.value("shape", 1), 0, 1);
     rotate_ = in.value("rotate", false);
-    zoom_ = std::clamp(in.value("zoom", 40.0f), 12.0f, 60.0f);
+    zoom_ = std::clamp(in.value("zoom", 40.0f), 12.0f, 200.0f);
     cardinals_ = in.value("cardinals", true);
     coords_ = in.value("coords", false);
     caveMode_ = std::clamp(in.value("cave", 0), 0, 2);
     waypoints_ = in.value("waypoints", true);
     waypointNames_ = in.value("waypointNames", true);
     addKey_ = in.value("waypointKey", static_cast<int>('B'));
+    mapKey_ = in.value("mapKey", static_cast<int>('M'));
     beams_ = in.value("beams", true);
     worldLabels_ = in.value("worldLabels", true);
     deathPoint_ = in.value("deathPoint", true);

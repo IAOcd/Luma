@@ -19,6 +19,8 @@ Comandos:
 Los datos que se escriben a mano para cada versión:
   release/minecraft.json        -> ["1.26.63", ...] versiones de Minecraft soportadas
   release/notes/<versión>.json  -> novedades en inglés, español y portugués
+                                   (opcional: "image", una imagen del repo, y
+                                   "author", la nota del autor en los 3 idiomas)
 """
 import argparse
 import datetime
@@ -74,11 +76,23 @@ def cmd_manifest(args):
     (out / "latest.json").write_bytes(json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
     shutil.copyfile(exe, out / "LumaLauncher.exe")
     lines = [f"## Luma v{version}", ""]
+    # An image for the release (optional): a file of the repo, shown from the tag.
+    if notes.get("image"):
+        lines.append(f"![Luma v{version}](https://raw.githubusercontent.com/{REPO}/v{version}/{notes['image']})")
+        lines.append("")
     for lang, title in (("en", "English"), ("es", "Español"), ("pt", "Português")):
         lines.append(f"### {title}")
         for note in notes["notes"].get(lang, []):
             lines.append(f"- **{note['title']}**: {note['body']}")
         lines.append("")
+    # The author's note (optional), in the three languages.
+    author = notes.get("author") or {}
+    if author:
+        for lang, title in (("en", "Author's note"), ("es", "Nota del autor"), ("pt", "Nota do autor")):
+            if author.get(lang):
+                lines.append(f"### {title}")
+                lines.append(f"> {author[lang]}")
+                lines.append("")
     lines.append("Minecraft: " + ", ".join(minecraft))
     lines.append("")
     lines.append(f"SHA-256 `LumaLauncher.exe`: `{manifest['sha256']}`")

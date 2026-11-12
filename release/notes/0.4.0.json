@@ -103,5 +103,11 @@
         "body": "Ícones novos, botões reativos, letras de todos os alfabetos (japonês, coreano, chinês, árabe...), F1 esconde o HUD do Luma, o menu reabre onde você parou e a mira some em terceira pessoa."
       }
     ]
+  },
+  "image": "release/images/v0.4.0.png",
+  "author": {
+    "en": "Before Luma was a Minecraft client, it was a music player I made for Android: a local player that, above everything, I wanted to be beautiful. This update goes back to those roots. Luma Music brings what that app was about into the game: your songs, their covers, their colors and their lyrics. Now the lyrics are written across the sky, the sky dances with whatever you're listening to, and every album paints Luma with its own colors. It's the update I most wanted to make. Thanks for playing with Luma. — iaoo",
+    "es": "Antes de ser un client de Minecraft, Luma fue un reproductor de música que hice para Android: un reproductor local que, más que nada, quería que fuera bello. Esta actualización vuelve a esas raíces. Luma Music trae al juego lo que era esa app: tus canciones, sus portadas, sus colores y sus letras. Ahora las letras se escriben en el cielo, el cielo baila con lo que estás escuchando y cada álbum pinta Luma con sus propios colores. Es la actualización que más quería hacer. Gracias por jugar con Luma. — iaoo",
+    "pt": "Antes de ser um client de Minecraft, o Luma foi um player de música que eu fiz para Android: um player local que, acima de tudo, eu queria que fosse bonito. Esta atualização volta a essas raízes. O Luma Music traz para o jogo o que aquele app era: suas músicas, suas capas, suas cores e suas letras. Agora as letras são escritas no céu, o céu dança com o que você está ouvindo e cada álbum pinta o Luma com as próprias cores. É a atualização que eu mais queria fazer. Obrigado por jogar com o Luma. — iaoo"
   }
 }

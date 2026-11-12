@@ -7,9 +7,8 @@
 //  painted with a color per kind of block, darker on slopes like the game's
 //  paper maps.
 //
-//  This first version is the test: does reading the world work, and what
-//  does it cost? (The cost shows under the map.) Rotation, zoom, round shape
-//  and waypoints come in the next parts. It shows terrain only: the chunks
+//  Round or square, zoom, rotation with your view, N/E/S/W and coordinates.
+//  Waypoints come in the next part. It shows terrain only: the chunks
 //  your game already has loaded. (No players or mobs: an entity radar will
 //  only work in local worlds.)
 // =============================================================================
@@ -39,11 +38,19 @@ public:
 
 private:
     float size_ = 110.0f;     // HUD pixels per side
-    bool showCost_ = true;    // the test: how many microseconds it costs
+    int shape_ = 1;           // 0 square, 1 round
+    bool rotate_ = false;     // up = where you look (off = north up)
+    float zoom_ = 40.0f;      // blocks from the center to the edge
+    float shownZoom_ = 0.0f;  // (animated toward zoom_)
+    bool cardinals_ = true;   // N, E, S, W on the edge
+    bool coords_ = false;     // your coordinates under the map
+    bool showCost_ = false;   // how many microseconds it costs per frame
+    int textureX_ = 0, textureZ_ = 0;  // the world column at the texture's center
     ImTextureID texture_{};
     std::uint32_t version_ = 0;
     double nextUpload_ = 0.0;
     std::vector<std::uint32_t> pixels_;
+    std::vector<std::uint32_t> big_;  // the same, 4x bigger (crisp blocks)
 };
 
 }  // namespace luma::modules::world

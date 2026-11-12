@@ -129,9 +129,9 @@ ImFont* PixelFontAt(int k);
 // the world, like the clouds.)
 void ToggleF1Hidden();
 bool F1Hidden();
-// Once per frame: reads the F1 key and flips the above on each press while
-// "playing" (in the world with the mouse grabbed). Limit: if F1 was already
-// on when Luma loaded, press F1 twice to get them in step again.
+// Once per frame: follows the game's own "Hide HUD" setting (the one F1
+// flips; sdk/game_options.h). If that setting can't be read, it counts the
+// F1 presses while "playing" (in the world with the mouse grabbed) instead.
 void UpdateGameHudState(bool playing, bool firstPerson, bool lumaMenuClosed);
 
 void Save(nlohmann::json& out);

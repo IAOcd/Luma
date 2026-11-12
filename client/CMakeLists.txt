@@ -84,6 +84,7 @@ add_library(Luma SHARED
     render/theme.cpp
     sdk/mouse_grab.cpp
     sdk/camera.cpp
+    sdk/game_options.cpp
     sdk/draw3d.cpp
     sdk/blocks.cpp
     sdk/radar.cpp

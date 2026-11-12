@@ -117,4 +117,34 @@ ScanResult FindPattern(std::string_view pattern) {
     return result;
 }
 
+std::vector<std::uintptr_t> FindAllPatterns(std::string_view pattern, std::size_t max) {
+    std::vector<std::uint8_t> bytes;
+    std::vector<bool> mask;
+    std::vector<std::uintptr_t> out;
+    const Section code = CodeSection();
+    if (!Parse(pattern, bytes, mask) || code.start == nullptr || code.size < bytes.size()) {
+        return out;
+    }
+    const std::uint8_t* const end = code.start + code.size - bytes.size() + 1;
+    const std::uint8_t* p = code.start;
+    while (p < end && out.size() < max) {
+        p = static_cast<const std::uint8_t*>(std::memchr(p, bytes[0], static_cast<std::size_t>(end - p)));
+        if (p == nullptr) {
+            break;
+        }
+        bool ok = true;
+        for (std::size_t j = 1; j < bytes.size(); ++j) {
+            if (mask[j] && p[j] != bytes[j]) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) {
+            out.push_back(reinterpret_cast<std::uintptr_t>(p));
+        }
+        ++p;
+    }
+    return out;
+}
+
 }  // namespace luma::sdk

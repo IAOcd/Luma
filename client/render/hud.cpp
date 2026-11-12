@@ -4,6 +4,7 @@
 #include "render/hud.h"
 #include "sdk/game_crosshair.h"
 #include "sdk/paperdoll.h"
+#include "sdk/game_options.h"
 #include "render/font_fallback.h"
 #include "render/theme.h"
 #include "render/rainbow.h"
@@ -123,6 +124,19 @@ bool F1Hidden() {
 
 void UpdateGameHudState(bool playing, bool firstPerson, bool lumaMenuClosed) {
     (void)firstPerson;
+    // BEST: the game's own "Hide HUD" setting (the one F1 flips), read from
+    // its memory (sdk/game_options.h). Always right, also if F1 was on
+    // before Luma loaded or you changed it in the game's settings.
+    const int setting = sdk::gameoptions::HideHud();
+    if (setting >= 0) {
+        if ((setting == 1) != g_f1Hidden.load()) {
+            g_f1Hidden.store(setting == 1);
+            log::Info("HUD: the game's \"Hide HUD\" is {}: Luma's HUD {}.", setting == 1 ? "on" : "off",
+                      setting == 1 ? "hides" : "shows again");
+        }
+        return;
+    }
+    // FALLBACK (setting not found): count the F1 presses.
     // Only bit 0x8000 ("down now"). Bit 1 ("pressed since the last call")
     // is NOT used: on the first frame after injecting it still remembers an
     // F1 from before Luma loaded, and Luma started inverted.

@@ -44,6 +44,7 @@
 #include "sdk/mouse_grab.h"
 #include "sdk/mouse_queue.h"
 #include "sdk/camera.h"
+#include "sdk/game_options.h"
 #include "sdk/draw3d.h"
 #include "sdk/hud_ui.h"
 #include "sdk/game_crosshair.h"
@@ -226,6 +227,7 @@ bool Startup(HMODULE module) {
         // The local player (Phase 6): captured when the mouse moves in a world.
         sdk::player::Init();
         sdk::network::Init();  // ping and server detection
+        sdk::gameoptions::Init();  // the game's settings ("Hide HUD"), before the hooks that use it
         sdk::camera::Init();   // gamma, perspective, camera (Phase 8)
         sdk::draw3d::Init();   // drawing inside the world (outline, hitboxes)
         sdk::paperdoll::Init();  // moving the game's HUD paper doll

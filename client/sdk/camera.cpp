@@ -14,6 +14,7 @@
 #include "sdk/dynlight.h"
 #include "sdk/memory.h"
 #include "sdk/scanner.h"
+#include "sdk/game_options.h"
 
 namespace luma::sdk::camera {
 
@@ -179,6 +180,7 @@ bool __fastcall GetHideHandDetour(void* options) {
 
 int __fastcall GetPerspectiveDetour(void* options) {
     hooks::ActiveCallGuard guard;
+    gameoptions::OnOptions(options);  // (once: finds "Hide HUD", sdk/game_options.h)
     const int original = g_getPerspective(options);
     g_lastPerspective.store(original, std::memory_order_relaxed);
     const int forced = g_perspective.load(std::memory_order_relaxed);

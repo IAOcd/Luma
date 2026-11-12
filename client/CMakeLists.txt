@@ -35,6 +35,7 @@ add_library(Luma SHARED
     modules/hud/player_list.cpp
     modules/hud/music.cpp
     modules/hud/debug_screen.cpp
+    modules/world/minimap.cpp
     modules/hud/scoreboard.cpp
     modules/hud/player_hud.cpp
     modules/hud/watermark.cpp
@@ -79,6 +80,7 @@ add_library(Luma SHARED
     sdk/mouse_grab.cpp
     sdk/camera.cpp
     sdk/draw3d.cpp
+    sdk/blocks.cpp
     sdk/entity.cpp
     sdk/inventory.cpp
     sdk/memory.cpp

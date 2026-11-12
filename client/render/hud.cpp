@@ -2,6 +2,7 @@
 //  hud.cpp - Implementación del estilo del HUD
 // =============================================================================
 #include "render/hud.h"
+#include "sdk/game_crosshair.h"
 #include "render/font_fallback.h"
 #include "render/theme.h"
 #include "render/rainbow.h"
@@ -100,12 +101,47 @@ void LoadFonts(ImGuiIO& io, float uiScale) {
 
 std::atomic<bool> g_f1Hidden{false};
 
+// What we SAW the game do (preferred) and, only if we can't see it, the F1
+// presses counted by hand.
+bool g_gameHudKnown = false;
+bool g_gameHudHidden = false;
+
 void ToggleF1Hidden() {
     g_f1Hidden.store(!g_f1Hidden.load());
 }
 
 bool F1Hidden() {
-    return g_f1Hidden.load();
+    return g_gameHudKnown ? g_gameHudHidden : g_f1Hidden.load();
+}
+
+void UpdateGameHudState(bool playing, bool firstPerson) {
+    static unsigned int last = 0;
+    static int still = 0;
+    if (!sdk::gamecrosshair::Available()) {
+        g_gameHudKnown = false;
+        return;
+    }
+    const unsigned int calls = sdk::gamecrosshair::RenderCalls();
+    if (!playing || !firstPerson) {
+        // In menus or in third person the game may not draw its crosshair
+        // for other reasons: keep what we knew.
+        last = calls;
+        still = 0;
+        return;
+    }
+    if (calls != last) {
+        last = calls;
+        still = 0;
+        g_gameHudKnown = true;
+        if (g_gameHudHidden) {
+            g_gameHudHidden = false;
+            log::Info("HUD: the game shows its HUD again: Luma's HUD comes back.");
+        }
+    } else if (++still >= 8 && !g_gameHudHidden) {
+        g_gameHudKnown = true;
+        g_gameHudHidden = true;
+        log::Info("HUD: the game hid its HUD (F1): Luma's HUD hides too.");
+    }
 }
 
 ImFont* PixelFont() {

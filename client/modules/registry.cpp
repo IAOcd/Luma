@@ -20,6 +20,7 @@
 #include "modules/hud/player_list.h"
 #include "modules/hud/music.h"
 #include "modules/hud/debug_screen.h"
+#include "modules/world/minimap.h"
 #include "modules/hud/scoreboard.h"
 #include "modules/hud/watermark.h"
 #include "modules/performance/perf_overlay.h"
@@ -54,6 +55,7 @@ void Manager::RegisterAll() {
     modules_.push_back(std::make_unique<hud::PlayerList>());
     modules_.push_back(std::make_unique<hud::NowPlaying>());
     modules_.push_back(std::make_unique<hud::DebugScreen>());
+    modules_.push_back(std::make_unique<world::Minimap>());
     // Visual
     modules_.push_back(std::make_unique<visual::Crosshair>());
     modules_.push_back(std::make_unique<visual::PostProcessing>());

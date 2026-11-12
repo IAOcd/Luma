@@ -26,9 +26,11 @@ using RenderFn = void(__fastcall*)(void* self, void* ctx, void* client, void* co
 RenderFn g_original = nullptr;
 std::atomic<bool> g_ready{false};
 std::atomic<bool> g_hidden{false};
+std::atomic<unsigned int> g_calls{0};
 
 void __fastcall RenderDetour(void* self, void* ctx, void* client, void* control, int pass, void* rect) {
     hooks::ActiveCallGuard guard;
+    g_calls.fetch_add(1, std::memory_order_relaxed);  // (the game's HUD is being drawn)
     if (g_hidden.load(std::memory_order_relaxed)) {
         return;  // la mira del juego no se dibuja: la de Luma la reemplaza
     }
@@ -64,6 +66,10 @@ bool Init() {
 
 bool Available() {
     return g_ready.load(std::memory_order_relaxed);
+}
+
+unsigned int RenderCalls() {
+    return g_calls.load(std::memory_order_relaxed);
 }
 
 void SetHidden(bool hidden) {

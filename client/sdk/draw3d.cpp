@@ -2,6 +2,8 @@
 //  draw3d.cpp - Dibujo dentro del mundo (ver draw3d.h)
 // =============================================================================
 #include "sdk/draw3d.h"
+
+#include "sdk/blocks.h"
 #include "render/rainbow.h"
 
 #include <windows.h>
@@ -1058,6 +1060,8 @@ void __fastcall OutlineCallerDetour(void* lrp, void* screenContext, void* region
     hooks::ActiveCallGuard guard;
     t_outlineHappened = false;
     g_outlineCaller(lrp, screenContext, region, pos, flag);
+    // The minimap reads blocks here: the game's drawing thread and its BlockSource (sdk/blocks.h).
+    blocks::OnRegion(region);
     if (t_outlineHappened || t_levelDrawn || !g_ready.load(std::memory_order_relaxed) || !WorldWanted()) {
         return;  // ya se dibujaron (junto a tu contorno) o no hacen falta
     }

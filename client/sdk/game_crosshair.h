@@ -21,4 +21,9 @@ bool Init();
 bool Available();
 void SetHidden(bool hidden);
 
+// How many times the game asked to draw its crosshair so far. The game only
+// draws it while its HUD is visible: if this stops growing while you play in
+// first person, the game's HUD is hidden (F1). Luma's HUD follows that.
+unsigned int RenderCalls();
+
 }  // namespace luma::sdk::gamecrosshair

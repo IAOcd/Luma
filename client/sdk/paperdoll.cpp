@@ -189,6 +189,39 @@ void Apply(std::uintptr_t root) {
     }
 }
 
+// The screens seen (their names, to log each new one once) and the death screen.
+std::atomic<unsigned> g_deathFrames{0};
+std::atomic<unsigned> g_menuFrames{0};
+bool g_loggedUnreadable = false;
+char g_seenNames[24][40]{};
+int g_seenCount = 0;
+
+void NoteScreen(std::uintptr_t root) {
+    char name[40]{};
+    if (!SafeReadString(root + kControlName, name, sizeof(name)) || name[0] == 0) {
+        g_menuFrames.fetch_add(1, std::memory_order_relaxed);
+        if (!g_loggedUnreadable) {
+            g_loggedUnreadable = true;
+            log::Info("SDK: the game drew a screen whose name couldn't be read.");
+        }
+        return;
+    }
+    if (std::strstr(name, "death") != nullptr || std::strstr(name, "respawn") != nullptr) {
+        g_deathFrames.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (std::strcmp(name, "hud_crosshair_screen") != 0 && std::strcmp(name, "debug_screen") != 0 &&
+        std::strcmp(name, "toast_screen") != 0) {
+        g_menuFrames.fetch_add(1, std::memory_order_relaxed);
+    }
+    for (int i = 0; i < g_seenCount; ++i) {
+        if (std::strcmp(g_seenNames[i], name) == 0) return;
+    }
+    if (g_seenCount < 24) {
+        std::memcpy(g_seenNames[g_seenCount++], name, sizeof(name));
+        log::Info("SDK: the game drew the screen \"{}\".", name);
+    }
+}
+
 void __fastcall SetupAndRenderDetour(void* view, void* ctx) {
     hooks::ActiveCallGuard guard;
     // En el hilo de la interfaz: aplicar una skin equipada (si hay una pendiente).
@@ -210,7 +243,11 @@ void __fastcall SetupAndRenderDetour(void* view, void* ctx) {
     std::uintptr_t tree = 0;
     std::uintptr_t root = 0;
     if (!SafeRead(reinterpret_cast<std::uintptr_t>(view) + kViewVisualTree, tree) || !LooksLikePointer(tree) ||
-        !SafeRead(tree + kTreeRoot, root) || !LooksLikePointer(root) || !NameIs(root, "hud_screen")) {
+        !SafeRead(tree + kTreeRoot, root) || !LooksLikePointer(root)) {
+        return;
+    }
+    if (!NameIs(root, "hud_screen")) {
+        NoteScreen(root);
         return;
     }
     Apply(root);
@@ -218,6 +255,14 @@ void __fastcall SetupAndRenderDetour(void* view, void* ctx) {
 }
 
 }  // namespace
+
+unsigned DeathScreenFrames() {
+    return g_deathFrames.load(std::memory_order_relaxed);
+}
+
+unsigned MenuScreenFrames() {
+    return g_menuFrames.load(std::memory_order_relaxed);
+}
 
 bool Init() {
     const ScanResult call = FindPattern(kSetupAndRenderCall);

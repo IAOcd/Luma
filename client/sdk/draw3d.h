@@ -89,7 +89,7 @@ struct WorldShapes {
     bool lines = false;
 };
 // Each module uses its own "channel", so they don't erase each other's shapes.
-enum ShapeChannel { kChannelLyrics = 0, kChannelVisualizer = 1, kChannelCount = 2 };
+enum ShapeChannel { kChannelLyrics = 0, kChannelVisualizer = 1, kChannelWaypoints = 2, kChannelCount = 3 };
 void SetWorldShapes(std::vector<WorldShapes> shapes, int channel = kChannelLyrics);
 // Which of the fill materials draws them (the same candidates as the outline fill).
 void SetWorldShapesMaterial(int index);

@@ -43,6 +43,16 @@ float RootWidth();
 // ¿Ya encontramos el muñeco en la interfaz del juego?
 bool Found();
 
+// THE GAME'S SCREENS: every screen the game draws (the HUD, the chat, the
+// inventory, the pause menu...) has a name at the root of its tree. Each new
+// name is written to the log once. If one has "death" in it, it's the "You
+// died!" screen: this says how many times it was drawn (it only grows), so
+// a module can notice the moment you die.
+unsigned DeathScreenFrames();
+// How many times a "menu" screen was drawn (pause, chat, inventory... not
+// the ones always on top of the HUD: crosshair, debug, toasts). It only grows.
+unsigned MenuScreenFrames();
+
 // Devuelve el muñeco a su lugar original (al desactivar o al descargar Luma).
 void BeginUnload();
 

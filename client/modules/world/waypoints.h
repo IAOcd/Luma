@@ -31,7 +31,9 @@ struct Waypoint {
     int x = 0, y = 0, z = 0;
     int dimension = 0;            // 0 Overworld, 1 Nether, 2 End
     float color[3] = {1.0f, 0.8f, 0.3f};
-    bool visible = true;
+    bool visible = true;          // on the minimap
+    bool inWorld = true;          // its beam and label in the world
+    bool death = false;           // the automatic "where you died" (only the last one is kept)
 };
 
 // Once per frame (cheap: the real check is every 2 s). "dimension": where
@@ -50,6 +52,8 @@ std::vector<Waypoint>& List();
 // color of a palette. Returns its index.
 std::size_t Add(int x, int y, int z);
 void Remove(std::size_t index);
+// Where you died: replaces the previous death point of this world.
+void SetDeathPoint(int x, int y, int z);
 
 // Something changed: saved to disk a second later (and when leaving the world).
 void MarkDirty();

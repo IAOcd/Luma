@@ -31,6 +31,8 @@ public:
     ImVec2 OnRenderHud(const HudFrame& frame) override;
     void OnEnable() override;
     void OnDisable() override;
+    bool HasTick() const override { return true; }
+    void OnTick() override;
     bool HasSettings() const override { return true; }
     bool DrawSettings() override;
     void SaveSettings(nlohmann::json& out) const override;
@@ -38,6 +40,7 @@ public:
 
 private:
     bool DrawWaypointSettings();
+    void DrawWorldWaypoints();
     float size_ = 110.0f;     // HUD pixels per side
     int shape_ = 1;           // 0 square, 1 round
     bool rotate_ = false;     // up = where you look (off = north up)
@@ -50,6 +53,17 @@ private:
     bool waypointNames_ = true;  // and the name of the nearest ones
     int addKey_ = 'B';        // the key that saves a waypoint where you are
     bool keyWasDown_ = false;
+    bool beams_ = true;        // a column of light at each waypoint, in the world
+    bool worldLabels_ = true;  // its banner, name and distance, in the world
+    bool deathPoint_ = true;   // a waypoint where you died
+    bool beamsSent_ = false;
+    unsigned deathFrames_ = 0xFFFFFFFFu;
+    double lastDeath_ = -100.0;
+    float alive_[3] = {0, 0, 0};  // the last place you stood alive (while playing)
+    double releasedAt_ = -1.0;    // when the game let go of the mouse (-1 = it has it)
+    unsigned menusSeen_ = 0;
+    bool hiddenScreen_ = false;
+    int aliveDim_ = -1;   // the mouse is free and no known screen is drawn
     bool showCost_ = false;   // how many microseconds it costs per frame
     int textureX_ = 0, textureZ_ = 0;  // the world column at the texture's center
     ImTextureID texture_{};

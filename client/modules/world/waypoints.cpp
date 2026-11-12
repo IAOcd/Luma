@@ -78,7 +78,9 @@ void Save() {
                         {"z", w.z},
                         {"dimension", w.dimension},
                         {"color", {w.color[0], w.color[1], w.color[2]}},
-                        {"visible", w.visible}});
+                        {"visible", w.visible},
+                        {"inWorld", w.inWorld},
+                        {"death", w.death}});
     }
     root["waypoints"] = std::move(list);
     std::error_code ec;
@@ -116,6 +118,8 @@ void Load(const std::string& key) {
                 for (int k = 0; k < 3; ++k) w.color[k] = std::clamp(j["color"][k].get<float>(), 0.0f, 1.0f);
             }
             w.visible = j.value("visible", true);
+            w.inWorld = j.value("inWorld", true);
+            w.death = j.value("death", false);
             g_list.push_back(w);
         }
     } catch (const std::exception& e) {
@@ -204,6 +208,22 @@ std::size_t Add(int x, int y, int z) {
 void Remove(std::size_t index) {
     if (index >= g_list.size()) return;
     g_list.erase(g_list.begin() + static_cast<std::ptrdiff_t>(index));
+    MarkDirty();
+}
+
+void SetDeathPoint(int x, int y, int z) {
+    g_list.erase(std::remove_if(g_list.begin(), g_list.end(), [](const Waypoint& w) { return w.death; }), g_list.end());
+    Waypoint w;
+    strncpy_s(w.name.data(), w.name.size(), Tr("Death"), _TRUNCATE);
+    w.x = x;
+    w.y = y;
+    w.z = z;
+    w.dimension = std::max(0, g_dimension);
+    w.color[0] = 0.85f;
+    w.color[1] = 0.16f;
+    w.color[2] = 0.16f;
+    w.death = true;
+    g_list.push_back(w);
     MarkDirty();
 }
 

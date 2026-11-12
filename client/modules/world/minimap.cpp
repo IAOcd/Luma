@@ -25,13 +25,18 @@
 #include "core/tr.h"
 #include "render/gpu.h"
 #include "render/hud.h"
+#include "core/logger.h"
 #include "render/notifications.h"
+#include "render/overlay.h"
 #include "render/icons.h"
 #include "render/rainbow.h"
 #include "render/ui.h"
 #include "modules/world/waypoints.h"
 #include "sdk/blocks.h"
+#include "sdk/camera.h"
+#include "sdk/draw3d.h"
 #include "sdk/mouse_grab.h"
+#include "sdk/paperdoll.h"
 #include "sdk/player.h"
 
 namespace luma::modules::world {
@@ -46,6 +51,88 @@ constexpr float kPi = 3.14159265358979f;
 ImU32 WithAlpha(ImU32 c, float a) {
     const ImU32 alpha = static_cast<ImU32>(((c >> IM_COL32_A_SHIFT) & 0xFF) * std::clamp(a, 0.0f, 1.0f));
     return (c & ~IM_COL32_A_MASK) | (alpha << IM_COL32_A_SHIFT);
+}
+
+// --- Waypoint drawing, made of Minecraft pixels (the minimap and the world) ---------
+// Everything sits on a grid of "q" screen pixels, so nothing looks blurry.
+struct PixelText {
+    ImFont* font = nullptr;
+    float size = 0, capTop = 0, capHeight = 0, q = 1;
+    bool pixel = false;
+};
+
+// The game's font with q screen pixels per font pixel (or the smooth one).
+PixelText TextAt(int qi) {
+    PixelText t;
+    t.q = static_cast<float>(qi);
+    t.font = render::hud::PixelFontAt(qi);
+    t.pixel = t.font != nullptr;
+    if (!t.pixel) t.font = render::hud::SmoothFont();
+    t.size = t.pixel ? 11.0f * t.q : 9.0f * t.q;
+    t.capTop = t.pixel ? 2.0f * t.q : 0.2f * t.size;
+    t.capHeight = t.pixel ? 7.0f * t.q : 0.55f * t.size;
+    return t;
+}
+
+// A text's visible width (the pixel font leaves one pixel after each letter).
+float TextWidth(const PixelText& t, const char* text) {
+    const float w = t.font->CalcTextSizeA(t.size, FLT_MAX, 0.0f, text).x;
+    return t.pixel ? w - t.q : w;
+}
+
+ImU32 Shade(const float* rgb, float k, int alpha) {
+    return IM_COL32(static_cast<int>(std::clamp(rgb[0] * k, 0.0f, 1.0f) * 255.0f),
+                    static_cast<int>(std::clamp(rgb[1] * k, 0.0f, 1.0f) * 255.0f),
+                    static_cast<int>(std::clamp(rgb[2] * k, 0.0f, 1.0f) * 255.0f), alpha);
+}
+
+// The banner: a 7 x 8 body (lighter top row, darker bottom, like the game's
+// buttons) and a point of 2 steps whose tip touches the place; a hard shadow
+// one pixel down-right; the initial inside, white with the game's text
+// shadow (dark on light colors).
+void Banner(ImDrawList* draw, ImVec2 tip, const PixelText& t, const float* rgb, int alpha, const char* name) {
+    const float q = t.q;
+    auto rect = [&](ImVec2 o, float x0, float y0, float x1, float y1, ImU32 color) {
+        draw->AddRectFilled(ImVec2(o.x + x0 * q, o.y + y0 * q), ImVec2(o.x + x1 * q, o.y + y1 * q), color);
+    };
+    auto shape = [&](ImVec2 o, ImU32 body, ImU32 top, ImU32 bottom) {
+        rect(o, -3, -10, 4, -2, body);
+        rect(o, -3, -10, 4, -9, top);
+        rect(o, -3, -3, 4, -2, bottom);
+        rect(o, -2, -2, 3, -1, bottom);
+        rect(o, -1, -1, 2, 0, bottom);
+    };
+    const ImU32 shadow = IM_COL32(0, 0, 0, alpha * 110 / 255);
+    shape(ImVec2(tip.x + q, tip.y + q), shadow, shadow, shadow);
+    shape(tip, Shade(rgb, 1.0f, alpha), Shade(rgb, 1.3f, alpha), Shade(rgb, 0.68f, alpha));
+    char initial[8] = {0};
+    const unsigned char first = static_cast<unsigned char>(name[0]);
+    if (first >= 0x80) {
+        const int n = first >= 0xF0 ? 4 : first >= 0xE0 ? 3 : 2;  // (a letter of another alphabet)
+        for (int i = 0; i < n && name[i] != 0; ++i) initial[i] = name[i];
+    } else {
+        initial[0] = first != 0 ? static_cast<char>(std::toupper(first)) : '?';
+    }
+    const float lum = 0.299f * rgb[0] + 0.587f * rgb[1] + 0.114f * rgb[2];
+    const ImVec2 tp(std::floor(tip.x + 0.5f * q - TextWidth(t, initial) * 0.5f), tip.y - 9.0f * q - t.capTop);
+    if (lum > 0.7f) {
+        draw->AddText(t.font, t.size, tp, IM_COL32(40, 40, 40, alpha), initial);
+    } else {
+        draw->AddText(t.font, t.size, ImVec2(tp.x + q, tp.y + q), Shade(rgb, 0.25f, alpha), initial);
+        draw->AddText(t.font, t.size, tp, IM_COL32(255, 255, 255, alpha), initial);
+    }
+}
+
+// A line of text like the game's name tags: white on a dark see-through
+// band, centered on "cx", its bottom at "bottom", kept between minX and maxX.
+void NameTag(ImDrawList* draw, float cx, float bottom, const PixelText& t, const char* text, ImU32 color, float minX, float maxX) {
+    const float q = t.q;
+    const float w = TextWidth(t, text);
+    float x0 = std::floor(cx - w * 0.5f) - q;
+    x0 = std::clamp(x0, minX, std::max(minX, maxX - w - 2.0f * q));
+    bottom = std::floor(bottom);
+    draw->AddRectFilled(ImVec2(x0, bottom - t.capHeight - 2.0f * q), ImVec2(x0 + w + 2.0f * q, bottom), IM_COL32(0, 0, 0, 100));
+    draw->AddText(t.font, t.size, ImVec2(x0 + q, bottom - t.capHeight - q - t.capTop), color, text);
 }
 
 }  // namespace
@@ -74,6 +161,8 @@ void Minimap::OnEnable() {
 void Minimap::OnDisable() {
     sdk::blocks::Want(false);
     waypoints::Flush();
+    sdk::draw3d::SetWorldShapes({}, sdk::draw3d::kChannelWaypoints);
+    beamsSent_ = false;
 }
 
 ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
@@ -91,6 +180,7 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
     const double now = rainbow::Seconds();
     sdk::blocks::SetCaveMode(caveMode_);
     waypoints::Update(now, sdk::blocks::Dimension());
+    DrawWorldWaypoints();
     if (now >= nextUpload_) {
         nextUpload_ = now + 0.2;
         if (pixels_.size() != static_cast<std::size_t>(kGrid) * kGrid) pixels_.assign(static_cast<std::size_t>(kGrid) * kGrid, 0);
@@ -225,7 +315,7 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
         }
     }
 
-    // --- Waypoints: a dot on the map, or an arrow on its edge when far ---
+    // --- Waypoints: a banner on the map, or a pixel-art arrow on its edge when far ---
     // The other way of toWorld: a point of the world -> pixels from the center.
     auto toScreen = [&](float wx, float wz) {
         const float dx = wx - px, dz = wz - pz;
@@ -233,39 +323,23 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
         return ImVec2(dx / blocksPerPx, dz / blocksPerPx);
     };
     if (waypoints_ && havePlayer) {
-        // THE LOOK, made of Minecraft pixels: a little banner (a square with
-        // a stepped point at the bottom) whose tip touches the place. Its top
-        // row is lighter and its bottom darker, like the game's buttons, and
-        // it casts a hard shadow one pixel down-right, like the game's text.
-        // Inside, the initial in the game's own font. Far away, the same
-        // banner waits on the map's edge, in the place's direction.
-        // Everything is drawn on a grid of "q" screen pixels (one pixel of
-        // the HUD), so nothing looks blurry.
         const int qi = std::clamp(static_cast<int>(std::lround(u)), 1, 8);
         const float q = static_cast<float>(qi);
-        ImFont* pixel = render::hud::PixelFontAt(qi);
-        ImFont* font = pixel != nullptr ? pixel : render::hud::SmoothFont();
-        const float fontSize = pixel != nullptr ? 11.0f * q : 9.0f * q;
-        const float capTop = pixel != nullptr ? 2.0f * q : 0.2f * fontSize;
+        const PixelText text = TextAt(qi);
+        const PixelText smallText = TextAt(std::max(1, qi - 1));  // names: smaller than the banner's letter
         const int dim = waypoints::Dimension();
-        auto shade = [](const float* rgb, float k, int alpha) {
-            return IM_COL32(static_cast<int>(std::clamp(rgb[0] * k, 0.0f, 1.0f) * 255.0f),
-                            static_cast<int>(std::clamp(rgb[1] * k, 0.0f, 1.0f) * 255.0f),
-                            static_cast<int>(std::clamp(rgb[2] * k, 0.0f, 1.0f) * 255.0f), alpha);
-        };
         const float reach = inner - 6.0f * q;
-        // FAR AWAY: a pixel-art arrow on the edge, pointing at the place. It's
-        // drawn cell by cell: each cell of a 13 x 13 grid around the point is
-        // painted if its center falls inside the arrow's shape turned toward
-        // the place (a dark outline around, the lower half a bit darker). So
-        // it stays made of square pixels at any angle.
+        // FAR AWAY: a pixel-art arrow on the edge, pointing at the place,
+        // painted cell by cell: each cell of a 13 x 13 grid whose center falls
+        // inside the arrow's shape (turned toward the place) gets the color; a
+        // dark outline around; the lower half a bit darker. So it stays made
+        // of square pixels at any angle.
         auto inArrow = [](float x, float y, float grow) {
-            // The shape pointing right (+x): a tip and a notch at the back.
             const float tx = 3.6f * grow, bx = -3.2f * grow, by = 3.2f * grow, nx = -1.0f * grow;
-            auto inTri = [](float px0, float py0, float ax, float ay, float bx0, float by0, float cx0, float cy0) {
-                const float d1 = (px0 - bx0) * (ay - by0) - (ax - bx0) * (py0 - by0);
-                const float d2 = (px0 - cx0) * (by0 - cy0) - (bx0 - cx0) * (py0 - cy0);
-                const float d3 = (px0 - ax) * (cy0 - ay) - (cx0 - ax) * (py0 - ay);
+            auto inTri = [](float x0, float y0, float ax, float ay, float bx0, float by0, float cx0, float cy0) {
+                const float d1 = (x0 - bx0) * (ay - by0) - (ax - bx0) * (y0 - by0);
+                const float d2 = (x0 - cx0) * (by0 - cy0) - (bx0 - cx0) * (y0 - cy0);
+                const float d3 = (x0 - ax) * (cy0 - ay) - (cx0 - ax) * (y0 - ay);
                 const bool neg = d1 < 0 || d2 < 0 || d3 < 0, pos = d1 > 0 || d2 > 0 || d3 > 0;
                 return !(neg && pos);
             };
@@ -275,93 +349,39 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
             const ImVec2 cell0(std::floor(center.x), std::floor(center.y));
             for (int gy = -6; gy <= 6; ++gy) {
                 for (int gx = -6; gx <= 6; ++gx) {
-                    // This cell's center, turned into the arrow's own frame.
                     const float x = static_cast<float>(gx), y = static_cast<float>(gy);
                     const float lx = x * dir.x + y * dir.y, ly = -x * dir.y + y * dir.x;
                     ImU32 color = 0;
                     if (inArrow(lx, ly, 1.0f)) {
-                        color = ly > 0.0f ? shade(rgb, 0.72f, 255) : shade(rgb, 1.0f, 255);
+                        color = ly > 0.0f ? Shade(rgb, 0.72f, 255) : Shade(rgb, 1.0f, 255);
                     } else if (inArrow(lx, ly, 1.5f)) {
                         color = IM_COL32(18, 18, 22, 230);
                     }
                     if (color == 0) continue;
-                    const ImVec2 a(cell0.x + static_cast<float>(gx) * q, cell0.y + static_cast<float>(gy) * q);
-                    draw->AddRectFilled(a, ImVec2(a.x + q, a.y + q), color);
+                    const ImVec2 a0(cell0.x + x * q, cell0.y + y * q);
+                    draw->AddRectFilled(a0, ImVec2(a0.x + q, a0.y + q), color);
                 }
             }
-        };
-        // One pixel-art rectangle: x0..x1, y0..y1 in HUD pixels from "o".
-        auto pixelRect = [&](ImVec2 o, float x0, float y0, float x1, float y1, ImU32 color) {
-            draw->AddRectFilled(ImVec2(o.x + x0 * q, o.y + y0 * q), ImVec2(o.x + x1 * q, o.y + y1 * q), color);
-        };
-        // The banner, its tip at "o": a 7 x 9 body (just room for a letter
-        // and one pixel around) and a point of 2 steps.
-        auto banner = [&](ImVec2 o, ImU32 body, ImU32 top, ImU32 bottom) {
-            pixelRect(o, -3, -11, 4, -2, body);
-            pixelRect(o, -3, -11, 4, -10, top);
-            pixelRect(o, -3, -3, 4, -2, bottom);
-            pixelRect(o, -2, -2, 3, -1, bottom);
-            pixelRect(o, -1, -1, 2, 0, bottom);
         };
         int named = 0;
         for (const waypoints::Waypoint& w : waypoints::List()) {
             if (!w.visible || (dim >= 0 && w.dimension != dim)) continue;
             ImVec2 d = toScreen(static_cast<float>(w.x) + 0.5f, static_cast<float>(w.z) + 0.5f);
             const float k = round ? std::sqrt(d.x * d.x + d.y * d.y) : std::max(std::fabs(d.x), std::fabs(d.y));
-            const bool isFar = k > reach;
-            if (isFar) {
+            if (k > reach) {
                 d.x *= reach / k;
                 d.y *= reach / k;
                 const float len = std::max(0.001f, std::sqrt(d.x * d.x + d.y * d.y));
                 arrow(ImVec2(c.x + d.x, c.y + d.y), ImVec2(d.x / len, d.y / len), w.color);
                 continue;
             }
-            // The tip, on the pixel grid (and, at the edge, the banner centered on the point).
-            ImVec2 tip(std::floor(c.x + d.x), std::floor(c.y + d.y));
-            const float alpha = isFar ? 0.85f : 1.0f;
-            const int a8 = static_cast<int>(alpha * 255.0f);
-            banner(ImVec2(tip.x + q, tip.y + q), IM_COL32(0, 0, 0, static_cast<int>(alpha * 110.0f)), IM_COL32(0, 0, 0, static_cast<int>(alpha * 110.0f)),
-                   IM_COL32(0, 0, 0, static_cast<int>(alpha * 110.0f)));  // the shadow
-            banner(tip, shade(w.color, 1.0f, a8), shade(w.color, 1.3f, a8), shade(w.color, 0.68f, a8));
-            // The initial: white with the game's text shadow; dark on light colors.
-            char initial[8] = {0};
-            const unsigned char first = static_cast<unsigned char>(w.name[0]);
-            if (first >= 0x80) {
-                const int n = first >= 0xF0 ? 4 : first >= 0xE0 ? 3 : 2;
-                for (int i = 0; i < n && w.name[i] != 0; ++i) initial[i] = w.name[i];
-            } else {
-                initial[0] = first != 0 ? static_cast<char>(std::toupper(first)) : '?';
-            }
-            const float lum = 0.299f * w.color[0] + 0.587f * w.color[1] + 0.114f * w.color[2];
-            const ImVec2 ts = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, initial);
-            // (the pixel font leaves one pixel of space after each letter)
-            const float lw = pixel != nullptr ? ts.x - q : ts.x;
-            const ImVec2 tp(std::floor(tip.x + 0.5f * q - lw * 0.5f), tip.y - 10.0f * q - capTop);
-            if (lum > 0.7f) {
-                draw->AddText(font, fontSize, tp, IM_COL32(40, 40, 40, a8), initial);
-            } else {
-                draw->AddText(font, fontSize, ImVec2(tp.x + q, tp.y + q), shade(w.color, 0.25f, a8), initial);
-                draw->AddText(font, fontSize, tp, IM_COL32(255, 255, 255, a8), initial);
-            }
-            // The name, like the game's name tags: white letters on a dark
-            // see-through band (only on the map, not on the edge; at most 6).
-            if (waypointNames_ && !isFar && named < 6 && w.name[0] != 0) {
+            const ImVec2 tip(std::floor(c.x + d.x), std::floor(c.y + d.y));
+            Banner(draw, tip, text, w.color, 255, w.name.data());
+            // The name (at most 6, so the map stays readable).
+            if (waypointNames_ && named < 6 && w.name[0] != 0) {
                 ++named;
-                // (one pixel size smaller than the banner: the name helps, the map matters more)
-                const int nq = std::max(1, qi - 1);
-                const float nqf = static_cast<float>(nq);
-                ImFont* nfont = render::hud::PixelFontAt(nq);
-                if (nfont == nullptr) nfont = font;
-                const float nsize = pixel != nullptr ? 11.0f * nqf : 7.0f * q;
-                const float ncapTop = pixel != nullptr ? 2.0f * nqf : 0.2f * nsize;
-                const float capH = pixel != nullptr ? 7.0f * nqf : 0.55f * nsize;
-                const ImVec2 ns = nfont->CalcTextSizeA(nsize, FLT_MAX, 0.0f, w.name.data());
-                const float nw = pixel != nullptr ? ns.x - nqf : ns.x;
-                float x0 = std::floor(tip.x + 0.5f * q - nw * 0.5f) - nqf;
-                x0 = std::clamp(x0, c.x - inner, c.x + inner - nw - 2.0f * nqf);
-                const float y1 = tip.y - 12.0f * q;
-                draw->AddRectFilled(ImVec2(x0, y1 - capH - 2.0f * nqf), ImVec2(x0 + nw + 2.0f * nqf, y1), IM_COL32(0, 0, 0, 100));
-                draw->AddText(nfont, nsize, ImVec2(x0 + nqf, y1 - capH - nqf - ncapTop), IM_COL32(255, 255, 255, 235), w.name.data());
+                NameTag(draw, tip.x + 0.5f * q, tip.y - 11.0f * q, smallText, w.name.data(), IM_COL32(255, 255, 255, 235), c.x - inner,
+                        c.x + inner);
             }
         }
     }
@@ -442,11 +462,186 @@ bool Minimap::DrawSettings() {
 }
 
 // The waypoints' part of the settings: the key, and the list of this world.
+// --- Where you died (every 50 ms, from Luma's main thread, with the state lock) ---
+// Here and not where the map is drawn: while you're dead the game hides its
+// HUD, and so does Luma, so the drawing code doesn't run at that moment.
+// Two signs, whichever comes first:
+//  1. A screen with "death" in its name is drawn (if the game draws it
+//     through the function Luma watches; in 1.26.63 it doesn't seem to).
+//  2. THE GAME LET GO OF THE MOUSE, but none of the screens Luma knows
+//     (pause, chat, inventory...) is being drawn, nor Luma's menu: some
+//     other screen is up. If, when the mouse comes back, you are somewhere
+//     else (more than 3 blocks away, same dimension), you respawned: you died.
+// The point saved is the last place you stood while playing.
+void Minimap::OnTick() {
+    sdk::player::Snapshot p;
+    if (!sdk::player::Read(p)) return;
+    const double now = rainbow::Seconds();
+    auto saveDeath = [&]() {
+        if (now - lastDeath_ < 5.0) return;
+        lastDeath_ = now;
+        if (deathPoint_ && waypoints::HaveWorld()) {
+            waypoints::SetDeathPoint(static_cast<int>(std::floor(alive_[0])), static_cast<int>(std::floor(alive_[1])),
+                                     static_cast<int>(std::floor(alive_[2])));
+            notify::Push(notify::Kind::Info, Tr("Death point saved"));
+            log::Info("Waypoints: death point at {:.0f}, {:.0f}, {:.0f}.", alive_[0], alive_[1], alive_[2]);
+        }
+    };
+    const unsigned deaths = sdk::paperdoll::DeathScreenFrames();
+    if (deathFrames_ == 0xFFFFFFFFu) deathFrames_ = deaths;
+    if (deaths != deathFrames_) {
+        deathFrames_ = deaths;
+        saveDeath();
+    }
+    const int mouse = sdk::mouse::GameMouseState();
+    const unsigned menus = sdk::paperdoll::MenuScreenFrames();
+    const int dim = sdk::blocks::Dimension();
+    if (mouse == 0 && !render::overlay::IsMenuOpen()) {
+        if (releasedAt_ < 0.0 || menus != menusSeen_) {
+            releasedAt_ = now;  // (a known screen is open: start counting again)
+            menusSeen_ = menus;
+        } else if (now - releasedAt_ > 0.4 && !hiddenScreen_) {
+            hiddenScreen_ = true;
+            log::Info("Waypoints: the mouse is free and no known screen is drawn (death screen?).");
+        }
+    } else if (mouse == 1) {
+        if (hiddenScreen_) {
+            const float ddx = p.feet[0] - alive_[0], ddy = p.feet[1] - alive_[1], ddz = p.feet[2] - alive_[2];
+            const float moved = std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+            log::Info("Waypoints: back to playing, {:.1f} blocks from before.", moved);
+            if (moved > 3.0f && dim == aliveDim_) saveDeath();
+        }
+        hiddenScreen_ = false;
+        releasedAt_ = -1.0;
+        alive_[0] = p.feet[0];
+        alive_[1] = p.feet[1];
+        alive_[2] = p.feet[2];
+        aliveDim_ = dim;
+    }
+}
+
+// --- Waypoints IN THE WORLD -------------------------------------------------------------
+// A BEAM: a thin column of light of the waypoint's color, from the place up
+// to the sky. It's drawn by the game with the rest of the world (sdk/draw3d,
+// the same lines as the block outline), so hills and walls in front cover it.
+// Its lines are always 3 screen pixels apart, so it looks the same thin line
+// near or far.
+// A LABEL above it: the banner, the name and how far it is, drawn on top of
+// the picture (seen through walls, like a compass). Far ones fade a little.
+void Minimap::DrawWorldWaypoints() {
+    sdk::camera::View view;
+    const bool any = waypoints_ && (beams_ || worldLabels_) && sdk::camera::GetView(view);
+    if (!any) {
+        if (beamsSent_) sdk::draw3d::SetWorldShapes({}, sdk::draw3d::kChannelWaypoints);
+        beamsSent_ = false;
+        return;
+    }
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float yaw = view.yaw * kPi / 180.0f, pitch = view.pitch * kPi / 180.0f;
+    const float fwd[3] = {-std::sin(yaw) * std::cos(pitch), -std::sin(pitch), std::cos(yaw) * std::cos(pitch)};
+    const float rgt[3] = {-std::cos(yaw), 0.0f, -std::sin(yaw)};
+    // up = right x forward
+    const float up[3] = {rgt[1] * fwd[2] - rgt[2] * fwd[1], rgt[2] * fwd[0] - rgt[0] * fwd[2], rgt[0] * fwd[1] - rgt[1] * fwd[0]};
+    auto project = [&](const float p[3], ImVec2& out, float& depth) {
+        const float d[3] = {p[0] - view.pos[0], p[1] - view.pos[1], p[2] - view.pos[2]};
+        depth = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+        if (depth < 0.2f) return false;
+        const float x = (d[0] * rgt[0] + d[1] * rgt[1] + d[2] * rgt[2]) * view.scaleX / depth;
+        const float y = (d[0] * up[0] + d[1] * up[1] + d[2] * up[2]) * view.scaleY / depth;
+        out = ImVec2((1.0f + x) * 0.5f * display.x, (1.0f - y) * 0.5f * display.y);
+        return true;
+    };
+    const rh::Metrics m = rh::Measure(1.0f);
+    const int qi = std::clamp(static_cast<int>(std::lround(m.px)), 1, 8);
+    const float q = static_cast<float>(qi);
+    const PixelText text = TextAt(qi);
+    const PixelText smallText = TextAt(std::max(1, qi - 1));
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    const int dim = waypoints::Dimension();
+    std::vector<sdk::draw3d::WorldShapes> shapes;
+    // The labels on screen this frame (kept between frames: no new memory each frame).
+    struct Label {
+        const waypoints::Waypoint* w;
+        ImVec2 tip;
+        float dist;
+    };
+    static std::vector<Label> labels;
+    labels.clear();
+    for (const waypoints::Waypoint& w : waypoints::List()) {
+        if (!w.visible || !w.inWorld || (dim >= 0 && w.dimension != dim)) continue;
+        const float wp[3] = {static_cast<float>(w.x) + 0.5f, static_cast<float>(w.y), static_cast<float>(w.z) + 0.5f};
+        const float dx = wp[0] - view.pos[0], dy = wp[1] - view.pos[1], dz = wp[2] - view.pos[2];
+        const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (beams_ && dist > 2.0f) {
+            sdk::draw3d::WorldShapes beam;
+            beam.lines = true;
+            beam.color = {w.color[0], w.color[1], w.color[2], 0.85f};
+            const float depth = std::max(1.0f, dx * fwd[0] + dy * fwd[1] + dz * fwd[2]);
+            const float pixel = depth / (view.scaleX * display.x * 0.5f);  // world size of one screen pixel there
+            const float top = std::max(wp[1] + 2.0f, 320.0f);
+            for (int i = -1; i <= 1; ++i) {
+                const float ox = rgt[0] * pixel * static_cast<float>(i), oz = rgt[2] * pixel * static_cast<float>(i);
+                beam.triangles.insert(beam.triangles.end(), {wp[0] + ox, wp[1], wp[2] + oz, wp[0] + ox, top, wp[2] + oz});
+            }
+            shapes.push_back(std::move(beam));
+        }
+        if (!worldLabels_) continue;
+        // The label: two blocks above the place (or at your eyes' height if
+        // the place is far below or above, so it stays on screen).
+        float lp[3] = {wp[0], wp[1] + 2.2f, wp[2]};
+        const float horizontal = std::sqrt(dx * dx + dz * dz);
+        if (horizontal > 24.0f) lp[1] = std::clamp(lp[1], view.pos[1] - horizontal * 0.25f, view.pos[1] + horizontal * 0.25f);
+        ImVec2 at;
+        float depth = 0.0f;
+        if (!project(lp, at, depth)) continue;
+        if (at.x < -40.0f || at.x > display.x + 40.0f || at.y < -40.0f || at.y > display.y + 40.0f) continue;
+        labels.push_back(Label{&w, ImVec2(std::floor(at.x), std::floor(at.y)), dist});
+    }
+    // THE ONE YOU LOOK AT (the label nearest the middle of the screen, if
+    // it's close to the crosshair) grows one pixel size and is drawn last,
+    // on top of the others.
+    int looked = -1;
+    float best = display.y * 0.06f;
+    best *= best;
+    const ImVec2 mid(display.x * 0.5f, display.y * 0.5f);
+    for (std::size_t i = 0; i < labels.size(); ++i) {
+        // (the label's middle: a little above its tip)
+        const float ddx = labels[i].tip.x - mid.x, ddy = labels[i].tip.y - 5.0f * q - mid.y;
+        const float d2 = ddx * ddx + ddy * ddy;
+        if (d2 < best) {
+            best = d2;
+            looked = static_cast<int>(i);
+        }
+    }
+    const PixelText bigText = TextAt(std::min(8, qi + 1));
+    auto drawLabel = [&](const Label& l, bool big) {
+        const PixelText& t = big ? bigText : text;
+        const PixelText& st = big ? text : smallText;
+        const float lq = t.q;
+        const int alpha = big ? 255 : (l.dist > 256.0f ? 170 : 235);
+        Banner(draw, l.tip, t, l.w->color, alpha, l.w->name.data());
+        NameTag(draw, l.tip.x + 0.5f * lq, l.tip.y - 11.0f * lq, st, l.w->name.data(), IM_COL32(255, 255, 255, alpha), -1.0e6f, 1.0e6f);
+        char meters[32];
+        std::snprintf(meters, sizeof(meters), "%.0f m", l.dist);
+        NameTag(draw, l.tip.x + 0.5f * lq, l.tip.y + 2.0f * lq + st.capHeight + 2.0f * st.q, st, meters, IM_COL32(220, 220, 220, alpha),
+                -1.0e6f, 1.0e6f);
+    };
+    for (std::size_t i = 0; i < labels.size(); ++i) {
+        if (static_cast<int>(i) != looked) drawLabel(labels[i], false);
+    }
+    if (looked >= 0) drawLabel(labels[static_cast<std::size_t>(looked)], true);
+    sdk::draw3d::SetWorldShapes(std::move(shapes), sdk::draw3d::kChannelWaypoints);
+    beamsSent_ = true;
+}
+
 bool Minimap::DrawWaypointSettings() {
     bool changed = false;
     ui::Section("Waypoints");
     changed |= ui::Toggle("Show waypoints", &waypoints_);
     changed |= ui::Toggle("Names on the map", &waypointNames_);
+    changed |= ui::Toggle("Beams in the world", &beams_, "(a column of light; hills and walls cover it)");
+    changed |= ui::Toggle("Labels in the world", &worldLabels_, "(name and distance, seen through walls)");
+    changed |= ui::Toggle("Death point", &deathPoint_, "(a waypoint where you died; only the last one)");
     ui::Key("Save one where you are", &addKey_);
     if (!waypoints::HaveWorld()) {
         ui::Hint("Join a world: each world and each server has its own waypoints.");
@@ -471,7 +666,8 @@ bool Minimap::DrawWaypointSettings() {
         bool edited = false;
         edited |= ui::Text("Name", w.name.data(), static_cast<int>(w.name.size()));
         edited |= ui::Color("Color", w.color);
-        edited |= ui::Toggle("Visible", &w.visible);
+        edited |= ui::Toggle("On the minimap", &w.visible);
+        edited |= ui::Toggle("In the world", &w.inWorld, "(its beam and label)");
         int xyz[3] = {w.x, w.y, w.z};
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(Tr("X, Y, Z"));
@@ -505,6 +701,9 @@ void Minimap::SaveSettings(nlohmann::json& out) const {
     out["waypoints"] = waypoints_;
     out["waypointNames"] = waypointNames_;
     out["waypointKey"] = addKey_;
+    out["beams"] = beams_;
+    out["worldLabels"] = worldLabels_;
+    out["deathPoint"] = deathPoint_;
 }
 
 void Minimap::LoadSettings(const nlohmann::json& in) {
@@ -519,6 +718,9 @@ void Minimap::LoadSettings(const nlohmann::json& in) {
     waypoints_ = in.value("waypoints", true);
     waypointNames_ = in.value("waypointNames", true);
     addKey_ = in.value("waypointKey", static_cast<int>('B'));
+    beams_ = in.value("beams", true);
+    worldLabels_ = in.value("worldLabels", true);
+    deathPoint_ = in.value("deathPoint", true);
 }
 
 }  // namespace luma::modules::world

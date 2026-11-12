@@ -26,6 +26,7 @@ namespace luma::render::worldmap {
 // What the world map shows (saved with the minimap's settings).
 struct Settings {
     bool waypoints = true;    // the waypoint banners
+    bool entities = true;     // the entity radar (local worlds only)
     bool names = true;        // their names
     int bannerSize = 0;       // 0 = like the minimap, 1-2 = bigger
     bool deathPoint = true;   // the "Death" waypoint

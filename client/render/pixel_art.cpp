@@ -93,6 +93,43 @@ void NameTag(ImDrawList* draw, float cx, float bottom, const PixelText& t, const
 }
 
 
+namespace {
+ImU32 MixDot(ImU32 a, ImU32 b, float t) {
+    const ImVec4 x = ImGui::ColorConvertU32ToFloat4(a), y = ImGui::ColorConvertU32ToFloat4(b);
+    return ImGui::ColorConvertFloat4ToU32(ImVec4(x.x + (y.x - x.x) * t, x.y + (y.y - x.y) * t, x.z + (y.z - x.z) * t, x.w + (y.w - x.w) * t));
+}
+}  // namespace
+
+void Dot(ImDrawList* draw, ImVec2 center, float q, ImU32 color, int shape, int size) {
+    // Cell by cell, so it's made of square pixels: inside the shape = color,
+    // one cell around it = dark outline.
+    const float r = static_cast<float>(size) * 0.5f;
+    auto inside = [&](float x, float y, float grow) {
+        const float rr = r + grow;
+        if (shape == 1) return std::fabs(x) + std::fabs(y) <= rr + 0.01f;
+        if (shape == 2) return std::fabs(x) <= rr - 0.49f && std::fabs(y) <= rr - 0.49f;
+        return x * x + y * y <= rr * rr + 0.3f;
+    };
+    const ImVec2 c0(std::floor(center.x), std::floor(center.y));
+    const int n = size / 2 + 2;
+    for (int gy = -n; gy <= n; ++gy) {
+        for (int gx = -n; gx <= n; ++gx) {
+            // (cell centers; even sizes sit between pixels)
+            const float x = static_cast<float>(gx) + ((size % 2 == 0) ? 0.5f : 0.0f);
+            const float y = static_cast<float>(gy) + ((size % 2 == 0) ? 0.5f : 0.0f);
+            ImU32 col = 0;
+            if (inside(x, y, 0.0f)) {
+                col = y > 0.5f ? MixDot(color, IM_COL32(0, 0, 0, 255), 0.22f) : color;  // the lower half a bit darker
+            } else if (inside(x, y, 1.0f)) {
+                col = IM_COL32(12, 12, 16, 220);
+            }
+            if (col == 0) continue;
+            const ImVec2 a(c0.x + static_cast<float>(gx) * q, c0.y + static_cast<float>(gy) * q);
+            draw->AddRectFilled(a, ImVec2(a.x + q, a.y + q), col);
+        }
+    }
+}
+
 void Text(ImDrawList* draw, const PixelText& t, ImVec2 pos, const char* text, ImU32 color, bool shadow) {
     const ImVec2 p(std::floor(pos.x), std::floor(pos.y - t.capTop));
     if (shadow) {

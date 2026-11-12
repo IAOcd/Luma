@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "modules/module.h"
+#include "sdk/radar.h"
 
 namespace luma::render::pixel {
 struct Form;
@@ -64,6 +65,11 @@ private:
     float mapOpacity_ = 1.0f;         // the map itself
     float arrowColor_[3] = {0.98f, 1.0f, 1.0f};  // you
     bool northRed_ = true;            // the N in red
+    // The entity radar (local worlds only: sdk/radar.h)
+    bool radar_ = true;
+    bool radarPlayers_ = true, radarHostile_ = true, radarAnimals_ = true, radarOthers_ = true, radarItems_ = false;
+    int radarSize_ = 0;               // +0..2 pixels
+    bool radarHeight_ = true;         // lighter above you, darker below
     bool waypoints_ = true;   // show the waypoints (modules/world/waypoints.h)
     bool waypointNames_ = true;  // and the name of the nearest ones
     int addKey_ = 'B';        // the key that saves a waypoint where you are
@@ -88,6 +94,7 @@ private:
     std::uint32_t version_ = 0;
     double nextUpload_ = 0.0;
     std::vector<std::uint32_t> pixels_;
+    std::vector<sdk::radar::Entity> entities_;  // (kept between frames: no new memory each frame)
     std::vector<std::uint32_t> view_;  // the map's own picture (512 x 512): the square it shows
     int viewX_ = 0, viewZ_ = 0;        // its center (world block)
     float viewR_ = 0.0f;               // blocks from its center to its edge

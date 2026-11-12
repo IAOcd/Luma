@@ -20,6 +20,7 @@
 #include "core/tr.h"
 #include "modules/world/map_look.h"
 #include "modules/world/map_store.h"
+#include "modules/world/radar_style.h"
 #include "modules/world/waypoints.h"
 #include "perf/timer.h"
 #include "render/gpu.h"
@@ -28,7 +29,9 @@
 #include "render/icons.h"
 #include "render/pixel_art.h"
 #include "render/theme.h"
+#include "sdk/network.h"
 #include "sdk/player.h"
+#include "sdk/radar.h"
 
 namespace luma::render::worldmap {
 
@@ -416,6 +419,19 @@ void Draw() {
     if (clickedWaypoint >= 0) openEdit(clickedWaypoint);
     else if (wasClick && g_window != Window::None && g_window != Window::Edit) g_window = Window::None;  // (a click on the map closes a menu)
 
+    // --- The entities you have loaded around you (LOCAL WORLDS ONLY) ---
+    if (g_settings.entities && havePlayer) {
+        static std::vector<sdk::radar::Entity> list2;  // (kept between frames)
+        sdk::radar::Copy(list2);
+        for (const sdk::radar::Entity& e : list2) {
+            const ImVec2 at = toScreen(e.x, e.z);
+            if (at.x < 0 || at.y < 0 || at.x > display.x || at.y > display.y) continue;
+            const auto st = modules::world::radarstyle::Of(e.kind);
+            px::Dot(draw, at, std::max(1.0f, std::round(q * 0.75f)), modules::world::radarstyle::ByHeight(st.color, e.y - p.feet[1]), st.shape,
+                    st.size);
+        }
+    }
+
     // --- You (on the edge if you're off the screen) ---
     if (havePlayer) {
         ImVec2 at = toScreen(p.feet[0], p.feet[2]);
@@ -584,6 +600,7 @@ void Draw() {
             changed |= f.Toggle(Tr("Waypoints"), &g_settings.waypoints);
             changed |= f.Toggle(Tr("Their names"), &g_settings.names);
             changed |= f.Toggle(Tr("Death point"), &g_settings.deathPoint);
+            changed |= f.Toggle(Tr("Entities (own worlds)"), &g_settings.entities);
             changed |= f.SliderInt(Tr("Banner size"), &g_settings.bannerSize, 0, 2, "+%d");
             f.Section(Tr("While open"));
             changed |= f.Toggle(Tr("Follow me"), &g_settings.follow);

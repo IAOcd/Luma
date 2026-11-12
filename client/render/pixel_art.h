@@ -40,6 +40,10 @@ void Banner(ImDrawList* draw, ImVec2 tip, const PixelText& t, const float* rgb, 
 // band), centered on "cx", its bottom at "bottom", kept between minX and maxX.
 void NameTag(ImDrawList* draw, float cx, float bottom, const PixelText& t, const char* text, ImU32 color, float minX, float maxX);
 
+// A radar icon: a pixel dot of "size" (2..6) pixels, round (0), a diamond (1)
+// or a square (2), with a dark outline.
+void Dot(ImDrawList* draw, ImVec2 center, float q, ImU32 color, int shape, int size);
+
 // --- Minecraft-style windows ------------------------------------------------------
 // A stone panel (light gray, a white top-left edge, a dark bottom-right one,
 // a black outline), like the game's inventory.

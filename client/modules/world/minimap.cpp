@@ -35,6 +35,7 @@
 #include "render/rainbow.h"
 #include "render/ui.h"
 #include "modules/world/map_look.h"
+#include "modules/world/radar_style.h"
 #include "modules/world/map_store.h"
 #include "modules/world/waypoints.h"
 #include "render/input.h"
@@ -44,7 +45,9 @@
 #include "sdk/draw3d.h"
 #include "sdk/mouse_grab.h"
 #include "sdk/paperdoll.h"
+#include "sdk/network.h"
 #include "sdk/player.h"
+#include "sdk/radar.h"
 
 namespace luma::modules::world {
 
@@ -100,6 +103,7 @@ void Minimap::OnEnable() {
 
 void Minimap::OnDisable() {
     sdk::blocks::Want(false);
+    sdk::radar::Want(false);
     render::worldmap::SetMinimapPanel(nullptr);
     waypoints::Flush();
     mapstore::Flush();
@@ -121,6 +125,7 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
     // --- The picture from sdk/blocks: at most 5 times a second, and only if it changed ---
     const double now = rainbow::Seconds();
     sdk::blocks::SetCaveMode(caveMode_);
+    sdk::radar::Want(radar_ || render::worldmap::Config().entities);
     {
         const maplook::Look& look = maplook::Get();
         sdk::blocks::SetPainting(look.relief, look.heightTint, look.waterDepth, look.shores, look.texture);
@@ -335,6 +340,30 @@ ImVec2 Minimap::OnRenderHud(const HudFrame& frame) {
         }
     }
 
+    // --- The entities around you (LOCAL WORLDS ONLY: sdk/radar is empty on a server) ---
+    if (radar_ && havePlayer) {
+        sdk::radar::Copy(entities_);
+        const float eq = std::max(1.0f, std::round(u * 0.75f));
+        const float reach = inner - 3.0f * eq;
+        for (const sdk::radar::Entity& e : entities_) {
+            const sdk::radar::Kind kind = e.kind;
+            using K = sdk::radar::Kind;
+            if ((kind == K::Player && !radarPlayers_) || (kind == K::Hostile && !radarHostile_) ||
+                ((kind == K::Animal || kind == K::Water || kind == K::Ambient) && !radarAnimals_) ||
+                ((kind == K::Villager || kind == K::Other) && !radarOthers_) || (kind == K::Item && !radarItems_)) {
+                continue;
+            }
+            const float dx = e.x - px, dz = e.z - pz;
+            const ImVec2 d = rotate_ ? ImVec2((dx * right.x + dz * right.y) / blocksPerPx, -(dx * forward.x + dz * forward.y) / blocksPerPx)
+                                     : ImVec2(dx / blocksPerPx, dz / blocksPerPx);
+            const float k = round ? std::sqrt(d.x * d.x + d.y * d.y) : std::max(std::fabs(d.x), std::fabs(d.y));
+            if (k > reach) continue;
+            const radarstyle::Style st = radarstyle::Of(kind);
+            const ImU32 color = radarHeight_ ? radarstyle::ByHeight(st.color, e.y - p.feet[1]) : st.color;
+            render::pixel::Dot(draw, ImVec2(c.x + d.x, c.y + d.y), eq, color, st.shape, st.size + radarSize_);
+        }
+    }
+
     // --- Waypoints: a banner on the map, or a pixel-art arrow on its edge when far ---
     // The other way of toWorld: a point of the world -> pixels from the center.
     auto toScreen = [&](float wx, float wz) {
@@ -513,6 +542,16 @@ bool Minimap::DrawMapPanel(render::pixel::Form& f) {
     f.Section(Tr("Cave mode"));
     const char* caves[] = {Tr("Auto"), Tr("Off"), Tr("Always")};
     changed |= f.Choice(Tr("When"), &caveMode_, caves, 3);
+    f.Section(Tr("Entity radar"));
+    if (sdk::network::OnServer()) f.Hint(Tr("Only in your own worlds: on a server the radar shows nothing."));
+    changed |= f.Toggle(Tr("Show entities"), &radar_);
+    changed |= f.Toggle(Tr("Players"), &radarPlayers_);
+    changed |= f.Toggle(Tr("Monsters"), &radarHostile_);
+    changed |= f.Toggle(Tr("Animals"), &radarAnimals_);
+    changed |= f.Toggle(Tr("Villagers and others"), &radarOthers_);
+    changed |= f.Toggle(Tr("Items on the ground"), &radarItems_);
+    changed |= f.SliderInt(Tr("Icon size"), &radarSize_, 0, 2, "+%d");
+    changed |= f.Toggle(Tr("Lighter above, darker below"), &radarHeight_);
     f.Section(Tr("Waypoints"));
     changed |= f.Toggle(Tr("Show waypoints"), &waypoints_);
     changed |= f.Toggle(Tr("Names on the map"), &waypointNames_);
@@ -769,6 +808,7 @@ void Minimap::SaveSettings(nlohmann::json& out) const {
     out["waypointKey"] = addKey_;
     out["mapKey"] = mapKey_;
     const render::worldmap::Settings& wm = render::worldmap::Config();
+    out["worldmapEntities"] = wm.entities;
     out["worldmap"] = {{"waypoints", wm.waypoints}, {"names", wm.names},       {"bannerSize", wm.bannerSize}, {"deathPoint", wm.deathPoint},
                        {"chunkGrid", wm.chunkGrid}, {"regionGrid", wm.regionGrid}, {"rulers", wm.rulers},        {"coords", wm.coords},
                        {"follow", wm.follow},       {"cost", wm.cost},             {"zoomSpeed", wm.zoomSpeed},  {"startZoom", wm.startZoom},
@@ -781,6 +821,8 @@ void Minimap::SaveSettings(nlohmann::json& out) const {
     out["mapOpacity"] = mapOpacity_;
     out["arrowColor"] = {arrowColor_[0], arrowColor_[1], arrowColor_[2]};
     out["northRed"] = northRed_;
+    out["radar"] = {{"on", radar_},         {"players", radarPlayers_}, {"hostile", radarHostile_}, {"animals", radarAnimals_},
+                    {"others", radarOthers_}, {"items", radarItems_},     {"size", radarSize_},       {"height", radarHeight_}};
     out["beams"] = beams_;
     out["worldLabels"] = worldLabels_;
     out["deathPoint"] = deathPoint_;
@@ -819,6 +861,7 @@ void Minimap::LoadSettings(const nlohmann::json& in) {
         wm.tab = std::clamp(j.value("tab", 0), 0, 4);
     }
     if (in.contains("look")) maplook::Load(in["look"]);
+    render::worldmap::Config().entities = in.value("worldmapEntities", true);
     auto color3 = [&](const char* key, float* out3) {
         if (in.contains(key) && in[key].is_array() && in[key].size() == 3) {
             for (int k = 0; k < 3; ++k) out3[k] = std::clamp(in[key][k].get<float>(), 0.0f, 1.0f);
@@ -831,6 +874,17 @@ void Minimap::LoadSettings(const nlohmann::json& in) {
     mapOpacity_ = std::clamp(in.value("mapOpacity", 1.0f), 0.3f, 1.0f);
     color3("arrowColor", arrowColor_);
     northRed_ = in.value("northRed", true);
+    if (in.contains("radar") && in["radar"].is_object()) {
+        const auto& r = in["radar"];
+        radar_ = r.value("on", true);
+        radarPlayers_ = r.value("players", true);
+        radarHostile_ = r.value("hostile", true);
+        radarAnimals_ = r.value("animals", true);
+        radarOthers_ = r.value("others", true);
+        radarItems_ = r.value("items", false);
+        radarSize_ = std::clamp(r.value("size", 0), 0, 2);
+        radarHeight_ = r.value("height", true);
+    }
     beams_ = in.value("beams", true);
     worldLabels_ = in.value("worldLabels", true);
     deathPoint_ = in.value("deathPoint", true);

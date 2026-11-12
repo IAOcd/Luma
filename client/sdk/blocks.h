@@ -44,6 +44,10 @@ void OnRegion(void* region);
 void SetCaveMode(int mode);
 bool CaveActive();
 
+// Which dimension the game is drawing: 0 Overworld, 1 Nether, 2 End, -1 not
+// known (asked to the BlockSource once a second, like sdk/dynlight does).
+int Dimension();
+
 // --- The minimap's grid (filled by OnRegion) --------------------------------------
 inline constexpr int kGrid = 128;  // blocks per side
 

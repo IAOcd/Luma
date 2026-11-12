@@ -37,6 +37,7 @@ public:
     void LoadSettings(const nlohmann::json& in) override;
 
 private:
+    bool DrawWaypointSettings();
     float size_ = 110.0f;     // HUD pixels per side
     int shape_ = 1;           // 0 square, 1 round
     bool rotate_ = false;     // up = where you look (off = north up)
@@ -45,6 +46,10 @@ private:
     bool cardinals_ = true;   // N, E, S, W on the edge
     bool coords_ = false;     // your coordinates under the map
     int caveMode_ = 0;        // 0 auto (a roof over you), 1 off, 2 always
+    bool waypoints_ = true;   // show the waypoints (modules/world/waypoints.h)
+    bool waypointNames_ = true;  // and the name of the nearest ones
+    int addKey_ = 'B';        // the key that saves a waypoint where you are
+    bool keyWasDown_ = false;
     bool showCost_ = false;   // how many microseconds it costs per frame
     int textureX_ = 0, textureZ_ = 0;  // the world column at the texture's center
     ImTextureID texture_{};

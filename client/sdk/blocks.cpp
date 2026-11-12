@@ -18,6 +18,7 @@
 #include "sdk/memory.h"
 #include "sdk/offsets.h"
 #include "sdk/player.h"
+#include "sdk/scanner.h"
 
 namespace luma::sdk::blocks {
 
@@ -436,6 +437,24 @@ bool g_cave = false;
 int g_caveVotes = 0;
 float g_nextRoofCheck = 0.0f;
 
+// The dimension (BlockSource's virtual function +0x90 writes it: the same one
+// the game uses; sdk/dynlight too). Only trusted if the function is inside
+// the game's own code.
+std::atomic<int> g_dimension{-1};
+int g_dimensionTick = 0;
+using GetDimensionFn = int*(__fastcall*)(void* source, int* out);
+
+void ReadDimension(void* region) {
+    std::uintptr_t vtable = 0, fn = 0;
+    if (!SafeRead(reinterpret_cast<std::uintptr_t>(region), vtable) || !SafeRead(vtable + 0x90, fn) || fn < GameBase() ||
+        fn >= GameBase() + 0x20000000) {
+        return;
+    }
+    int d = -1;
+    reinterpret_cast<GetDimensionFn>(fn)(region, &d);
+    if (d >= 0 && d <= 2) g_dimension.store(d, std::memory_order_relaxed);
+}
+
 bool HasRoof(void* region, const int feet[3]) {
     static const int kAround[5][2] = {{0, 0}, {3, 0}, {-3, 0}, {0, 3}, {0, -3}};
     int roofs = 0;
@@ -495,12 +514,17 @@ bool CaveActive() {
     return g_caveShown.load(std::memory_order_relaxed);
 }
 
+int Dimension() {
+    return g_dimension.load(std::memory_order_relaxed);
+}
+
 void OnRegion(void* region) {
     if (!g_wanted.load(std::memory_order_relaxed) || region == nullptr || !LooksLikePointer(reinterpret_cast<std::uintptr_t>(region))) {
         return;
     }
     int feet[3];
     if (!PlayerFeet(feet)) return;
+    if (g_dimensionTick++ % 60 == 0) ReadDimension(region);
     LARGE_INTEGER t0;
     QueryPerformanceCounter(&t0);
 

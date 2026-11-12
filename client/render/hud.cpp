@@ -148,6 +148,14 @@ ImFont* PixelFont() {
     return g_pixelAvailable ? g_pixel[0] : nullptr;
 }
 
+ImFont* PixelFontAt(int k) {
+    return g_pixelAvailable ? g_pixel[static_cast<std::size_t>(std::clamp(k, 1, kPixelSizes) - 1)] : nullptr;
+}
+
+ImFont* SmoothFont() {
+    return g_smooth != nullptr ? g_smooth : ImGui::GetFont();
+}
+
 Metrics Measure(float scale) {
     Metrics m;
     // 2 píxeles de pantalla por píxel de HUD a 1080p y escala 1.

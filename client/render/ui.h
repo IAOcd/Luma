@@ -50,6 +50,10 @@ bool ColorAlpha(const char* label, float* rgba);
 // Caja de texto de una línea.
 bool Text(const char* label, char* buffer, int size, const char* placeholder = "");
 
+// A key for something of a module (click, then press the key; right click
+// removes it). Saved with the module's settings.
+bool Key(const char* label, int* key, const char* hint = nullptr);
+
 // Botón (en su propia fila, a la derecha de la etiqueta si la hay).
 bool Button(const char* label, const char* rowLabel = nullptr);
 

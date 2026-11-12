@@ -121,9 +121,10 @@ constexpr double kCloseMs = 170.0;
 constexpr double kPageMs = 220.0;
 
 // Captura de teclas.
-enum class CaptureTarget { None, Module, MenuKey, UnloadKey };
+enum class CaptureTarget { None, Module, MenuKey, UnloadKey, Value };
 CaptureTarget g_capture = CaptureTarget::None;
 Module* g_captureModule = nullptr;
+int* g_captureValue = nullptr;  // CaptureTarget::Value: a module's own key (ui::Key)
 
 // Perfiles (lista guardada para no leer el disco cada frame).
 std::vector<std::string> g_profiles;
@@ -688,7 +689,7 @@ void RowLabel(const char* label, const char* hint = nullptr) {
     BeginRow(label, hint, 15.0f);
 }
 
-void KeybindButton(const char* id, int key, bool capturing, CaptureTarget target, Module* module) {
+void KeybindButton(const char* id, int key, bool capturing, CaptureTarget target, Module* module, int* value = nullptr) {
     const theme::Palette& p = theme::P();
     const std::string label = capturing ? std::string(Tr("Press a key...")) : keys::Name(key);
     ImGui::PushID(id);
@@ -697,6 +698,7 @@ void KeybindButton(const char* id, int key, bool capturing, CaptureTarget target
     if (ImGui::InvisibleButton("##key", size)) {
         g_capture = capturing ? CaptureTarget::None : target;
         g_captureModule = capturing ? nullptr : module;
+        g_captureValue = capturing ? nullptr : value;
         sound::Play(sound::Effect::Click);
     }
     const bool hovered = ImGui::IsItemHovered();
@@ -721,6 +723,10 @@ void KeybindButton(const char* id, int key, bool capturing, CaptureTarget target
     }
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && target == CaptureTarget::Module && module != nullptr) {
         module->SetKeybind(keys::kNone);
+        config::MarkDirty();
+    }
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && target == CaptureTarget::Value && value != nullptr) {
+        *value = keys::kNone;
         config::MarkDirty();
     }
     ImGui::PopID();
@@ -2730,8 +2736,10 @@ bool IsCapturingKey() {
 void OnKeyCaptured(int vk) {
     const CaptureTarget target = g_capture;
     Module* module = g_captureModule;
+    int* value = g_captureValue;
     g_capture = CaptureTarget::None;
     g_captureModule = nullptr;
+    g_captureValue = nullptr;
     if (vk == VK_ESCAPE) {
         return;
     }
@@ -2755,10 +2763,15 @@ void OnKeyCaptured(int vk) {
                 config::g_unloadKey.store(vk);
             }
             break;
+        case CaptureTarget::Value:
+            if (value != nullptr) {
+                *value = clear ? keys::kNone : vk;
+            }
+            break;
         case CaptureTarget::None:
             return;
     }
-    if (!clear && vk == config::g_menuKey.load() && target == CaptureTarget::Module) {
+    if (!clear && vk == config::g_menuKey.load() && (target == CaptureTarget::Module || target == CaptureTarget::Value)) {
         notify::Push(notify::Kind::Warning, Tr("That key also opens the menu"));
     }
     sound::Play(sound::Effect::ToggleOn);
@@ -3032,6 +3045,16 @@ bool Text(const char* label, char* buffer, int size, const char* placeholder) {
     m::FlushRow();
     ImGui::PopID();
     return changed;
+}
+
+bool Key(const char* label, int* key, const char* hint) {
+    ImGui::PushID(label);
+    Row(label, hint);
+    const bool capturing = m::g_capture == m::CaptureTarget::Value && m::g_captureValue == key;
+    m::KeybindButton("##key", *key, capturing, m::CaptureTarget::Value, nullptr, key);
+    m::FlushRow();
+    ImGui::PopID();
+    return false;  // (the new key arrives later, when it's pressed; the config is saved then)
 }
 
 bool Button(const char* label, const char* rowLabel) {

@@ -115,6 +115,13 @@ void LoadFonts(ImGuiIO& io, float uiScale);
 bool PixelFontAvailable();
 // The game's pixel font at its native size (11 units), or nullptr.
 ImFont* PixelFont();
+// The smooth font (Segoe UI Semibold, loaded big: it looks good scaled down),
+// or ImGui's if Windows doesn't have it.
+ImFont* SmoothFont();
+// The game's pixel font at exactly "k" screen pixels per font pixel (1..8),
+// so every letter pixel is a crisp square; its size is 11 * k. nullptr if the
+// game's font wasn't found.
+ImFont* PixelFontAt(int k);
 
 // F1: the game hides its HUD with F1 (for clean screenshots). Luma follows:
 // each F1 while playing flips this, and the HUD modules aren't drawn while

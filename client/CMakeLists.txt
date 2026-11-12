@@ -36,6 +36,7 @@ add_library(Luma SHARED
     modules/hud/music.cpp
     modules/hud/debug_screen.cpp
     modules/world/minimap.cpp
+    modules/world/waypoints.cpp
     modules/hud/scoreboard.cpp
     modules/hud/player_hud.cpp
     modules/hud/watermark.cpp

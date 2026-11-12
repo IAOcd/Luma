@@ -97,7 +97,7 @@ void Render() {
         return;
     }
 
-    const bool animate = theme::Get().animations;
+    const bool animate = theme::AnimationsOn();
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     const float fontSize = ImGui::GetFontSize();

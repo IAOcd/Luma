@@ -164,6 +164,22 @@ bool ConsumeFontRebuildRequest() {
     return g_fontRebuild.exchange(false);
 }
 
+bool AnimationsOn() {
+    return g_settings.animations && !(g_settings.efficiency && g_settings.effAnimations);
+}
+
+float BlurAmount() {
+    return g_settings.efficiency && g_settings.effBlur ? 0.0f : g_settings.blur;
+}
+
+bool SoundsOn() {
+    return g_settings.sounds && !(g_settings.efficiency && g_settings.effSounds);
+}
+
+bool HudShadowsOn() {
+    return !(g_settings.efficiency && g_settings.effShadows);
+}
+
 void Save(nlohmann::json& out) {
     nlohmann::json t;
     t["style"] = g_settings.style == Style::Light ? "light" : "dark";
@@ -178,6 +194,8 @@ void Save(nlohmann::json& out) {
     t["soundVolume"] = g_settings.soundVolume;
     t["backgroundDim"] = g_settings.backgroundDim;
     t["moduleView"] = g_settings.moduleView;
+    t["efficiency"] = {{"on", g_settings.efficiency}, {"animations", g_settings.effAnimations},
+                       {"blur", g_settings.effBlur}, {"shadows", g_settings.effShadows}, {"sounds", g_settings.effSounds}};
     out["theme"] = std::move(t);
 }
 
@@ -203,6 +221,14 @@ void Load(const nlohmann::json& in) {
         g_settings.soundVolume = std::clamp(t.value("soundVolume", defaults.soundVolume), 0.0f, 1.0f);
         g_settings.backgroundDim = std::clamp(t.value("backgroundDim", defaults.backgroundDim), 0.0f, 0.8f);
         g_settings.moduleView = std::clamp(t.value("moduleView", defaults.moduleView), 0, 1);
+        if (t.contains("efficiency") && t["efficiency"].is_object()) {
+            const nlohmann::json& e = t["efficiency"];
+            g_settings.efficiency = e.value("on", defaults.efficiency);
+            g_settings.effAnimations = e.value("animations", defaults.effAnimations);
+            g_settings.effBlur = e.value("blur", defaults.effBlur);
+            g_settings.effShadows = e.value("shadows", defaults.effShadows);
+            g_settings.effSounds = e.value("sounds", defaults.effSounds);
+        }
     }
     if (g_settings.fontSize != oldFont) {
         RequestFontRebuild();

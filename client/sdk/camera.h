@@ -56,6 +56,25 @@ bool HideHandAvailable();
 // Freelook: mientras está activo, el jugador queda mirando hacia (pitch, yaw).
 void SetFreelook(bool active, float pitch, float yaw);
 
+// --- Where the camera is and where it looks (for drawing things "in the world") ---
+// Luma draws on top of the game's picture. To put something AT a place of the
+// world (Lyric Flow: lyrics floating in the sky) we need the camera:
+//   - its position: LevelRendererPlayer +0x658 (the same one draw3d uses);
+//   - where it looks: the camera component's rotation (+0x30, the same
+//     quaternion the freelook uses), turned into yaw/pitch;
+//   - how much it sees: the projection scales (+0xF50 / +0xF64, the same the
+//     zoom writes): bigger = narrower view.
+// With that, ProjectToScreen turns a world point into a screen point.
+// Limitation: in the "third person, from the front" view it isn't exact yet.
+struct View {
+    float pos[3]{};
+    float yaw = 0.0f;    // degrees, the game's convention (0 = south, 90 = west)
+    float pitch = 0.0f;  // degrees (-90 = up, 90 = down)
+    float scaleX = 1.0f, scaleY = 1.0f;
+};
+// The last frame's camera. False if there's no world (or something looks wrong).
+bool GetView(View& out);
+
 void BeginUnload();
 
 }  // namespace luma::sdk::camera

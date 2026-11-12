@@ -107,6 +107,9 @@ std::mutex g_settingsMutex;
 OutlineSettings g_outline;
 HitboxSettings g_hitboxes;
 ChunkBorderSettings g_chunks;
+std::vector<WorldShapes> g_shapes;      // Lyric Flow's letters (SetWorldShapes)
+int g_shapesMaterial = 0;
+std::vector<WorldShapes> g_shapesFrame;  // the copy being drawn this frame (render thread only)
 
 // --- HashedString (un texto con su "huella" precalculada) -----------------------------
 std::uint64_t Fnv1a64(const char* text) {
@@ -601,10 +604,42 @@ ChunkBorderSettings CopyChunks() {
     return g_chunks;
 }
 
-// ¿Hay algo para dibujar en el mundo además del contorno? (hitboxes o bordes de chunk)
+// ¿Hay algo para dibujar en el mundo además del contorno? (hitboxes, bordes de chunk, formas)
 bool WorldWanted() {
     std::lock_guard lock(g_settingsMutex);
-    return g_hitboxes.enabled || g_chunks.enabled;
+    return g_hitboxes.enabled || g_chunks.enabled || !g_shapes.empty();
+}
+
+// Takes this frame's shapes (outside the __try: copying a vector isn't allowed in there).
+void TakeShapesForFrame() {
+    std::lock_guard lock(g_settingsMutex);
+    g_shapesFrame = g_shapes;
+}
+
+int ShapesMaterial() {
+    std::lock_guard lock(g_settingsMutex);
+    return g_shapesMaterial;
+}
+
+void Grow(float* lo, float* hi, const float* a, const float* b);  // (below)
+
+// The triangles of one group (both faces: seen from the front and the back).
+void Triangles(const Frame& f, const WorldShapes& shape, float* lo, float* hi) {
+    const std::size_t floats = shape.triangles.size() / 9 * 9;
+    if (floats == 0) return;
+    g_begin(reinterpret_cast<void*>(f.tess), 0, kPrimitiveTriangles, static_cast<int>(floats / 3 * 2), false);
+    SetColor(f, Color{});
+    const float* t = shape.triangles.data();
+    for (std::size_t i = 0; i < floats; i += 9) {
+        const float* a = t + i;
+        const float* b = t + i + 3;
+        const float* c = t + i + 6;
+        for (const float* v : {a, b, c, a, c, b}) {
+            g_vertex(reinterpret_cast<void*>(f.tess), v[0] - f.origin[0], v[1] - f.origin[1], v[2] - f.origin[2]);
+            const float p[3] = {v[0], v[1], v[2]};
+            Grow(lo, hi, p, p);
+        }
+    }
 }
 
 // --- Bordes de chunk (como el F3+G de Java) --------------------------------------------
@@ -671,6 +706,7 @@ void* g_lastBlock = nullptr;                  // el último bloque que miraste (
 std::uintptr_t g_lastBlockVtable = 0;         // para comprobar que sigue siendo un bloque
 void* g_gameMaterial = nullptr;               // el material que usa el juego para su contorno
 std::atomic<int> g_ownLogs{0};
+std::atomic<int> g_shapeLogs{0};
 
 void Grow(float* lo, float* hi, const float* a, const float* b) {
     for (int i = 0; i < 3; ++i) {
@@ -737,7 +773,7 @@ void Submit(void* sc, void* tess, void* material, std::uint8_t* copy, void* a5, 
 // del juego, no se dibuja). Para eso, una línea transparente muy abajo.
 void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, void* a6, std::uintptr_t lrp,
                  const OutlineSettings& o, const HitboxSettings& h, const int* blockPos, bool hitboxes,
-                 void* fillMaterial, bool closeIfEmpty = false) {
+                 void* fillMaterial, bool closeIfEmpty = false, void* shapesMaterial = nullptr) {
     std::uintptr_t colorPtr = 0;
     float saved[4]{};
     bool haveColor = false;
@@ -807,6 +843,37 @@ void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, v
                     Tint(haveColor, colorPtr, Rainbowed(*colors[g], h.rainbow, g * 0.33f));
                     Submit(sc, tess, material, copy, a5, a6, lo, hi);
                     drawn += n;
+                }
+            }
+        }
+        // 4. Shapes from other modules (Lyric Flow), one call per color.
+        if (hitboxes) {
+            for (const WorldShapes& shape : g_shapesFrame) {
+                float lo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
+                float hi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
+                void* useMaterial = shape.lines ? material : shapesMaterial;
+                if (useMaterial == nullptr) continue;
+                if (shape.lines) {
+                    const float* p = shape.triangles.data();
+                    for (std::size_t i = 0; i + 6 <= shape.triangles.size(); i += 6) {
+                        Line(f, haveColor ? white : shape.color, p[i], p[i + 1], p[i + 2], p[i + 3], p[i + 4], p[i + 5]);
+                        const float a[3] = {std::min(p[i], p[i + 3]), std::min(p[i + 1], p[i + 4]), std::min(p[i + 2], p[i + 5])};
+                        const float b[3] = {std::max(p[i], p[i + 3]), std::max(p[i + 1], p[i + 4]), std::max(p[i + 2], p[i + 5])};
+                        Grow(lo, hi, a, b);
+                    }
+                } else {
+                    Triangles(f, shape, lo, hi);
+                }
+                if (g_shapeLogs.fetch_add(1) < 2) {
+                    log::Info("SDK: world shapes: {} triangles, color a={:.2f}, box {:.1f} {:.1f} {:.1f} .. {:.1f} {:.1f} {:.1f}, "
+                              "camera {:.1f} {:.1f} {:.1f}, material 0x{:X}.",
+                              shape.triangles.size() / (shape.lines ? 6 : 9), shape.color.a, lo[0], lo[1], lo[2], hi[0], hi[1],
+                              hi[2], f.origin[0], f.origin[1], f.origin[2], reinterpret_cast<std::uintptr_t>(useMaterial));
+                }
+                if (lo[0] <= hi[0]) {
+                    Tint(haveColor, colorPtr, shape.color);
+                    Submit(sc, tess, useMaterial, copy, a5, a6, lo, hi);
+                    ++drawn;
                 }
             }
         }
@@ -886,8 +953,9 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
             t_outlineDrawn = true;
             t_levelDrawn = true;
             g_levelPathDraws.fetch_add(1, std::memory_order_relaxed);
+            TakeShapesForFrame();
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, OutlineSettings{}, CopyHitboxes(), nullptr,
-                        true, nullptr, /*closeIfEmpty=*/true);
+                        true, nullptr, /*closeIfEmpty=*/true, g_shapesFrame.empty() ? nullptr : FillMaterial(ShapesMaterial()));
         } else if (g_ready.load(std::memory_order_relaxed) && LooksLikeParams(params)) {
             // (ya dibujamos este frame: solo cerrar el lote vacío)
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, OutlineSettings{}, HitboxSettings{}, nullptr,
@@ -926,8 +994,10 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
         const HitboxSettings h = CopyHitboxes();
         const bool hitboxes = WorldWanted() && !t_levelDrawn;  // hitboxes o bordes de chunk
         if (((o.enabled && o.fill) || hitboxes) && LooksLikeParams(params)) {
+            if (hitboxes) TakeShapesForFrame();
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, o, h, o.enabled ? t_outlinePos : nullptr,
-                        hitboxes, o.fill ? FillMaterial(o.fillMaterial) : nullptr);
+                        hitboxes, o.fill ? FillMaterial(o.fillMaterial) : nullptr, false,
+                        hitboxes && !g_shapesFrame.empty() ? FillMaterial(ShapesMaterial()) : nullptr);
             if (hitboxes) {
                 t_levelDrawn = true;
                 g_outlinePathDraws.fetch_add(1, std::memory_order_relaxed);
@@ -1163,6 +1233,16 @@ void SetHitboxes(const HitboxSettings& settings) {
 void SetChunkBorders(const ChunkBorderSettings& settings) {
     std::lock_guard lock(g_settingsMutex);
     g_chunks = settings;
+}
+
+void SetWorldShapes(std::vector<WorldShapes> shapes) {
+    std::lock_guard lock(g_settingsMutex);
+    g_shapes = std::move(shapes);
+}
+
+void SetWorldShapesMaterial(int index) {
+    std::lock_guard lock(g_settingsMutex);
+    g_shapesMaterial = index < 0 ? 0 : (index >= kFillMaterialCount ? kFillMaterialCount - 1 : index);
 }
 
 void OnRenderLevel(std::uintptr_t levelRenderer, std::uintptr_t screenContext) {

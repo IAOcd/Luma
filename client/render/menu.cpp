@@ -175,11 +175,19 @@ ImVec4 Mix(ImVec4 a, ImVec4 b, float t) {
     return ImVec4(ImLerp(a.x, b.x, t), ImLerp(a.y, b.y, t), ImLerp(a.z, b.z, t), ImLerp(a.w, b.w, t));
 }
 
+// Are widget animations on? On the Music page the MUSIC efficiency mode
+// decides; everywhere else, the general one. (They're separate on purpose:
+// the general efficiency mode never touches Luma Music.)
+bool g_musicUi = false;
+bool AnimOn() {
+    return g_musicUi ? music::UiAnimations() : theme::AnimationsOn();
+}
+
 // Valor animado hacia "target", guardado por ID en el almacén de ImGui.
 float Animate(ImGuiID id, float target, float speed = 14.0f) {
     ImGuiStorage* storage = ImGui::GetStateStorage();
     float value = storage->GetFloat(id, target);
-    if (theme::Get().animations) {
+    if (AnimOn()) {
         value = ImLerp(value, target, std::min(1.0f, ImGui::GetIO().DeltaTime * speed));
         if (std::fabs(value - target) < 0.001f) {
             value = target;
@@ -215,7 +223,7 @@ Press BeginPress(ImVec2 min, ImVec2 max, float depth = 0.04f) {
     pr.min = min;
     pr.max = max;
     pr.firstVertex = ImGui::GetWindowDrawList()->VtxBuffer.Size;
-    if (!theme::Get().animations) return pr;
+    if (!AnimOn()) return pr;
     ImGuiStorage* st = ImGui::GetStateStorage();
     const ImGuiID kScale = pr.id ^ 0x51A7E001u, kSpeed = pr.id ^ 0x51A7E002u;
     const ImGuiID kTime = pr.id ^ 0x51A7E003u, kX = pr.id ^ 0x51A7E004u, kY = pr.id ^ 0x51A7E005u;
@@ -250,7 +258,7 @@ Press BeginPress(ImVec2 min, ImVec2 max, float depth = 0.04f) {
 // Call AFTER drawing the button: draws the ripple and applies the press.
 // "round" = a round button (the ripple grows from its center, inside it).
 void EndPress(const Press& pr, ImVec4 rippleColor, bool ripple = true, bool round = false) {
-    if (!theme::Get().animations) return;
+    if (!AnimOn()) return;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     ImGuiStorage* st = ImGui::GetStateStorage();
     const float started = st->GetFloat(pr.id ^ 0x51A7E003u, -100.0f);
@@ -287,7 +295,7 @@ void EndPress(const Press& pr, ImVec4 rippleColor, bool ripple = true, bool roun
 // An icon that changes (play <-> pause) pops in instead of switching at once.
 // Returns 0..1: how far into its entrance the current icon is.
 float IconPop(ImGuiID id, const char* icon) {
-    if (!theme::Get().animations) return 1.0f;
+    if (!AnimOn()) return 1.0f;
     ImGuiStorage* st = ImGui::GetStateStorage();
     const int key = static_cast<int>(reinterpret_cast<std::uintptr_t>(icon) & 0x7FFFFFFF);
     const ImGuiID kIcon = id ^ 0x1C0A0001u, kTime = id ^ 0x1C0A0002u;
@@ -405,7 +413,7 @@ void SmoothScroll() {
     }
     target = std::clamp(target, 0.0f, std::max(0.0f, maxY));
     float next = target;
-    if (theme::Get().animations) {
+    if (AnimOn()) {
         const float k = 1.0f - std::exp(-io.DeltaTime * 13.0f);
         next = current + (target - current) * k;
         if (std::fabs(target - next) < 0.5f) next = target;
@@ -801,7 +809,7 @@ void ToggleDetail(Module& module) {
 
 // Entrada escalonada: cada módulo aparece un poquito después que el anterior.
 float EnterAnim(int index) {
-    if (!theme::Get().animations) return 1.0f;
+    if (!AnimOn()) return 1.0f;
     return EaseOut(static_cast<float>((MsSince(g_pageChangedAt) - index * 25.0) / 240.0));
 }
 
@@ -1889,6 +1897,33 @@ void DrawDiagnosticsPage(const RenderInfo& info) {
 //  editor de HUD. Desde el menú grande, "Inicio" vuelve al radial.
 
 
+// Efficiency mode (Settings > Performance): one switch, and "advanced" to
+// choose what it turns off. It overrides your settings without changing them.
+void DrawEfficiencySection() {
+    theme::Settings& t = theme::Get();
+    bool changed = false;
+    ui::SetLabelColumn(13.0f);
+    ui::Section("Efficiency mode");
+    changed |= ui::Toggle("Efficiency mode", &t.efficiency, "(Luma as light as possible)");
+    ui::Hint("Turns off what costs without being essential: animations, the glass blur (the most expensive, it "
+             "uses the graphics card) and the HUD text shadows. Your settings stay as they are: turn it off and "
+             "everything comes back. It doesn't touch Luma Music: the music has its own mode (Music > Styles).");
+    static bool advanced = false;
+    ui::Toggle("Advanced: choose what it turns off", &advanced);
+    if (advanced) {
+        ImGui::BeginDisabled(!t.efficiency);
+        changed |= ui::Toggle("Animations", &t.effAnimations, "(menu, notifications, buttons)");
+        changed |= ui::Toggle("Glass blur", &t.effBlur, "(GPU: the biggest saving with the menu open)");
+        changed |= ui::Toggle("HUD text shadows", &t.effShadows, "(each text drawn once, not twice)");
+        changed |= ui::Toggle("Menu sounds", &t.effSounds);
+        ImGui::EndDisabled();
+        ui::Hint("Measure it: run a benchmark with the mode on and off (below) and compare. What doesn't improve "
+                 "your numbers isn't worth turning off.");
+    }
+    ui::SetLabelColumn(15.0f);
+    if (changed) config::MarkDirty();
+}
+
 // =============================================================================
 //  Settings: one page with tabs (General, Appearance, Profiles, Performance)
 // =============================================================================
@@ -1905,6 +1940,8 @@ void DrawSettingsHub(const RenderInfo& info) {
         case 1: DrawThemePage(); break;
         case 2: DrawProfilesPage(); break;
         case 3:
+            DrawEfficiencySection();
+            ImGui::Dummy(ImVec2(0, fs * 1.0f));
             DrawDiagnosticsPage(info);
             ImGui::Dummy(ImVec2(0, fs * 1.2f));
             DrawBenchmarkPage();
@@ -1951,6 +1988,11 @@ bool MusicButton(const char* id, ImVec2 center, float radius, const char* icon, 
 }
 
 void DrawMusicPage() {
+    // While drawing this page, the widgets follow the MUSIC efficiency mode.
+    g_musicUi = true;
+    struct Reset {
+        ~Reset() { g_musicUi = false; }
+    } reset;
     const theme::Palette& p = theme::P();
     const float fs = Fs();
     ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -2152,6 +2194,7 @@ void DrawMusicPage() {
         ui::SetLabelColumn(11.0f);
         bool changed = false;
         if (g_musicTab == 2) {
+            changed |= music::DrawEfficiencySettings();
             changed |= music::DrawStyleSettings();
             changed |= music::DrawAlbumColorSettings();
             changed |= music::DrawLyricsSettings();
@@ -2601,7 +2644,7 @@ void Sidebar() {
     // que se desliza hasta ella.
     draw->ChannelsSetCurrent(0);
     if (g_navPillTarget >= 0.0f) {
-        if (g_navPillY < 0.0f || !theme::Get().animations) {
+        if (g_navPillY < 0.0f || !AnimOn()) {
             g_navPillY = g_navPillTarget;
         } else {
             g_navPillY = ImLerp(g_navPillY, g_navPillTarget, std::min(1.0f, ImGui::GetIO().DeltaTime * 16.0f));
@@ -2656,7 +2699,7 @@ void OnClosed() {
         hudeditor::End();
     }
     g_closedAt = perf::Now();
-    g_closing.store(theme::Get().animations);
+    g_closing.store(AnimOn());
     sound::Play(sound::Effect::Close);
 }
 
@@ -2728,7 +2771,7 @@ void Draw(const RenderInfo& info) {
         }
         appear = 1.0f - t * t;
         scale = 0.97f + 0.03f * appear;
-    } else if (theme::Get().animations) {
+    } else if (AnimOn()) {
         const float t = static_cast<float>(MsSince(g_openedAt) / kOpenMs);
         appear = EaseOut(t);
         scale = 0.96f + 0.04f * EaseOutBack(t);  // crece hasta su tamaño con un leve rebote
@@ -2749,7 +2792,7 @@ void Draw(const RenderInfo& info) {
     // The Music page reads the music even if the module is off.
     media::Want(media::kMenu, !g_radial && g_page == Page::Music && !closing);
     lyrics::Want(lyrics::kMenu, !g_radial && g_page == Page::Music && !closing);
-    if (!g_radial && g_page == Page::Music && !closing && music::Get().hdCovers) {
+    if (!g_radial && g_page == Page::Music && !closing && music::HdCoversOn()) {
         lyrics::SetHdCovers(true);
         lyrics::Want(lyrics::kCovers, true);
     }
@@ -2798,7 +2841,7 @@ void Draw(const RenderInfo& info) {
 
         // Transición entre páginas: el contenido nuevo aparece y se desliza.
         float pageT = 1.0f;
-        if (theme::Get().animations && !closing) {
+        if (AnimOn() && !closing) {
             pageT = EaseOut(static_cast<float>(MsSince(g_pageChangedAt) / kPageMs));
         }
         const float slide = (1.0f - pageT) * fs * 1.5f;

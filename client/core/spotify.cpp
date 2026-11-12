@@ -41,6 +41,7 @@ std::vector<QueueItem> g_queue;
 std::uint32_t g_queueVersion = 0;
 
 std::atomic<bool> g_active{false};
+std::atomic<bool> g_prefetch{true};
 std::atomic<bool> g_stop{false};
 std::atomic<bool> g_connectRequested{false};
 std::atomic<bool> g_disconnectRequested{false};
@@ -394,7 +395,7 @@ void FetchQueue() {
         if (!item.title.empty()) items.push_back(std::move(item));
     }
     // Look up the lyrics of the next 3 songs now (saved on disk for later).
-    for (std::size_t i = 0; i < items.size() && i < 3; ++i) {
+    for (std::size_t i = 0; g_prefetch.load() && i < items.size() && i < 3; ++i) {
         lyrics::Prefetch(items[i].title, items[i].artist, items[i].album, items[i].seconds);
     }
     PublishQueue(std::move(items));
@@ -457,6 +458,10 @@ void SetClientId(const std::string& clientId) {
 void SetActive(bool active) {
     g_active.store(active);
     if (active) EnsureThread();
+}
+
+void SetPrefetch(bool on) {
+    g_prefetch.store(on);
 }
 
 void Connect() {

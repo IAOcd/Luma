@@ -59,6 +59,8 @@ struct QueueItem {
 void SetClientId(const std::string& clientId);
 // Turn on/off (off: the thread sleeps; the saved pass is kept).
 void SetActive(bool active);
+// Look up the lyrics of the next songs ahead (off: only the queue is shown).
+void SetPrefetch(bool on);
 
 // Opens the browser to connect. Does nothing if there's no Client ID.
 void Connect();

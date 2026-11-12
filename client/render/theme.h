@@ -33,12 +33,28 @@ struct Settings {
     float fontSize = 18.0f;       // en píxeles a 1080p (se escala con la resolución)
     bool animations = true;
     bool sounds = true;           // efectos de sonido del menú
+    // EFFICIENCY MODE: one switch that turns off what costs without being
+    // essential. It doesn't touch your settings: it only overrides them while
+    // it's on (turn it off and everything is as you left it). In "advanced"
+    // you choose what it turns off.
+    bool efficiency = false;
+    bool effAnimations = true;    // menu and notification animations (also the press / ripple)
+    bool effBlur = true;          // the glass blur behind the menu (the most expensive: GPU passes)
+    bool effShadows = true;       // HUD text shadows (each text is drawn once instead of twice)
+    bool effSounds = false;       // menu sounds
     float soundVolume = 0.6f;     // 0..1
     float backgroundDim = 0.30f;  // cuánto se oscurece el juego detrás del menú (0..0.8)
     int moduleView = 0;           // cómo se ven los módulos: 0 = bloques, 1 = lista (apilados)
 };
 
 Settings& Get();
+
+// The EFFECTIVE values (your setting, unless the efficiency mode turns it off).
+// Read these instead of Get().animations / Get().blur / Get().sounds.
+bool AnimationsOn();
+float BlurAmount();
+bool SoundsOn();
+bool HudShadowsOn();
 
 // --- Colores de Luma ------------------------------------------------------------
 inline constexpr ImVec4 kCharcoal{0.145f, 0.157f, 0.169f, 1.0f};  // #25282B

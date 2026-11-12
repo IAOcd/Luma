@@ -65,6 +65,47 @@ struct Settings {
     float lyricsOffset = 0.0f;    // seconds: + = lyrics later, - = earlier
     bool lyricsNextLine = true;   // HUD lyrics: show the next line too
     bool lyricsSweep = true;      // HUD lyrics: the light fills each word smoothly
+    // --- Lyric Flow: the lyrics floating in the world (render/lyric_flow.h) ---
+    bool lyricFlow = false;
+    float flowDistance = 22.0f;   // blocks in front of you
+    float flowHeight = 9.0f;      // blocks above your eyes
+    float flowSize = 1.8f;        // a word's height, in blocks
+    float flowTilt = 10.0f;       // how much the words lean (degrees, at most)
+    float flowOpacity = 0.95f;
+    bool flowUppercase = true;
+    int flowMode = 0;             // 0 = anchored to a place of the world, 1 = in the sky (follows you, like the skybox)
+    int flowAppear = 0;           // how a word appears: pop, fade, drop, rise, zoom, spin, flip, typewriter, scatter
+    int flowLeave = 0;            // how a line leaves: float up, fade, fall, shrink, scatter
+    int flowMotion = 1;           // while it's there: none, float, wave, sway, pulse (the word being sung)
+    float flowSpeed = 1.0f;       // the effects' speed (x)
+    int flowColorMode = 0;        // 0 color, 1 album, 2 album gradient, 3 two colors, 4 rainbow
+    float flowColor[3] = {1.0f, 1.0f, 1.0f};
+    float flowColor2[3] = {0.70f, 0.56f, 1.0f};
+    bool flowHighlight = false;   // the word being sung in its own color
+    float flowHighlightColor[3] = {1.0f, 0.84f, 0.40f};
+    bool flowOutline = true;      // a border around the letters
+    float flowOutlineColor[3] = {0.05f, 0.05f, 0.07f};
+    float flowOutlineAlpha = 0.85f;
+    bool flowShadow = false;      // a dark copy a little behind and below
+    int flowFont = 0;             // 0 = Minecraft's pixel font, others = Windows fonts (render/lyric_flow.h kFonts)
+    bool flowBold = true;         // (Windows fonts) bold
+    int flowResolution = 16;      // (Windows fonts) how many "pixels" tall a letter is: more = smoother, more lines
+    float flowLetterSpacing = 0.0f;  // extra space between letters, in letter pixels (-1..4)
+    float flowWordSpacing = 0.4f;    // space between words, in word heights
+    float flowLeaveTime = 0.45f;     // how long a line takes to leave (seconds)
+    bool flowAlbumColor = false;  // (old setting: now flowColorMode = 1)
+    int flowMaterial = 0;         // (unused: the letters are lines with the outline material)
+    // MUSIC EFFICIENCY MODE (like the general one, only for the music): it
+    // overrides these without changing them. "eff*" = what it turns off.
+    bool efficiency = false;
+    bool effLyricAnim = true;    // lyrics: light sweep, rising words, fades, gliding list
+    bool effUiAnim = true;       // the Music page's buttons and controls (press, ripple, pop)
+    bool effSpin = true;         // the round art doesn't spin
+    bool effSongFade = true;     // no fade when the song changes
+    bool effMarquee = true;      // long names are cut instead of scrolling
+    bool effAlbumColors = true;  // no album colors on the HUD, menu, crosshair, watermark
+    bool effHdCovers = true;     // no HD album art downloads
+    bool effPrefetch = true;     // no lyrics looked up ahead (Spotify queue)
     std::string spotifyClientId;  // the user's own Spotify app (core/spotify.h); empty = off
     bool hdCovers = true;         // look up a sharp album art online when the app's is small
     // --- Album colors everywhere ---
@@ -151,6 +192,20 @@ inline float SmoothStep(float x) {
     x = x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x);
     return x * x * (3.0f - 2.0f * x);
 }
+
+// The EFFECTIVE answers (the setting, unless the music efficiency mode turns
+// it off). Cheap: a couple of reads.
+bool LyricAnimations();
+bool UiAnimations();
+bool SpinOn();
+bool SongFade();
+bool MarqueeOn();
+bool AlbumColorsOn();
+bool HdCoversOn();
+// Tells the background threads (HD covers, Spotify prefetch) what's allowed.
+void ApplyEfficiency();
+// The music efficiency section (Music > Styles).
+bool DrawEfficiencySettings();
 
 // "Up next" tab of the Music page: your Spotify queue (core/spotify.h).
 void DrawUpNext(ImVec2 min, ImVec2 max);

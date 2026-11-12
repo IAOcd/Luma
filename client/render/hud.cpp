@@ -2,6 +2,7 @@
 //  hud.cpp - Implementación del estilo del HUD
 // =============================================================================
 #include "render/hud.h"
+#include "render/theme.h"
 #include "render/rainbow.h"
 #include "render/music.h"
 
@@ -91,6 +92,10 @@ void LoadFonts(ImGuiIO& io, float uiScale) {
     log::Info("HUD: fuente pixelada del juego {}.", g_pixelAvailable ? "encontrada" : "no encontrada (se usa la de Luma)");
 }
 
+ImFont* PixelFont() {
+    return g_pixelAvailable ? g_pixel[0] : nullptr;
+}
+
 Metrics Measure(float scale) {
     Metrics m;
     // 2 píxeles de pantalla por píxel de HUD a 1080p y escala 1.
@@ -144,12 +149,23 @@ ImU32 PressedColor(float alpha) {
     return ToU32(g_current->pressed, alpha);
 }
 
+namespace {
+int g_ignoreEfficiency = 0;
+}  // namespace
+
+IgnoreEfficiency::IgnoreEfficiency() {
+    ++g_ignoreEfficiency;
+}
+IgnoreEfficiency::~IgnoreEfficiency() {
+    --g_ignoreEfficiency;
+}
+
 void Text(ImDrawList* draw, const Metrics& m, ImVec2 pos, const char* text, ImU32 color) {
     // Redondear a píxeles enteros: con la fuente pixelada, una posición con
     // decimales la dibuja "entre píxeles" y se ve borrosa.
     pos.x = std::floor(pos.x);
     pos.y = std::floor(pos.y);
-    if (g_current->textShadow) {
+    if (g_current->textShadow && (theme::HudShadowsOn() || g_ignoreEfficiency > 0)) {
         // La sombra es el mismo color, oscurecido al 25%, un píxel de HUD
         // abajo a la derecha (como la del juego).
         const ImVec4 c = ImGui::ColorConvertU32ToFloat4(color);

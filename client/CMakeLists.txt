@@ -58,6 +58,7 @@ add_library(Luma SHARED
     render/hud.cpp
     render/hud_editor.cpp
     render/icons.cpp
+    render/lyric_flow.cpp
     render/nanosvg_impl.cpp
     render/input.cpp
     render/item_icons.cpp

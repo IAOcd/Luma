@@ -14,6 +14,7 @@
 
 #include "core/lyrics.h"
 #include "core/spotify.h"
+#include "render/lyric_flow.h"
 #include "core/media.h"
 #include "render/hud.h"
 #include "render/music.h"
@@ -91,8 +92,7 @@ const char* NowPlaying::IconSvg() const {
 
 void NowPlaying::OnEnable() {
     mu::Get().active = true;
-    lyrics::SetHdCovers(mu::Get().hdCovers);
-    lyrics::Want(lyrics::kCovers, mu::Get().hdCovers);
+    mu::ApplyEfficiency();  // HD covers and Spotify prefetch, as the settings and the efficiency mode say
     media::Want(media::kHud, true);
     media::Want(media::kRadial, mu::Get().halo);
     spotify::SetActive(true);  // (it does nothing without a Client ID and a connection)
@@ -105,9 +105,11 @@ void NowPlaying::OnDisable() {
     media::Want(media::kHud, false);
     media::Want(media::kRadial, false);
     spotify::SetActive(false);
+    render::lyricflow::Stop();
 }
 
 ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
+    const rh::IgnoreEfficiency separate;  // the general efficiency mode doesn't touch Luma Music
     const mu::Settings& s = mu::Get();
     media::Track t = media::Current();
     const bool visible = t.present && t.title[0] != '\0' && (t.playing || !s.hideWhenPaused);
@@ -130,7 +132,10 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
         shownTrack_ = t.trackId;
         changedAt_ = now;
     }
-    const float fade = s.animateChanges ? static_cast<float>(std::clamp((now - changedAt_) / 0.4, 0.0, 1.0)) : 1.0f;
+    const float fade = s.animateChanges && mu::SongFade()
+                           ? static_cast<float>(std::clamp((now - changedAt_) / 0.4, 0.0, 1.0))
+                           : 1.0f;
+    const bool marquee = s.marquee && mu::MarqueeOn();  // (the music efficiency mode may turn it off)
 
     ImDrawList* draw = frame.draw;
     const rh::Metrics m = rh::Measure(frame.scale);
@@ -144,7 +149,12 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
     const ImVec4 accent = mu::AccentFor(s.accent, t, textCol);
     const float frac = t.duration > 0.0 ? static_cast<float>(t.position / t.duration) : 0.0f;
     const int style = std::clamp(s.hudStyle, 0, 6);
-    lyrics::Want(lyrics::kHud, style == 5 || style == 6);
+    lyrics::Want(lyrics::kHud, style == 5 || style == 6 || s.lyricFlow);
+    if (s.lyricFlow) {
+        render::lyricflow::Draw(frame.draw, ImGui::GetIO().DisplaySize);  // the lyrics in the sky
+    } else {
+        render::lyricflow::Stop();
+    }
 
 
 
@@ -219,7 +229,7 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
         shownLine_ = lineIndex;
         lineChangedAt_ = now;
     }
-    const float lineFade = static_cast<float>(std::clamp((now - lineChangedAt_) / 0.22, 0.0, 1.0));
+    const float lineFade = mu::LyricAnimations() ? static_cast<float>(std::clamp((now - lineChangedAt_) / 0.22, 0.0, 1.0)) : 1.0f;
     const float lineRise = (1.0f - lineFade) * 3.0f * u;
     constexpr int rows = 2;
     const bool reserveNext = s.lyricsNextLine;
@@ -276,7 +286,7 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
                     ++row;
                 }
                 const ImVec2 pos(at.x + x, at.y + static_cast<float>(row) * lineH + lineRise - m.capTop);
-                const float sung = s.lyricsSweep ? mu::WordProgress(ly, lineIndex, i, lyricMs)
+                const float sung = s.lyricsSweep && mu::LyricAnimations() ? mu::WordProgress(ly, lineIndex, i, lyricMs)
                                                  : (lyricMs >= line->words[i].ms ? 1.0f : 0.0f);
                 rh::Text(draw, m, pos, piece, WithAlpha(dim, lineFade));
                 if (sung > 0.0f) {
@@ -339,9 +349,9 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
         }
         const float textW = o.x + pad + innerW - x;
         float y = o.y + pad;
-        Line(draw, m, ImVec2(x, y), textW, t.title, bright, s.marquee);
+        Line(draw, m, ImVec2(x, y), textW, t.title, bright, marquee);
         y += lineH;
-        Line(draw, m, ImVec2(x, y), textW, second, dim, s.marquee);
+        Line(draw, m, ImVec2(x, y), textW, second, dim, marquee);
         y += lineH;
         if (t.duration > 0.0) {
             float barW = textW;
@@ -384,7 +394,7 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
                         s.artShape, s.artShape == 2 && s.spinArt ? mu::SpinAngle() : 0.0f, fade);
             x += artW + gap * 0.6f;
         }
-        Line(draw, m, ImVec2(x, o.y + pad), w, one, bright, s.marquee);
+        Line(draw, m, ImVec2(x, o.y + pad), w, one, bright, marquee);
         return ImVec2(width, height);
     }
 
@@ -412,7 +422,7 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
             y += artW + gap;
         }
         for (int i = 0; i < count; ++i) {
-            Line(draw, m, ImVec2(o.x + pad, y), colW, lines[i], colors[i], s.marquee, 1.0f);
+            Line(draw, m, ImVec2(o.x + pad, y), colW, lines[i], colors[i], marquee, 1.0f);
             y += lineH;
         }
         if (barH > 0.0f) {
@@ -442,7 +452,7 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
     }
     float y = o.y + pad + (innerH - contentH) * 0.5f;
     for (int i = 0; i < count; ++i) {
-        Line(draw, m, ImVec2(x, y), textW, lines[i], colors[i], s.marquee);
+        Line(draw, m, ImVec2(x, y), textW, lines[i], colors[i], marquee);
         y += lineH;
     }
     if (withBar) {
@@ -499,6 +509,19 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
     out["lyricsLiriqo"] = s.lyricsLiriqo;
     out["lyricsSweep"] = s.lyricsSweep;
     out["spotifyClientId"] = s.spotifyClientId;
+    out["lyricFlow"] = {{"on", s.lyricFlow}, {"distance", s.flowDistance}, {"height", s.flowHeight}, {"size", s.flowSize},
+                        {"tilt", s.flowTilt}, {"opacity", s.flowOpacity}, {"uppercase", s.flowUppercase},
+                        {"mode", s.flowMode}, {"appear", s.flowAppear}, {"leave", s.flowLeave}, {"motion", s.flowMotion},
+                        {"speed", s.flowSpeed}, {"colorMode", s.flowColorMode}, {"color", {s.flowColor[0], s.flowColor[1], s.flowColor[2]}},
+                        {"color2", {s.flowColor2[0], s.flowColor2[1], s.flowColor2[2]}}, {"highlight", s.flowHighlight},
+                        {"highlightColor", {s.flowHighlightColor[0], s.flowHighlightColor[1], s.flowHighlightColor[2]}}, {"outline", s.flowOutline},
+                        {"outlineColor", {s.flowOutlineColor[0], s.flowOutlineColor[1], s.flowOutlineColor[2]}}, {"outlineAlpha", s.flowOutlineAlpha},
+                        {"shadow", s.flowShadow}, {"font", s.flowFont}, {"bold", s.flowBold},
+                        {"resolution", s.flowResolution}, {"letterSpacing", s.flowLetterSpacing},
+                        {"wordSpacing", s.flowWordSpacing}, {"leaveTime", s.flowLeaveTime}};
+    out["efficiency"] = {{"on", s.efficiency}, {"lyricAnim", s.effLyricAnim}, {"uiAnim", s.effUiAnim}, {"spin", s.effSpin}, {"songFade", s.effSongFade},
+                         {"marquee", s.effMarquee}, {"albumColors", s.effAlbumColors}, {"hdCovers", s.effHdCovers},
+                         {"prefetch", s.effPrefetch}};
     out["lyricsOffset"] = s.lyricsOffset;
     out["lyricsNextLine"] = s.lyricsNextLine;
     out["hudFollowAlbum"] = s.hudFollowAlbum;
@@ -540,6 +563,61 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
     s.lyricsSweep = in.value("lyricsSweep", d.lyricsSweep);
     s.spotifyClientId = in.value("spotifyClientId", std::string());
     if (s.spotifyClientId.size() > 64) s.spotifyClientId.clear();
+    if (in.contains("lyricFlow") && in["lyricFlow"].is_object()) {
+        const nlohmann::json& f = in["lyricFlow"];
+        s.lyricFlow = f.value("on", d.lyricFlow);
+        s.flowDistance = std::clamp(f.value("distance", d.flowDistance), 8.0f, 60.0f);
+        s.flowHeight = std::clamp(f.value("height", d.flowHeight), -4.0f, 40.0f);
+        s.flowSize = std::clamp(f.value("size", d.flowSize), 0.5f, 6.0f);
+        s.flowTilt = std::clamp(f.value("tilt", d.flowTilt), 0.0f, 30.0f);
+        s.flowOpacity = std::clamp(f.value("opacity", d.flowOpacity), 0.2f, 1.0f);
+        s.flowUppercase = f.value("uppercase", d.flowUppercase);
+        s.flowMode = std::clamp(f.value("mode", d.flowMode), 0, 1);
+        s.flowAppear = std::clamp(f.value("appear", d.flowAppear), 0, 8);
+        s.flowLeave = std::clamp(f.value("leave", d.flowLeave), 0, 4);
+        s.flowMotion = std::clamp(f.value("motion", d.flowMotion), 0, 4);
+        s.flowSpeed = std::clamp(f.value("speed", d.flowSpeed), 0.3f, 3.0f);
+        // (older versions had only "album color": it becomes color mode 1)
+        s.flowColorMode = std::clamp(f.value("colorMode", f.value("albumColor", false) ? 1 : d.flowColorMode), 0, 4);
+        auto readColor = [&](const char* key, float* out, const float* def) {
+            for (int i = 0; i < 3; ++i) out[i] = def[i];
+            if (f.contains(key) && f[key].is_array() && f[key].size() == 3) {
+                for (int i = 0; i < 3; ++i) {
+                    if (f[key][i].is_number()) out[i] = std::clamp(f[key][i].get<float>(), 0.0f, 1.0f);
+                }
+            }
+        };
+        readColor("color", s.flowColor, d.flowColor);
+        readColor("color2", s.flowColor2, d.flowColor2);
+        readColor("highlightColor", s.flowHighlightColor, d.flowHighlightColor);
+        readColor("outlineColor", s.flowOutlineColor, d.flowOutlineColor);
+        s.flowHighlight = f.value("highlight", d.flowHighlight);
+        s.flowOutline = f.value("outline", d.flowOutline);
+        s.flowOutlineAlpha = std::clamp(f.value("outlineAlpha", d.flowOutlineAlpha), 0.1f, 1.0f);
+        s.flowShadow = f.value("shadow", d.flowShadow);
+        s.flowFont = std::clamp(f.value("font", d.flowFont), 0, render::lyricflow::kFontCount - 1);
+        s.flowBold = f.value("bold", d.flowBold);
+        s.flowResolution = std::clamp(f.value("resolution", d.flowResolution), 9, 32);
+        s.flowLetterSpacing = std::clamp(f.value("letterSpacing", d.flowLetterSpacing), -1.0f, 4.0f);
+        s.flowWordSpacing = std::clamp(f.value("wordSpacing", d.flowWordSpacing), 0.1f, 1.5f);
+        s.flowLeaveTime = std::clamp(f.value("leaveTime", d.flowLeaveTime), 0.15f, 1.5f);
+    } else {
+        s.lyricFlow = d.lyricFlow;
+    }
+    if (in.contains("efficiency") && in["efficiency"].is_object()) {
+        const nlohmann::json& e = in["efficiency"];
+        s.efficiency = e.value("on", d.efficiency);
+        s.effLyricAnim = e.value("lyricAnim", d.effLyricAnim);
+        s.effUiAnim = e.value("uiAnim", d.effUiAnim);
+        s.effSpin = e.value("spin", d.effSpin);
+        s.effSongFade = e.value("songFade", d.effSongFade);
+        s.effMarquee = e.value("marquee", d.effMarquee);
+        s.effAlbumColors = e.value("albumColors", d.effAlbumColors);
+        s.effHdCovers = e.value("hdCovers", d.effHdCovers);
+        s.effPrefetch = e.value("prefetch", d.effPrefetch);
+    } else {
+        s.efficiency = d.efficiency;
+    }
     s.lyricsOffset = std::clamp(in.value("lyricsOffset", d.lyricsOffset), -5.0f, 5.0f);
     s.lyricsNextLine = in.value("lyricsNextLine", d.lyricsNextLine);
     s.hudFollowAlbum = in.value("hudFollowAlbum", d.hudFollowAlbum);
@@ -550,6 +628,7 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
     lyrics::SetOnline(s.lyricsOnline);
     lyrics::SetLiriqo(s.lyricsLiriqo);
     spotify::SetClientId(s.spotifyClientId);
+    mu::ApplyEfficiency();
     if (IsEnabled()) {
         OnEnable();
     }

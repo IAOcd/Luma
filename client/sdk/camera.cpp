@@ -68,6 +68,7 @@ std::atomic<float> g_lockYaw{0.0f};
 std::atomic<bool> g_loggedCamera{false};
 std::atomic<bool> g_loggedRender{false};
 std::atomic<std::uintptr_t> g_camera{0};       // el componente de cámara (lo vemos en _updatePlayer)
+std::atomic<std::uintptr_t> g_levelRenderer{0};  // the last LevelRenderer that drew the world (GetView)
 std::atomic<float> g_fovMultiplier{1.0f};
 std::atomic<float> g_fovOverride{0.0f};        // grados (0 = sin cambio)
 std::atomic<float> g_smoothing{12.0f};
@@ -220,6 +221,7 @@ void __fastcall RenderLevelDetour(void* levelRenderer, void* screenContext, void
     }
     const bool active = g_active.load(std::memory_order_relaxed);
     const auto lr = reinterpret_cast<std::uintptr_t>(levelRenderer);
+    g_levelRenderer.store(lr, std::memory_order_relaxed);
     if (active) {
         // Zoom / FOV: antes de dibujar (por si el juego lo usa en este frame)
         // y después (así lo hace Latite: queda para el frame siguiente).
@@ -260,6 +262,34 @@ bool HookSignature(const char* pattern, void* detour, Fn& original, const char* 
 }
 
 }  // namespace
+
+bool GetView(View& out) {
+    const std::uintptr_t lr = g_levelRenderer.load(std::memory_order_relaxed);
+    const std::uintptr_t cam = g_camera.load(std::memory_order_relaxed);
+    if (lr == 0 || cam == 0) return false;
+    std::uintptr_t lrp = 0;
+    float q[4]{};
+    if (!SafeRead(lr + kLevelRendererPlayer, lrp) || !LooksLikePointer(lrp) || !SafeRead(lrp + 0x658, out.pos) ||
+        !SafeRead(lrp + kFovScaleX, out.scaleX) || !SafeRead(lrp + kFovScaleY, out.scaleY) ||
+        !SafeRead(cam + kCameraLookAngles, q)) {
+        return false;
+    }
+    for (float v : {out.pos[0], out.pos[1], out.pos[2], q[0], q[1], q[2], q[3]}) {
+        if (!std::isfinite(v)) return false;
+    }
+    if (!(out.scaleX > 0.01f && out.scaleX < 50.0f && out.scaleY > 0.01f && out.scaleY < 50.0f)) return false;
+    // The inverse of RotationToQuaternion: w = q[1] = cos(p/2)cos(y/2),
+    // x = q[2] = sin(p/2)cos(y/2), y = q[3] = cos(p/2)sin(y/2).
+    constexpr float kRadToDeg = 180.0f / 3.14159265358979f;
+    auto wrap = [](float deg) {
+        deg = std::fmod(deg + 180.0f, 360.0f);
+        if (deg < 0.0f) deg += 360.0f;
+        return deg - 180.0f;
+    };
+    out.pitch = wrap(2.0f * std::atan2(q[2], q[1]) * kRadToDeg);
+    out.yaw = wrap(2.0f * std::atan2(q[3], q[1]) * kRadToDeg);
+    return std::fabs(out.pitch) <= 90.5f;
+}
 
 bool Init() {
     g_gammaOk = HookSignature(kGetGamma, reinterpret_cast<void*>(&GetGammaDetour), g_getGamma, "juego: brillo (getGamma)");

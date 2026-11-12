@@ -15,6 +15,7 @@
 #include "core/tr.h"
 #include "render/gpu.h"
 #include "render/icons.h"
+#include "render/lyric_flow.h"
 #include "render/rainbow.h"
 #include "render/theme.h"
 #include "render/ui.h"
@@ -178,7 +179,71 @@ const Tint& AlbumTint() {
 
 }  // namespace
 
+bool LyricAnimations() {
+    const Settings& s = Get();
+    // Only the MUSIC efficiency mode decides this (the general one doesn't
+    // touch the music: they're separate on purpose).
+    return !(s.efficiency && s.effLyricAnim);
+}
+bool UiAnimations() {
+    const Settings& s = Get();
+    return !(s.efficiency && s.effUiAnim);
+}
+bool SpinOn() {
+    const Settings& s = Get();
+    return !(s.efficiency && s.effSpin);
+}
+bool SongFade() {
+    const Settings& s = Get();
+    return !(s.efficiency && s.effSongFade);
+}
+bool MarqueeOn() {
+    const Settings& s = Get();
+    return !(s.efficiency && s.effMarquee);
+}
+bool AlbumColorsOn() {
+    const Settings& s = Get();
+    return !(s.efficiency && s.effAlbumColors);
+}
+bool HdCoversOn() {
+    const Settings& s = Get();
+    return s.hdCovers && !(s.efficiency && s.effHdCovers);
+}
+
+void ApplyEfficiency() {
+    const Settings& s = Get();
+    lyrics::SetHdCovers(HdCoversOn());
+    lyrics::Want(lyrics::kCovers, HdCoversOn() && s.active);
+    spotify::SetPrefetch(!(s.efficiency && s.effPrefetch));
+}
+
+bool DrawEfficiencySettings() {
+    Settings& s = Get();
+    bool changed = false;
+    ui::Section("Efficiency");
+    changed |= ui::Toggle("Music efficiency mode", &s.efficiency, "(lighter music module)");
+    ui::Hint("Turns off the music's extras: lyric animations, the spinning art, fades, scrolling names, album "
+             "colors and the background downloads (HD art, lyrics ahead). The music and its lyrics keep working.");
+    static bool advanced = false;
+    ui::Toggle("Advanced: choose what it turns off", &advanced);
+    if (advanced) {
+        ImGui::BeginDisabled(!s.efficiency);
+        changed |= ui::Toggle("Lyric animations", &s.effLyricAnim, "(sweep, rising words, fades)");
+        changed |= ui::Toggle("Music page animations", &s.effUiAnim, "(buttons and controls)");
+        changed |= ui::Toggle("Spinning art", &s.effSpin);
+        changed |= ui::Toggle("Song change fade", &s.effSongFade);
+        changed |= ui::Toggle("Scrolling names", &s.effMarquee);
+        changed |= ui::Toggle("Album colors", &s.effAlbumColors, "(HUD, menu, crosshair, watermark)");
+        changed |= ui::Toggle("HD album art", &s.effHdCovers, "(no downloads)");
+        changed |= ui::Toggle("Lyrics ahead (Spotify)", &s.effPrefetch, "(no lookups for the next songs)");
+        ImGui::EndDisabled();
+    }
+    if (changed) ApplyEfficiency();
+    return changed;
+}
+
 bool HudTint(float out[3]) {
+    if (!AlbumColorsOn()) return false;
     const Tint& t = AlbumTint();
     if (!t.has || !Get().hudFollowAlbum) return false;
     std::memcpy(out, t.rgb, sizeof(t.rgb));
@@ -186,6 +251,7 @@ bool HudTint(float out[3]) {
 }
 
 bool AlbumColor(float out[3]) {
+    if (!AlbumColorsOn()) return false;
     const Tint& t = AlbumTint();
     if (!t.has) return false;
     std::memcpy(out, t.rgb, sizeof(t.rgb));
@@ -252,6 +318,7 @@ void ProgressSpring::SeekTo(float frac, double duration) {
 }
 
 bool MenuTint(float out[3]) {
+    if (!AlbumColorsOn()) return false;
     const Tint& t = AlbumTint();
     if (!t.has || !Get().menuFollowAlbum) return false;
     std::memcpy(out, t.rgb, sizeof(t.rgb));
@@ -264,7 +331,7 @@ float SpinAngle() {
     const int frame = ImGui::GetFrameCount();
     if (frame != lastFrame) {
         lastFrame = frame;
-        if (media::Current().playing) {
+        if (media::Current().playing && SpinOn()) {
             angle = std::fmod(angle + ImGui::GetIO().DeltaTime * 0.9f, 2.0f * kPi);
         }
     }
@@ -704,6 +771,10 @@ void DrawLyrics(ImVec2 min, ImVec2 max) {
             const float damping = 2.0f * std::sqrt(kStiffness);
             scrollSpeed += (kStiffness * (target - scroll) - damping * scrollSpeed) * dt;
             scroll += scrollSpeed * dt;
+            if (!LyricAnimations()) {  // efficiency: jump to the line
+                scroll = target;
+                scrollSpeed = 0.0f;
+            }
             if (std::fabs(target - scroll) > 6.0f) {  // a big jump (seek): don't fly through the whole song
                 scroll = target - std::copysign(6.0f, target - scroll);
             }
@@ -740,8 +811,9 @@ void DrawLyrics(ImVec2 min, ImVec2 max) {
             const bool isCurrent = i == current;
             // Lines light up and go out gradually (by the song's clock, so a
             // pause freezes them too): 0.25 s in, 0.45 s out.
-            const float lineOn = isCurrent ? SmoothStep(static_cast<float>(ms - line.ms) / 250.0f) : 0.0f;
-            const float lineOff = (i == current - 1 && i + 1 < n)
+            const bool animate = LyricAnimations();
+            const float lineOn = isCurrent ? (animate ? SmoothStep(static_cast<float>(ms - line.ms) / 250.0f) : 1.0f) : 0.0f;
+            const float lineOff = (animate && i == current - 1 && i + 1 < n)
                                       ? 1.0f - SmoothStep(static_cast<float>(ms - ly.lines[static_cast<std::size_t>(i + 1)].ms) / 450.0f)
                                       : 0.0f;
             // Hover: a line can be clicked to jump to it.
@@ -784,8 +856,8 @@ void DrawLyrics(ImVec2 min, ImVec2 max) {
                         x = min.x;
                         rowY += rowH;
                     }
-                    const float sung = WordProgress(ly, i, w, ms);
-                    const ImVec2 at(x, rowY - size * 0.04f * SmoothStep(sung));
+                    const float sung = animate ? WordProgress(ly, i, w, ms) : (ms >= word.ms ? 1.0f : 0.0f);
+                    const ImVec2 at(x, rowY - (animate ? size * 0.04f * SmoothStep(sung) : 0.0f));
                     draw->AddText(f, size, at, U(p.text, dimAlpha), word.text.c_str());
                     if (sung > 0.0f) {
                         const int firstVertex = draw->VtxBuffer.Size;
@@ -827,8 +899,7 @@ bool DrawAlbumColorSettings() {
     bool changed = false;
     ui::Section("Album colors");
     if (ui::Toggle("HD album art", &s.hdCovers, "(when the app's is small)")) {
-        lyrics::SetHdCovers(s.hdCovers);
-        lyrics::Want(lyrics::kCovers, s.hdCovers && s.active);
+        ApplyEfficiency();
         changed = true;
     }
     ui::Hint("Some apps give Windows a tiny album art (Liner: 150x150). Luma then looks the song up in Apple's "
@@ -843,6 +914,67 @@ bool DrawAlbumColorSettings() {
 bool DrawLyricsSettings() {
     Settings& s = Get();
     bool changed = false;
+    ui::Section("Lyric Flow");
+    changed |= ui::Toggle("Lyrics in the sky", &s.lyricFlow, "(each word written in the world as it's sung)");
+    if (s.lyricFlow) {
+        changed |= ui::Choice("Where", &s.flowMode, {"In the world", "In the sky"});
+        if (s.flowMode == 1) {
+            ui::Hint("In the sky: very far, like the sun or the clouds. It follows you when you walk (you never get "
+                     "closer), but stays put when you turn: it's part of the sky. Everything in front covers it.");
+        }
+        changed |= ui::Slider("Distance (blocks)", &s.flowDistance, 8.0f, 60.0f, "%.0f");
+        changed |= ui::Slider("Height (blocks)", &s.flowHeight, -4.0f, 40.0f, "%.0f");
+        changed |= ui::Slider("Word size (blocks)", &s.flowSize, 0.5f, 6.0f, "%.1f");
+        changed |= ui::Slider("Tilt (degrees)", &s.flowTilt, 0.0f, 30.0f, "%.0f");
+        ui::Section("Lyric Flow: letters");
+        {
+            // The font list (a combo with every font of render/lyric_flow.h).
+            const char* current = render::lyricflow::kFonts[std::clamp(s.flowFont, 0, render::lyricflow::kFontCount - 1)];
+            ImGui::TextUnformatted(Tr("Font"));
+            ImGui::SameLine(ImGui::GetFontSize() * 11.0f);
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::BeginCombo("##flowFont", current)) {
+                for (int i = 0; i < render::lyricflow::kFontCount; ++i) {
+                    if (ImGui::Selectable(render::lyricflow::kFonts[i], i == s.flowFont)) {
+                        s.flowFont = i;
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
+        if (s.flowFont != 0) {
+            changed |= ui::Toggle("Bold", &s.flowBold);
+            changed |= ui::SliderInt("Resolution", &s.flowResolution, 9, 32, "%d");
+            ui::Hint("How many pixels tall a letter is: more = smoother letters (and a little more work).");
+        }
+        changed |= ui::Toggle("Uppercase", &s.flowUppercase);
+        changed |= ui::Slider("Letter spacing", &s.flowLetterSpacing, -1.0f, 4.0f, "%.1f");
+        changed |= ui::Slider("Word spacing", &s.flowWordSpacing, 0.1f, 1.5f, "%.2f");
+        ui::Section("Lyric Flow: effects");
+        changed |= ui::Choice("Appear", &s.flowAppear,
+                              {"Pop", "Fade", "Drop", "Rise", "Zoom", "Spin", "Flip", "Typewriter", "Scatter"});
+        changed |= ui::Choice("Leave", &s.flowLeave, {"Float up", "Fade", "Fall", "Shrink", "Scatter"});
+        changed |= ui::Choice("Motion", &s.flowMotion, {"None", "Float", "Wave", "Sway", "Pulse"});
+        changed |= ui::Slider("Effect speed", &s.flowSpeed, 0.3f, 3.0f, "%.1fx");
+        changed |= ui::Slider("Leave time (s)", &s.flowLeaveTime, 0.15f, 1.5f, "%.2f");
+        ui::Hint("A line starts leaving just before the next one arrives and is gone when it appears: they never overlap.");
+        ui::Section("Lyric Flow: colors");
+        changed |= ui::Choice("Color", &s.flowColorMode, {"One color", "Album", "Album gradient", "Two colors", "Rainbow"});
+        if (s.flowColorMode == 0 || s.flowColorMode == 3) changed |= ui::Color("Color 1", s.flowColor);
+        if (s.flowColorMode == 3) changed |= ui::Color("Color 2", s.flowColor2);
+        changed |= ui::Toggle("Highlight the word being sung", &s.flowHighlight);
+        if (s.flowHighlight) changed |= ui::Color("Highlight color", s.flowHighlightColor);
+        changed |= ui::Slider("Opacity", &s.flowOpacity, 0.2f, 1.0f, "%.2f");
+        changed |= ui::Toggle("Outline", &s.flowOutline, "(a border around the letters)");
+        if (s.flowOutline) {
+            changed |= ui::Color("Outline color", s.flowOutlineColor);
+            changed |= ui::Slider("Outline opacity", &s.flowOutlineAlpha, 0.1f, 1.0f, "%.2f");
+        }
+        changed |= ui::Toggle("Shadow", &s.flowShadow, "(a dark copy behind)");
+    }
+    ui::Hint("Each line is written in the sky in front of where you look, as real pixel letters in the world: "
+             "turn your head and it stays there, and mountains in front cover it. Best with word-by-word lyrics.");
     ui::Section("Lyrics");
     if (ui::Toggle("Search lyrics online", &s.lyricsOnline)) {
         lyrics::SetOnline(s.lyricsOnline);

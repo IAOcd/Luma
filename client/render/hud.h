@@ -86,6 +86,13 @@ ImU32 PressedColor(float alpha = 1.0f);
 // Texto con la sombra del juego (desplazada un píxel de HUD).
 void Text(ImDrawList* draw, const Metrics& m, ImVec2 pos, const char* text, ImU32 color);
 
+// While one of these lives, HUD text ignores the GENERAL efficiency mode
+// (Luma Music uses it: the general mode doesn't touch the music).
+struct IgnoreEfficiency {
+    IgnoreEfficiency();
+    ~IgnoreEfficiency();
+};
+
 // Caja de fondo. "pressed" (0..1) la ilumina, para las teclas apretadas.
 void Box(ImDrawList* draw, const Metrics& m, ImVec2 min, ImVec2 max, float pressed = 0.0f);
 
@@ -106,6 +113,8 @@ float LineBoxHeight(const Metrics& m);
 void LoadFonts(ImGuiIO& io, float uiScale);
 // ¿Se encontró la fuente pixelada del juego?
 bool PixelFontAvailable();
+// The game's pixel font at its native size (11 units), or nullptr.
+ImFont* PixelFont();
 
 void Save(nlohmann::json& out);
 void Load(const nlohmann::json& in);

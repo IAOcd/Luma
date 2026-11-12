@@ -259,7 +259,7 @@ void Init() {
 }
 
 void Play(Effect effect) {
-    if (!g_running.load() || !theme::Get().sounds) {
+    if (!g_running.load() || !theme::SoundsOn()) {
         return;
     }
     g_pending.fetch_or(1u << static_cast<int>(effect));

@@ -23,6 +23,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 namespace luma::sdk::draw3d {
 
@@ -72,6 +73,24 @@ struct ChunkBorderSettings {
     bool rainbow = false;                      // las líneas van cambiando de color
 };
 void SetChunkBorders(const ChunkBorderSettings& settings);
+
+// --- Filled shapes in the world (Lyric Flow's letters) ---------------------------
+// Triangles in WORLD coordinates (x, y, z per vertex, 3 vertices per
+// triangle), one color per group. They're drawn by the game together with
+// the rest of the world: the terrain in front covers them, like a block.
+// Each group is one draw call. Replaced every frame (call it every frame
+// while you want them; an empty list = nothing).
+struct WorldShapes {
+    Color color;
+    std::vector<float> triangles;
+    // true = "triangles" holds LINES instead (2 points each, 6 floats), drawn
+    // with the game's own outline material: the one that is sure to show
+    // anywhere (filled triangles don't show far away with these materials).
+    bool lines = false;
+};
+void SetWorldShapes(std::vector<WorldShapes> shapes);
+// Which of the fill materials draws them (the same candidates as the outline fill).
+void SetWorldShapesMaterial(int index);
 
 // sdk/camera.cpp las llama alrededor de LevelRenderer::renderLevel.
 void BeginLevel(std::uintptr_t levelRenderer);

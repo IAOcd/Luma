@@ -427,7 +427,7 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     // El vidrio solo usa el desenfoque si en este frame se va a desenfocar
     // (con el menú visible); si no, la textura tendría una imagen vieja.
     const bool glassVisible = menuOpen || menu::IsAnimatingClose();
-    gpu::SetBlurActive(glassVisible && theme::Get().blur > 0.0f);
+    gpu::SetBlurActive(glassVisible && theme::BlurAmount() > 0.0f);
 
     // 1. ImGui: describir la interfaz de este frame. Orden de dibujo (de
     //    abajo hacia arriba): HUD de los módulos, menú, avisos.
@@ -482,8 +482,8 @@ void RenderFrame(IDXGISwapChain* swapchain) {
         gpu::RecordPost(g_r.commandList.Get(), frame.backBuffer.Get(), frame.rtv, postfx::Get());
         state = D3D12_RESOURCE_STATE_RENDER_TARGET;
     }
-    if (glassVisible && theme::Get().blur > 0.0f) {
-        gpu::RecordBlur(g_r.commandList.Get(), frame.backBuffer.Get(), theme::Get().blur, state);
+    if (glassVisible && theme::BlurAmount() > 0.0f) {
+        gpu::RecordBlur(g_r.commandList.Get(), frame.backBuffer.Get(), theme::BlurAmount(), state);
     } else if (state == D3D12_RESOURCE_STATE_PRESENT) {
         g_r.commandList->ResourceBarrier(1, &barrier);
     }

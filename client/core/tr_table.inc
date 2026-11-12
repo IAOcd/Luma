@@ -240,6 +240,8 @@
 {"Frames en el gráfico", "Frames in the graph", "Quadros no gráfico"},
 {"Con un elemento del HUD activo, Luma dibuja cada frame y su costo sube un poco.", "With a HUD element on, Luma draws every frame and its cost goes up a little.", "Com um elemento do HUD ativo, o Luma desenha cada quadro e o custo sobe um pouco."},
 {"Tiempo de GPU", "GPU time", "Tempo de GPU"},
+{"Solo en primera persona", "Only in first person", "Só em primeira pessoa"},
+{"(se oculta en tercera persona y con el freelook)", "(hidden in third person and with the freelook)", "(some em terceira pessoa e com o freelook)"},
 {"Lyric Flow: letras", "Lyric Flow: letters", "Lyric Flow: letras"},
 {"Negrita", "Bold", "Negrito"},
 {"Resolución", "Resolution", "Resolução"},

@@ -73,6 +73,7 @@ private:
     // General
     bool hideGame_ = true;   // esconder la mira del juego
     bool hideInMenus_ = true;
+    bool firstPersonOnly_ = true;  // hidden in third person and with the freelook (you aim with the camera, not the player)
 };
 
 }  // namespace luma::modules::visual

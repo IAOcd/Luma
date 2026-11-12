@@ -62,6 +62,7 @@ std::atomic<bool> g_cameraOk{false};
 std::atomic<bool> g_renderOk{false};
 std::atomic<float> g_gamma{-1.0f};
 std::atomic<int> g_perspective{-1};
+std::atomic<int> g_lastPerspective{-1};  // what the game answered last (CurrentPerspective)
 std::atomic<bool> g_freelook{false};
 std::atomic<float> g_lockPitch{0.0f};
 std::atomic<float> g_lockYaw{0.0f};
@@ -179,6 +180,7 @@ bool __fastcall GetHideHandDetour(void* options) {
 int __fastcall GetPerspectiveDetour(void* options) {
     hooks::ActiveCallGuard guard;
     const int original = g_getPerspective(options);
+    g_lastPerspective.store(original, std::memory_order_relaxed);
     const int forced = g_perspective.load(std::memory_order_relaxed);
     return g_active.load(std::memory_order_relaxed) && forced >= 0 ? forced : original;
 }
@@ -351,6 +353,16 @@ bool HideHandAvailable() {
 
 void SetZoomSmoothing(float speed) {
     g_smoothing.store(speed);
+}
+
+bool FreelookActive() {
+    return g_active.load(std::memory_order_relaxed) && g_freelook.load(std::memory_order_relaxed);
+}
+
+int CurrentPerspective() {
+    const int forced = g_perspective.load(std::memory_order_relaxed);
+    if (g_active.load(std::memory_order_relaxed) && forced >= 0) return forced;
+    return g_lastPerspective.load(std::memory_order_relaxed);
 }
 
 void SetFreelook(bool active, float pitch, float yaw) {

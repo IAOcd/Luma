@@ -20,6 +20,7 @@
 #include "render/music.h"
 #include "render/rainbow.h"
 #include "render/ui.h"
+#include "sdk/camera.h"
 #include "sdk/game_crosshair.h"
 #include "sdk/mouse_grab.h"
 
@@ -100,6 +101,11 @@ ImVec2 Crosshair::OnRenderHud(const HudFrame& frame) {
     sdk::gamecrosshair::SetHidden(hideGame_);  // (barato: solo guarda un sí/no)
     // En los menús del juego (o con el de Luma abierto) no tiene sentido.
     if (hideInMenus_ && !frame.editing && (render::overlay::IsMenuOpen() || sdk::mouse::GameMouseState() == 0)) {
+        return ImVec2(0, 0);
+    }
+    // In third person or with the freelook the center of the screen isn't
+    // where you aim: like the game's own crosshair, it's hidden.
+    if (firstPersonOnly_ && !frame.editing && (sdk::camera::CurrentPerspective() > 0 || sdk::camera::FreelookActive())) {
         return ImVec2(0, 0);
     }
     const float u = render::hud::Measure(1.0f).px;  // un píxel de HUD (sigue la resolución)
@@ -389,6 +395,7 @@ bool Crosshair::DrawSettings() {
     if (colorMode_ == 1 || colorMode_ == 2) changed |= ui::Slider("Rainbow speed", &rainbowSpeed_, 0.05f, 2.0f, "%.2f");
     if (colorMode_ == 3) ui::Hint("Takes the color of the song's cover (needs the Now playing module on).");
     changed |= ui::Toggle("Hide in menus", &hideInMenus_);
+    changed |= ui::Toggle("Only in first person", &firstPersonOnly_, "(hidden in third person and with the freelook)");
     return changed;
 }
 
@@ -406,6 +413,7 @@ void Crosshair::SaveSettings(nlohmann::json& out) const {
     out["pixelScale"] = pixelScale_;
     out["hideGame"] = hideGame_;
     out["hideInMenus"] = hideInMenus_;
+    out["firstPersonOnly"] = firstPersonOnly_;
     out["mirrorX"] = mirrorX_;
     out["mirrorY"] = mirrorY_;
     // Los píxeles como texto: 8 dígitos hexadecimales por píxel (RRGGBBAA).
@@ -436,6 +444,7 @@ void Crosshair::LoadSettings(const nlohmann::json& in) {
     pixelScale_ = std::clamp(in.value("pixelScale", 1.0f), 0.25f, 3.0f);
     hideGame_ = in.value("hideGame", true);
     hideInMenus_ = in.value("hideInMenus", true);
+    firstPersonOnly_ = in.value("firstPersonOnly", true);
     mirrorX_ = in.value("mirrorX", true);
     mirrorY_ = in.value("mirrorY", true);
     const int size = in.value("gridSize", 16);

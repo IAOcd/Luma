@@ -55,6 +55,12 @@ bool HideHandAvailable();
 
 // Freelook: mientras está activo, el jugador queda mirando hacia (pitch, yaw).
 void SetFreelook(bool active, float pitch, float yaw);
+bool FreelookActive();
+
+// The view being used right now: 0 = first person, 1 = third person behind,
+// 2 = third person in front (what the game chose, or what Luma forces). -1
+// if it's not known yet.
+int CurrentPerspective();
 
 // --- Where the camera is and where it looks (for drawing things "in the world") ---
 // Luma draws on top of the game's picture. To put something AT a place of the

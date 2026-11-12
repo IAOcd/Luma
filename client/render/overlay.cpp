@@ -445,9 +445,10 @@ void RenderFrame(IDXGISwapChain* swapchain) {
     // no quedar encima de ellos. Con el menú de Luma abierto sí se dibuja.
     const bool inGameMenu = !menuOpen && hud::GetStyle().hideInGameMenus && sdk::mouse::GameMouseState() == 0;
     music::DrawWorldEffects();  // lyrics and visualizer in the sky (also with the HUD hidden)
-    hud::UpdateGameHudState(sdk::mouse::GameMouseState() != 0 && !menuOpen, sdk::camera::CurrentPerspective() <= 0);
+    hud::UpdateGameHudState(sdk::mouse::GameMouseState() != 0 && !menuOpen, sdk::camera::CurrentPerspective() <= 0, !menuOpen);
     const bool f1Hidden = hud::F1Hidden() && theme::Get().f1HidesHud && !menuOpen;
-    if (!inGameMenu && !(cinematic::HideHud() && !menuOpen) && !f1Hidden) {
+    const bool drawHud = !inGameMenu && !(cinematic::HideHud() && !menuOpen) && !f1Hidden;
+    if (drawHud) {
         modules::Manager::RenderHud(menuOpen && hudeditor::IsActive());
     }
     cinematic::Draw();  // barras de cine / catalejo del zoom

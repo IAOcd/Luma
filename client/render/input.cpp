@@ -288,10 +288,7 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
             }
             return 0;
         }
-        // F1: the game hides its HUD; Luma's HUD follows (the key still reaches the game).
-        if (vk == VK_F1 && keyDown && !isRepeat && !overlay::IsMenuOpen() && PlayingInGame()) {
-            hud::ToggleF1Hidden();
-        }
+        // F1 (the game hides its HUD): render/hud.cpp reads that key by itself.
         // 3. La tecla del menú. Si ImGui espera texto (la caja de búsqueda),
         //    la letra se escribe en vez de cerrar el menú.
         // Solo jugando o para CERRAR el menú: si escribes en el chat, un

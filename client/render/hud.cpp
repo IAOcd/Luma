@@ -100,54 +100,44 @@ void LoadFonts(ImGuiIO& io, float uiScale) {
     log::Info("HUD: fuente pixelada del juego {}.", g_pixelAvailable ? "encontrada" : "no encontrada (se usa la de Luma)");
 }
 
+// F1 = the game's "hide the HUD". Luma's HUD follows it.
+//
+// HOW WE KNOW (measured with logs in 1.26, after several tries): the game
+// keeps drawing its HUD screen ("hud_screen") with F1 on, only invisible,
+// and nothing simple we can see changes. (Before 1.26 the crosshair stopped
+// being drawn; that stopped working.) So Luma counts the F1 presses itself:
+// each press while you're PLAYING (the game holds the mouse; in menus F1
+// does nothing in the game) flips "hidden".
+//
+// The key is read with GetAsyncKeyState each frame, not from the window's
+// messages: in 1.26 the F1 message doesn't always reach Luma.
 std::atomic<bool> g_f1Hidden{false};
-
-// What we SAW the game do (preferred) and, only if we can't see it, the F1
-// presses counted by hand.
-bool g_gameHudKnown = false;
-bool g_gameHudHidden = false;
 
 void ToggleF1Hidden() {
     g_f1Hidden.store(!g_f1Hidden.load());
 }
 
 bool F1Hidden() {
-    return g_gameHudKnown ? g_gameHudHidden : g_f1Hidden.load();
+    return g_f1Hidden.load();
 }
 
-void UpdateGameHudState(bool playing, bool firstPerson) {
-    static unsigned int last = 0;
-    static int still = 0;
-    // THE SIGNAL: how many times the game drew its HUD screen ("hud_screen",
-    // sdk/paperdoll sees it). With F1 the game stops drawing it. (Before, it
-    // was the crosshair's drawing; in 1.26 the crosshair is a screen of its
-    // own and that signal stopped working.) Fallback: the crosshair.
-    const bool screens = sdk::paperdoll::Available();
-    if (!screens && !sdk::gamecrosshair::Available()) {
-        g_gameHudKnown = false;
-        return;
-    }
-    const unsigned int calls = screens ? sdk::paperdoll::HudScreenFrames() : sdk::gamecrosshair::RenderCalls();
-    if (!playing || (!screens && !firstPerson)) {
-        // In menus or in third person the game may not draw its crosshair
-        // for other reasons: keep what we knew.
-        last = calls;
-        still = 0;
-        return;
-    }
-    if (calls != last) {
-        last = calls;
-        still = 0;
-        g_gameHudKnown = true;
-        if (g_gameHudHidden) {
-            g_gameHudHidden = false;
-            log::Info("HUD: the game shows its HUD again: Luma's HUD comes back.");
-        }
-    } else if (++still >= 8 && !g_gameHudHidden) {
-        g_gameHudKnown = true;
-        g_gameHudHidden = true;
-        log::Info("HUD: the game hid its HUD (F1): Luma's HUD hides too.");
-    }
+void UpdateGameHudState(bool playing, bool firstPerson, bool lumaMenuClosed) {
+    (void)firstPerson;
+    // Only bit 0x8000 ("down now"). Bit 1 ("pressed since the last call")
+    // is NOT used: on the first frame after injecting it still remembers an
+    // F1 from before Luma loaded, and Luma started inverted.
+    static bool wasDown = true;  // (true: a key held while Luma loads isn't a press)
+    const bool down = (GetAsyncKeyState(VK_F1) & 0x8000) != 0;
+    const bool pressed = down && !wasDown;
+    wasDown = down;
+    if (!pressed) return;
+    // Only if the game's window is the one in front (the key is global).
+    DWORD pid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+    if (!playing || !lumaMenuClosed) return;
+    if (pid != GetCurrentProcessId()) return;
+    ToggleF1Hidden();
+    log::Info("HUD: F1: Luma's HUD {}.", g_f1Hidden.load() ? "hides" : "shows again");
 }
 
 ImFont* PixelFont() {

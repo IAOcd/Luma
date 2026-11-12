@@ -193,6 +193,7 @@ void Apply(std::uintptr_t root) {
 std::atomic<unsigned> g_deathFrames{0};
 std::atomic<unsigned> g_menuFrames{0};
 std::atomic<unsigned> g_hudFrames{0};
+std::atomic<unsigned> g_crosshairFrames{0};
 bool g_loggedUnreadable = false;
 char g_seenNames[24][40]{};
 int g_seenCount = 0;
@@ -207,6 +208,7 @@ void NoteScreen(std::uintptr_t root) {
         }
         return;
     }
+    if (std::strcmp(name, "hud_crosshair_screen") == 0) g_crosshairFrames.fetch_add(1, std::memory_order_relaxed);
     if (std::strstr(name, "death") != nullptr || std::strstr(name, "respawn") != nullptr) {
         g_deathFrames.fetch_add(1, std::memory_order_relaxed);
     }
@@ -264,6 +266,10 @@ unsigned DeathScreenFrames() {
 
 unsigned HudScreenFrames() {
     return g_hudFrames.load(std::memory_order_relaxed);
+}
+
+unsigned CrosshairScreenFrames() {
+    return g_crosshairFrames.load(std::memory_order_relaxed);
 }
 
 unsigned MenuScreenFrames() {

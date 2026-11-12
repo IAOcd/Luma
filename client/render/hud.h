@@ -129,10 +129,10 @@ ImFont* PixelFontAt(int k);
 // the world, like the clouds.)
 void ToggleF1Hidden();
 bool F1Hidden();
-// Once per frame: watches whether the GAME is drawing its HUD (sdk/game_crosshair.h)
-// so Luma's HUD hides exactly when the game's does, even if F1 was pressed
-// before Luma loaded. "playing" = in the world with the mouse grabbed.
-void UpdateGameHudState(bool playing, bool firstPerson);
+// Once per frame: reads the F1 key and flips the above on each press while
+// "playing" (in the world with the mouse grabbed). Limit: if F1 was already
+// on when Luma loaded, press F1 twice to get them in step again.
+void UpdateGameHudState(bool playing, bool firstPerson, bool lumaMenuClosed);
 
 void Save(nlohmann::json& out);
 void Load(const nlohmann::json& in);

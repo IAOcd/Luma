@@ -105,7 +105,8 @@ ImVec2 Crosshair::OnRenderHud(const HudFrame& frame) {
     }
     // In third person or with the freelook the center of the screen isn't
     // where you aim: like the game's own crosshair, it's hidden.
-    if (firstPersonOnly_ && !frame.editing && (sdk::camera::CurrentPerspective() > 0 || sdk::camera::FreelookActive())) {
+    if (firstPersonOnly_ && !frame.editing && (sdk::camera::CurrentPerspective() > 0 || sdk::camera::FreelookActive() ||
+                             sdk::camera::FreecamActive())) {
         return ImVec2(0, 0);
     }
     const float u = render::hud::Measure(1.0f).px;  // un píxel de HUD (sigue la resolución)

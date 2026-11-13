@@ -21,6 +21,7 @@
 #include "modules/hud/music.h"
 #include "modules/hud/debug_screen.h"
 #include "modules/world/minimap.h"
+#include "modules/world/freecam.h"
 #include "modules/hud/scoreboard.h"
 #include "modules/hud/watermark.h"
 #include "modules/performance/perf_overlay.h"
@@ -56,6 +57,7 @@ void Manager::RegisterAll() {
     modules_.push_back(std::make_unique<hud::NowPlaying>());
     modules_.push_back(std::make_unique<hud::DebugScreen>());
     modules_.push_back(std::make_unique<world::Minimap>());
+    modules_.push_back(std::make_unique<world::FreeCam>());
     // Visual
     modules_.push_back(std::make_unique<visual::Crosshair>());
     modules_.push_back(std::make_unique<visual::PostProcessing>());

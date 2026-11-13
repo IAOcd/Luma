@@ -73,4 +73,9 @@ int TakeWheelSteps();
 // El zoom cinematográfico la usa con F1 (ocultar la interfaz del juego).
 void TapKey(int vk);
 
+// Free cam: W, A, S, D, espacio, Shift y Ctrl dejan de llegarle al juego (el
+// jugador queda quieto; la cámara libre las lee por su cuenta). Al activarlo,
+// Luma le "suelta" esas teclas al juego por si tenías alguna apretada.
+void SetFreecamKeys(bool block);
+
 }  // namespace luma::render::input

@@ -81,6 +81,36 @@ struct View {
 // The last frame's camera. False if there's no world (or something looks wrong).
 bool GetView(View& out);
 
+// --- Free cam (solo mundos locales: lo controla modules/world/freecam) -------------
+//  Cómo funciona (todo en este archivo, sin tocar al jugador):
+//    - Rotación: el mismo truco que el freelook. El mouse gira la cámara del
+//      juego como siempre, pero en _updatePlayer le hacemos creer al juego
+//      que la cámara sigue mirando hacia donde mirabas al activarlo: el
+//      jugador no gira.
+//    - Posición: la cámara libre tiene su propia posición. En cada frame,
+//      antes de dibujar el mundo, Luma la mueve según las teclas y la escribe
+//      en la cámara del juego (+0x40). Nunca se escribe al jugador.
+//      Solo MIENTRAS el juego dibuja: justo después se devuelve la de verdad,
+//      así la lógica del juego nunca ve la posición libre.
+//    - Al apagarlo, Luma deja de escribir: la cámara vuelve EXACTAMENTE al
+//      lugar original (en realidad nunca se fue de ahí).
+//  Las teclas (WASD, espacio, Shift, clics) las bloquea render/input para que
+//  el jugador no se mueva.
+struct FreecamInput {
+    float speed = 10.0f;       // bloques por segundo
+    float smoothing = 8.0f;    // qué tan rápido acelera y frena (0 = de golpe)
+    bool fullLook = true;      // W/S siguen hacia donde miras (también arriba/abajo)
+};
+// Activa o desactiva la cámara libre. Al activarla arranca donde está la
+// cámara ahora, y el jugador queda mirando hacia (pitch, yaw).
+void SetFreecam(bool active, float pitch, float yaw);
+void SetFreecamInput(const FreecamInput& input);
+// ¿Las teclas mueven la cámara? (no con el menú abierto ni en el chat)
+void SetFreecamAllowMove(bool allow);
+bool FreecamActive();
+// ¿Ya se vio la cámara del juego? (sin eso no se puede arrancar)
+bool HasCamera();
+
 void BeginUnload();
 
 }  // namespace luma::sdk::camera

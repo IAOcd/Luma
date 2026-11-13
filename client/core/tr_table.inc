@@ -823,3 +823,17 @@
 {"Soltar", "Unpin", "Soltar"},
 {"Letras fijadas aquí", "Lyrics pinned here", "Letras fixadas aqui"},
 {"Letras sueltas: te siguen otra vez", "Lyrics unpinned: they follow you again", "Letras soltas: seguem você de novo"},
+
+// --- Free cam ------------------------------------------------------------------
+{"Cámara libre", "Free cam", "Câmera livre"},
+{"Vuela con la cámara mientras tu jugador se queda quieto. Solo en tus propios mundos.", "Fly the camera around while your player stays still. Only in your own worlds.", "Voe com a câmera enquanto seu jogador fica parado. Só nos seus próprios mundos."},
+{"Cámara libre: primero entra a un mundo", "Free cam: enter a world first", "Câmera livre: entre em um mundo primeiro"},
+{"Bloques por segundo. La rueda del mouse la cambia mientras vuelas; mantén Ctrl para ir 3 veces más rápido.", "Blocks per second. The mouse wheel changes it while flying; hold Ctrl to go 3x faster.", "Blocos por segundo. A roda do mouse muda enquanto voa; segure Ctrl para ir 3x mais rápido."},
+{"Suavidad", "Smoothness", "Suavidade"},
+{"Qué tan rápido acelera y frena. 0 = al instante; los números bajos se deslizan más.", "How fast it speeds up and slows down. 0 = instant; low numbers glide more.", "Quão rápido acelera e freia. 0 = instantâneo; números baixos deslizam mais."},
+{"Volar hacia donde miras", "Fly where you look", "Voar para onde você olha"},
+{"(W también sube y baja)", "(W also goes up and down)", "(W também sobe e desce)"},
+{"Ver a mi jugador", "Show my player", "Ver meu jogador"},
+{"(tercera persona)", "(third person)", "(terceira pessoa)"},
+{"WASD: moverse. Espacio: subir. Shift: bajar. Solo en tus propios mundos.", "WASD: move. Space: up. Shift: down. Only in your own worlds.", "WASD: mover. Espaço: subir. Shift: descer. Só nos seus próprios mundos."},
+{"bloques/s", "blocks/s", "blocos/s"},

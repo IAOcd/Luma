@@ -36,6 +36,7 @@ add_library(Luma SHARED
     modules/hud/music.cpp
     modules/hud/debug_screen.cpp
     modules/world/minimap.cpp
+    modules/world/freecam.cpp
     modules/world/waypoints.cpp
     modules/world/map_store.cpp
     modules/world/map_look.cpp

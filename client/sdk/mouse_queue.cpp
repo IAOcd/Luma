@@ -132,6 +132,7 @@ constexpr std::uint8_t kActionWheel = 4;
 
 std::atomic<bool> g_blockWheel{false};
 std::atomic<int> g_cpsCap{0};          // 0 = sin límite
+std::atomic<bool> g_blockClicks{false};  // free cam: el jugador no rompe ni pone bloques
 bool g_dropRelease[2] = {false, false};  // se descartó el "apretar": descartar también su "soltar"
 
 void ProcessActions(bool gameHasMouse) {
@@ -143,13 +144,19 @@ void ProcessActions(bool gameHasMouse) {
         }
         const int cap = gameHasMouse ? g_cpsCap.load(std::memory_order_relaxed) : 0;
         const bool blockWheel = gameHasMouse && g_blockWheel.load(std::memory_order_relaxed);
+        const bool blockClicks = gameHasMouse && g_blockClicks.load(std::memory_order_relaxed);
         std::uint8_t* write = begin;
         for (std::uint8_t* a = begin; a + kActionSize <= end; a += kActionSize) {
             bool keep = true;
             const std::uint8_t type = a[8];
             const bool button = type == kActionLeft || type == kActionRight;
             const int index = type == kActionRight ? 1 : 0;
-            if (button && a[9] != 0 && a[kMarkOffset] != kMark) {
+            if (blockClicks && (button || type == 3) && a[9] != 0) {
+                // Free cam: descartar el "apretar". El "soltar" sí pasa (un
+                // soltar sin apretar no hace nada, y así ningún botón queda
+                // apretado para siempre si lo tenías apretado al activarlo).
+                keep = false;
+            } else if (button && a[9] != 0 && a[kMarkOffset] != kMark) {
                 // Un clic nuevo. ¿Pasa el límite de CPS?
                 const auto which = index == 1 ? clicks::Button::Right : clicks::Button::Left;
                 if (cap > 0 && clicks::PerSecond(which) >= cap) {
@@ -187,7 +194,8 @@ std::uintptr_t __fastcall ProcessQueueDetour(void* a, void* b, void* c) {
     }
     g_wasMenuOpen = menuOpen;
     if (active && !menuOpen &&
-        (clicks::Wanted() || g_blockWheel.load(std::memory_order_relaxed) || g_cpsCap.load(std::memory_order_relaxed) > 0)) {
+        (clicks::Wanted() || g_blockWheel.load(std::memory_order_relaxed) || g_cpsCap.load(std::memory_order_relaxed) > 0 ||
+         g_blockClicks.load(std::memory_order_relaxed))) {
         ProcessActions(mouse::GameMouseState() != 0);
     }
     return g_original(a, b, c);
@@ -242,6 +250,10 @@ bool Available() {
 
 void SetBlockWheel(bool block) {
     g_blockWheel.store(block);
+}
+
+void SetBlockClicks(bool block) {
+    g_blockClicks.store(block);
 }
 
 void SetCpsCap(int cps) {

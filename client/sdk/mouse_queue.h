@@ -44,6 +44,9 @@ bool Available();
 //    los vea (0 = sin límite).
 void SetBlockWheel(bool block);
 void SetCpsCap(int cps);
+// Free cam: descartar los clics (izquierdo, derecho y central) mientras
+// juegas, para que el jugador congelado no rompa ni ponga bloques.
+void SetBlockClicks(bool block);
 
 // Antes de descargar Luma.
 void BeginUnload();

@@ -96,6 +96,7 @@ RECT g_gameClipRect{};
 constexpr UINT kHoldSyncMessage = WM_APP + 0x4C4D;
 constexpr UINT kToggleMenuMessage = WM_APP + 0x4C4E;
 constexpr UINT kTapKeyMessage = WM_APP + 0x4C4F;
+constexpr UINT kFreecamReleaseMessage = WM_APP + 0x4C50;
 
 struct Hold {
     std::atomic<bool> enabled{false};   // el módulo está activo
@@ -108,6 +109,16 @@ Hold g_holds[2];
 std::atomic<bool> g_holdsSuspended{false};  // en un menú del juego o sin foco
 std::atomic<bool> g_dropPaused{false};      // Ctrl let go for a moment: you're dropping an item (Q)
 std::atomic<bool> g_wheelCapture{false};
+// Free cam: las teclas de movimiento son de la cámara, no del jugador.
+std::atomic<bool> g_freecamKeys{false};
+constexpr int kFreecamKeys[] = {'W', 'A', 'S', 'D', VK_SPACE, VK_SHIFT, VK_LSHIFT, VK_RSHIFT,
+                                VK_CONTROL, VK_LCONTROL, VK_RCONTROL};
+bool IsFreecamKey(int vk) {
+    for (int k : kFreecamKeys) {
+        if (k == vk) return true;
+    }
+    return false;
+}
 std::atomic<int> g_wheelDelta{0};  // en unidades de WHEEL_DELTA (120 = un paso)
 
 // ¿La tecla "vk" que preguntan es la sostenida? Ctrl, Shift y Alt tienen
@@ -325,6 +336,15 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         SendKeyToGame(window, static_cast<int>(wParam), false);
         return 0;
     }
+    if (message == kFreecamReleaseMessage) {
+        // Free cam: "soltarle" al juego las teclas de movimiento (si tenías W
+        // apretada al activarlo, el jugador seguiría caminando para siempre).
+        constexpr int kRelease[] = {'W', 'A', 'S', 'D', VK_SPACE, VK_SHIFT, VK_CONTROL};
+        for (int vk : kRelease) {
+            SendKeyToGame(window, vk, false);
+        }
+        return 0;
+    }
     if (message == kToggleMenuMessage) {
         overlay::ToggleMenu();
         return 0;
@@ -344,6 +364,11 @@ LRESULT CALLBACK LumaWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         if (message == WM_MOUSEWHEEL && g_wheelCapture.load(std::memory_order_relaxed)) {
             g_wheelDelta.fetch_add(GET_WHEEL_DELTA_WPARAM(wParam));
             return 0;  // el juego no cambia de ranura mientras haces zoom
+        }
+        if (g_freecamKeys.load(std::memory_order_relaxed) &&
+            (message == WM_KEYDOWN || message == WM_KEYUP || message == WM_SYSKEYDOWN || message == WM_SYSKEYUP) &&
+            IsFreecamKey(static_cast<int>(wParam))) {
+            return 0;  // free cam: el jugador no camina (ya se le "soltaron" al activarlo)
         }
         if (HandleHoldKey(message, wParam, lParam)) {
             return 0;
@@ -448,9 +473,14 @@ SHORT ApplyHolds(int vk, SHORT state, void* returnAddress) {
     return state;
 }
 
+// Free cam: si el juego pregunta por una tecla de movimiento, "no está apretada".
+bool BlockFreecamKey(int vk, void* returnAddress) {
+    return g_freecamKeys.load(std::memory_order_relaxed) && IsFreecamKey(vk) && !IsLumaAddress(returnAddress);
+}
+
 SHORT WINAPI GetAsyncKeyStateDetour(int vk) {
     hooks::ActiveCallGuard guard;
-    if (BlockKeyStateForCaller(_ReturnAddress())) {
+    if (BlockKeyStateForCaller(_ReturnAddress()) || BlockFreecamKey(vk, _ReturnAddress())) {
         return 0;
     }
     return ApplyHolds(vk, g_originalGetAsyncKeyState(vk), _ReturnAddress());
@@ -458,7 +488,7 @@ SHORT WINAPI GetAsyncKeyStateDetour(int vk) {
 
 SHORT WINAPI GetKeyStateDetour(int vk) {
     hooks::ActiveCallGuard guard;
-    if (BlockKeyStateForCaller(_ReturnAddress())) {
+    if (BlockKeyStateForCaller(_ReturnAddress()) || BlockFreecamKey(vk, _ReturnAddress())) {
         return 0;
     }
     return ApplyHolds(vk, g_originalGetKeyState(vk), _ReturnAddress());
@@ -693,6 +723,13 @@ void SetWheelCapture(bool capture) {
 void TapKey(int vk) {
     if (g_window != nullptr) {
         PostMessageW(g_window, kTapKeyMessage, static_cast<WPARAM>(vk), 0);
+    }
+}
+
+void SetFreecamKeys(bool block) {
+    const bool was = g_freecamKeys.exchange(block);
+    if (block && !was && g_window != nullptr) {
+        PostMessageW(g_window, kFreecamReleaseMessage, 0, 0);
     }
 }
 

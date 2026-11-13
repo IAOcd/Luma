@@ -46,6 +46,17 @@ private:
     unsigned long previous_ = 0;
 };
 
+// V-Sync off: FPS sin el límite del monitor (ver render/dx12_hooks.cpp).
+class VSyncOff : public Module {
+public:
+    VSyncOff();
+    const char* IconSvg() const override;
+    void OnEnable() override;
+    void OnDisable() override;
+    bool HasSettings() const override { return true; }
+    bool DrawSettings() override;
+};
+
 class TimerResolution : public Module {
 public:
     TimerResolution();

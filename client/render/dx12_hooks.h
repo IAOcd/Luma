@@ -20,6 +20,10 @@
 // =============================================================================
 #pragma once
 
+// (Declaradas por DirectX; acá alcanza con saber que existen.)
+struct ID3D12CommandQueue;
+struct IDXGISwapChain;
+
 namespace luma::render::dx12 {
 
 // Encuentra las funciones y crea los hooks (desactivados; se activan con
@@ -30,5 +34,22 @@ bool CreateHooks();
 // Marca que Luma se está descargando: a partir de aquí los detours solo
 // llaman a la función original, sin tocar nada nuestro.
 void BeginUnload();
+
+// --- V-Sync off (ver dx12_hooks.cpp) ---------------------------------------------------
+// Con true: presentar sin esperar al monitor (y con tearing, si se puede).
+void SetUncapped(bool on);
+// ¿El juego dejó de crear swapchains? (al arrancar crea y tira varias; el
+// overlay espera a esto para engancharse)
+bool SwapchainSettled();
+// La cola de comandos con la que el juego creó esa swapchain (con AddRef: hay
+// que hacerle Release), o nullptr si no la vimos crearse (Luma llegó tarde).
+ID3D12CommandQueue* QueueFor(IDXGISwapChain* swapchain);
+enum class TearingState {
+    Active,       // el swapchain del juego tiene el permiso: FPS sin límite
+    TooLate,      // Luma se cargó con el juego ya abierto: hay que reiniciarlo desde el launcher
+    Failed,       // el juego no aceptó el permiso (se creó sin él)
+    Unsupported,  // la placa de video o Windows no lo soportan
+};
+TearingState Tearing();
 
 }  // namespace luma::render::dx12

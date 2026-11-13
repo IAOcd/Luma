@@ -14,6 +14,7 @@
 
 #include "core/logger.h"
 #include "perf/frame_stats.h"
+#include "render/dx12_hooks.h"
 #include "render/icons.h"
 #include "render/ui.h"
 
@@ -115,6 +116,55 @@ void ProcessPriority::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 //  Timer de 1 ms
 // =============================================================================
+
+// =============================================================================
+//  V-Sync off
+// =============================================================================
+//  El juego ya pide no esperar al monitor (gfx_vsync:0), pero sin el permiso
+//  de "tearing" Windows igual frena los FPS. render/dx12_hooks le da ese
+//  permiso al swapchain del juego cuando se crea, y este módulo presenta sin
+//  esperar. El permiso solo se puede dar al crearlo: si Luma se cargó con el
+//  juego ya abierto, hay que reiniciar Minecraft desde el launcher de Luma.
+
+VSyncOff::VSyncOff()
+    : Module("opt_vsync", "V-Sync off",
+             "Removes the monitor's FPS limit (V-Sync). For it to fully work, open Minecraft from the Luma "
+             "launcher. You may see some \"tearing\" (horizontal cuts) when turning the camera.",
+             Category::Performance) {}
+
+const char* VSyncOff::IconSvg() const {
+    return render::icons::kZap;
+}
+
+void VSyncOff::OnEnable() {
+    render::dx12::SetUncapped(true);
+    log::Info("V-Sync off: activado.");
+}
+
+void VSyncOff::OnDisable() {
+    render::dx12::SetUncapped(false);
+    log::Info("V-Sync off: desactivado.");
+}
+
+bool VSyncOff::DrawSettings() {
+    switch (render::dx12::Tearing()) {
+        case render::dx12::TearingState::Active:
+            render::ui::Hint("Working: the game can show frames without waiting for the monitor.");
+            break;
+        case render::dx12::TearingState::TooLate:
+            render::ui::Hint("Minecraft was already open when Luma loaded. Close it and open it with the Luma launcher's "
+                     "PLAY button so the limit is fully removed.");
+            break;
+        case render::dx12::TearingState::Failed:
+            render::ui::Hint("The game didn't accept it this time. Restart Minecraft from the Luma launcher.");
+            break;
+        case render::dx12::TearingState::Unsupported:
+            render::ui::Hint("Your graphics card or Windows version doesn't support it.");
+            break;
+    }
+    render::ui::Hint("Measure it with the benchmark (Performance) before and after: if it doesn't help, turn it off.");
+    return false;
+}
 
 TimerResolution::TimerResolution()
     : Module("opt_timer", "1 ms timer",

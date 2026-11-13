@@ -24,6 +24,10 @@ bool OnPresent(IDXGISwapChain* swapchain);
 // Antes y después de que el juego cambie el tamaño de la swapchain.
 void BeforeResize(IDXGISwapChain* swapchain);
 void AfterResize(IDXGISwapChain* swapchain, HRESULT result);
+// El juego va a crear OTRA swapchain (render/dx12_hooks): soltar la vieja.
+void BeforeSwapchainReplaced(HWND window);
+// La ventana donde dibuja el overlay (nullptr si todavía no está listo).
+HWND GameWindowForOverlay();
 
 // Cada vez que el juego manda trabajo a la GPU (para descubrir su cola).
 void CaptureQueue(ID3D12CommandQueue* queue);

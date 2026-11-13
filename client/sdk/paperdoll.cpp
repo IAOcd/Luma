@@ -198,6 +198,7 @@ std::atomic<unsigned> g_crosshairFrames{0};
 bool g_loggedUnreadable = false;
 char g_seenNames[24][40]{};
 int g_seenCount = 0;
+std::atomic<bool> g_uiReady{false};  // ¿el juego ya mostró una pantalla "de verdad"? (no de carga)
 
 void NoteScreen(std::uintptr_t root) {
     char name[40]{};
@@ -208,6 +209,10 @@ void NoteScreen(std::uintptr_t root) {
             log::Info("SDK: the game drew a screen whose name couldn't be read.");
         }
         return;
+    }
+    if (!g_uiReady.load(std::memory_order_relaxed) && std::strstr(name, "loading") == nullptr &&
+        std::strstr(name, "progress") == nullptr && std::strstr(name, "splash") == nullptr) {
+        g_uiReady.store(true);
     }
     if (std::strcmp(name, "hud_crosshair_screen") == 0) g_crosshairFrames.fetch_add(1, std::memory_order_relaxed);
     if (std::strstr(name, "death") != nullptr || std::strstr(name, "respawn") != nullptr) {
@@ -314,6 +319,10 @@ float RootWidth() {
 
 bool Found() {
     return g_found.load(std::memory_order_relaxed);
+}
+
+bool GameUiReady() {
+    return g_uiReady.load(std::memory_order_relaxed);
 }
 
 void BeginUnload() {

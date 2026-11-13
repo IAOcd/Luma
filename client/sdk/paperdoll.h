@@ -59,6 +59,11 @@ unsigned HudScreenFrames();
 unsigned CrosshairScreenFrames();
 
 // Devuelve el muñeco a su lugar original (al desactivar o al descargar Luma).
+// ¿El juego ya mostró alguna pantalla que no sea de carga? (la de inicio, el
+// HUD...). El overlay espera a esto si Luma se cargó con el juego recién
+// abierto (ver render/overlay.cpp).
+bool GameUiReady();
+
 void BeginUnload();
 
 }  // namespace luma::sdk::paperdoll

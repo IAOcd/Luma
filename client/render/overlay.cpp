@@ -25,6 +25,9 @@
 // =============================================================================
 #include "render/overlay.h"
 
+#include "render/dx12_hooks.h"
+#include "sdk/paperdoll.h"
+
 #include <d3d12.h>
 #include <dxgi1_4.h>
 #include <wrl/client.h>
@@ -119,6 +122,7 @@ struct Renderer {
     bool win32Backend = false;
     bool dx12Backend = false;
     bool resizing = false;
+    bool replaced = false;  // el juego está creando otra swapchain: soltamos la vieja (ver BeforeSwapchainReplaced)
     bool loggedOtherSwapchain = false;
 };
 
@@ -345,6 +349,18 @@ bool Initialize(IDXGISwapChain* swapchain) {
         return false;
     }
 
+    // Si vimos al juego CREAR esta swapchain, sabemos su cola exacta: es la
+    // única con la que se pueden tocar sus imágenes (con otra, DirectX 12 da
+    // el dispositivo por perdido). La usamos en lugar de la capturada.
+    if (ID3D12CommandQueue* own = dx12::QueueFor(swapchain)) {
+        ID3D12CommandQueue* previous = g_queue.exchange(own);  // (own ya trae su AddRef)
+        if (previous != nullptr && previous != own) {
+            previous->Release();
+            log::Info("Overlay: se usa la cola con la que el juego creó la swapchain.");
+        } else if (previous == own) {
+            own->Release();  // (era la misma: una referencia de más)
+        }
+    }
     // Comprobar que la cola capturada pertenece al mismo dispositivo que la
     // swapchain. Si no, la descartamos y esperamos a capturar otra.
     ID3D12CommandQueue* queue = g_queue.load();
@@ -542,6 +558,21 @@ bool OnPresent(IDXGISwapChain* swapchain) {
         if (g_queue.load(std::memory_order_acquire) == nullptr) {
             return false;  // Todavía no sabemos qué cola usa el juego.
         }
+        // Si Luma se cargó con el juego recién abierto, el juego crea y tira
+        // varias swapchains al arrancar. Engancharnos a una intermedia la deja
+        // "agarrada" y el juego no puede crear la siguiente (pantalla negra).
+        // Esperamos a que deje de crear swapchains un rato.
+        //
+        // Y además: mientras arranca, el juego mide cómo anda DirectX 12 y, si
+        // ve un tirón (nuestro primer frame tarda ~150 ms: fuentes, texturas),
+        // se pasa a DirectX 11, donde el overlay no dibuja. Por eso esperamos
+        // a que muestre su primera pantalla "de verdad" (la de inicio o el
+        // HUD), o 45 segundos si no podemos saberlo.
+        static const ULONGLONG startedAt = GetTickCount64();
+        const bool uiReady = sdk::paperdoll::GameUiReady() || GetTickCount64() - startedAt > 45000;
+        if (!dx12::SwapchainSettled() || !uiReady) {
+            return false;
+        }
         std::lock_guard lock(StateMutex());
         if (g_state.load() == State::Waiting) {
             Initialize(swapchain);
@@ -550,6 +581,32 @@ bool OnPresent(IDXGISwapChain* swapchain) {
         return true;
     }
     if (state != State::Ready) {
+        return false;
+    }
+    if (swapchain != g_r.swapchain && g_r.replaced) {
+        // La swapchain nueva del juego: si es del mismo dispositivo, la
+        // adoptamos (como tras un cambio de tamaño).
+        std::lock_guard lock(StateMutex());
+        ComPtr<IDXGISwapChain3> swapchain3;
+        ComPtr<ID3D12Device> device;
+        const bool isDx12 = SUCCEEDED(swapchain->QueryInterface(IID_PPV_ARGS(&swapchain3))) &&
+                            SUCCEEDED(swapchain->GetDevice(IID_PPV_ARGS(&device)));
+        bool sameDevice = isDx12 && device == g_r.device;
+        // Su cola tiene que ser la nuestra (si no, no podemos tocar sus imágenes).
+        if (ID3D12CommandQueue* own = dx12::QueueFor(swapchain)) {
+            sameDevice = sameDevice && own == g_queue.load();
+            own->Release();
+        }
+        const bool created = sameDevice && CreateDeviceResources(swapchain3.Get());
+        if (created) {
+            g_r.swapchain = swapchain;
+            g_r.replaced = false;
+            log::Info("Overlay: el juego cambió de swapchain; seguimos en la nueva ({}x{}).", g_r.width, g_r.height);
+        } else if (!g_r.loggedOtherSwapchain) {
+            g_r.loggedOtherSwapchain = true;
+            log::Warn("Overlay: no se pudo pasar a la swapchain nueva (DX12 {}, mismo dispositivo {}, recursos {}).",
+                      isDx12, sameDevice, created);
+        }
         return false;
     }
     if (swapchain != g_r.swapchain) {
@@ -588,6 +645,21 @@ void BeforeResize(IDXGISwapChain* swapchain) {
     // viejos, así que soltamos las nuestras.
     DestroyDeviceResources();
     g_r.resizing = true;
+}
+
+HWND GameWindowForOverlay() {
+    return g_state.load() == State::Ready ? g_r.window : nullptr;
+}
+
+void BeforeSwapchainReplaced(HWND window) {
+    if (g_state.load() != State::Ready || window != g_r.window) {
+        return;  // (otra ventana: no es la nuestra)
+    }
+    std::lock_guard lock(StateMutex());
+    // Soltar todo lo nuestro de la swapchain vieja (buffers incluidos): si no,
+    // el juego no puede crear otra en la misma ventana ("acceso denegado").
+    DestroyDeviceResources();
+    g_r.replaced = true;
 }
 
 void AfterResize(IDXGISwapChain* swapchain, HRESULT result) {

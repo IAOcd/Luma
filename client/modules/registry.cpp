@@ -79,6 +79,7 @@ void Manager::RegisterAll() {
     // Rendimiento
     modules_.push_back(std::make_unique<performance::PerfOverlay>());
     modules_.push_back(std::make_unique<performance::ProcessPriority>());
+    modules_.push_back(std::make_unique<performance::VSyncOff>());
     modules_.push_back(std::make_unique<performance::TimerResolution>());
     modules_.push_back(std::make_unique<performance::NoEcoQos>());
     modules_.push_back(std::make_unique<performance::RenderThreadPriority>());

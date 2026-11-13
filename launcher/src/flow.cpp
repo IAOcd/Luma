@@ -30,10 +30,41 @@ constexpr std::wstring_view kGdkConfigFile = L"MicrosoftGame.config";
 // la época UWP: el nombre se conservó al pasar a GDK).
 constexpr const wchar_t* kPackageFamily = L"Microsoft.MinecraftUWP_8wekyb3d8bbwe";
 
-// Cuánto esperar a que el juego abra su ventana, y cuánto más después (el
-// juego muestra la ventana antes de terminar de arrancar).
+// Cuánto esperar a que aparezca el juego.
+// Cuando el launcher ABRE el juego, inyecta Luma apenas el juego crea su
+// ventana (aunque todavía sea invisible), sin esperar a que termine de
+// arrancar: así Luma está cargada ANTES de que el juego cree su swapchain (la
+// cadena de imágenes que van a la pantalla). Hace falta para el módulo
+// "V-Sync off": el permiso de "tearing" solo se le puede dar al swapchain en
+// el momento en que se crea (ver client/render/dx12_hooks.cpp).
+// OJO: al abrir el juego, Windows arranca primero un Minecraft.Windows.exe
+// INTERMEDIO que se cierra solo y después el de verdad. Por eso no alcanza
+// con que aparezca el proceso: esperamos su ventana (clase "Bedrock"), que
+// solo tiene el de verdad. Se revisa seguido (cada 20 ms).
 constexpr auto kGameOpenTimeout = std::chrono::seconds(120);
-constexpr auto kAfterWindowDelay = std::chrono::seconds(6);
+constexpr auto kProcessPoll = std::chrono::milliseconds(20);
+
+// ¿Ese proceso ya creó la ventana del juego? (clase "Bedrock", visible o no)
+bool HasGameWindow(DWORD pid) {
+    struct Search {
+        DWORD pid;
+        bool found;
+    } search{pid, false};
+    EnumWindows(
+        [](HWND hwnd, LPARAM param) -> BOOL {
+            auto* s = reinterpret_cast<Search*>(param);
+            DWORD owner = 0;
+            GetWindowThreadProcessId(hwnd, &owner);
+            wchar_t name[32]{};
+            if (owner == s->pid && GetClassNameW(hwnd, name, 32) > 0 && std::wcscmp(name, L"Bedrock") == 0) {
+                s->found = true;
+                return FALSE;
+            }
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&search));
+    return search.found;
+}
 
 fs::path LauncherDir() {
     wchar_t buffer[MAX_PATH * 2];
@@ -49,27 +80,6 @@ fs::path LogsDir() {
     }
     CoTaskMemFree(raw);
     return dir;
-}
-
-// ¿El proceso ya tiene una ventana visible con título? (señal de que arrancó)
-bool HasVisibleWindow(DWORD pid) {
-    struct Search {
-        DWORD pid;
-        bool found;
-    } search{pid, false};
-    EnumWindows(
-        [](HWND hwnd, LPARAM param) -> BOOL {
-            auto* s = reinterpret_cast<Search*>(param);
-            DWORD owner = 0;
-            GetWindowThreadProcessId(hwnd, &owner);
-            if (owner == s->pid && IsWindowVisible(hwnd) && GetWindowTextLengthW(hwnd) > 0) {
-                s->found = true;
-                return FALSE;  // dejar de buscar
-            }
-            return TRUE;
-        },
-        reinterpret_cast<LPARAM>(&search));
-    return search.found;
 }
 
 // Le pide a Windows que abra Minecraft. Primero con el enlace "minecraft:"
@@ -228,20 +238,22 @@ void PlayFlow::Run(const std::vector<std::string>& supported, bool force) {
         const auto deadline = std::chrono::steady_clock::now() + kGameOpenTimeout;
         bool ready = false;
         while (!ready && std::chrono::steady_clock::now() < deadline) {
-            if (!SleepUnlessQuitting(quitting_, std::chrono::milliseconds(500))) {
+            if (!SleepUnlessQuitting(quitting_, kProcessPoll)) {
                 return;
             }
             pids = FindProcessesByName(kGameExe);
-            ready = !pids.empty() && HasVisibleWindow(pids.front());
+            for (DWORD candidate : pids) {
+                if (HasGameWindow(candidate)) {
+                    pids = {candidate};  // el de verdad (no el intermedio)
+                    ready = true;
+                    break;
+                }
+            }
         }
         if (!ready) {
             Set(PlayState::Failed, "error.game_timeout");
             return;
         }
-        if (!SleepUnlessQuitting(quitting_, kAfterWindowDelay)) {
-            return;
-        }
-        pids = FindProcessesByName(kGameExe);
         if (pids.empty()) {
             Set(PlayState::Failed, "error.game_closed");
             return;

@@ -837,3 +837,12 @@
 {"(tercera persona)", "(third person)", "(terceira pessoa)"},
 {"WASD: moverse. Espacio: subir. Shift: bajar. Solo en tus propios mundos.", "WASD: move. Space: up. Shift: down. Only in your own worlds.", "WASD: mover. Espaço: subir. Shift: descer. Só nos seus próprios mundos."},
 {"bloques/s", "blocks/s", "blocos/s"},
+
+// --- V-Sync off -------------------------------------------------------------------
+{"V-Sync desactivado", "V-Sync off", "V-Sync desativado"},
+{"Quita el límite de FPS del monitor (V-Sync). Para que funcione del todo, abre Minecraft desde el launcher de Luma. Puede verse algo de \"tearing\" (cortes horizontales) al mover la cámara.", "Removes the monitor's FPS limit (V-Sync). For it to fully work, open Minecraft from the Luma launcher. You may see some \"tearing\" (horizontal cuts) when turning the camera.", "Remove o limite de FPS do monitor (V-Sync). Para funcionar por completo, abra o Minecraft pelo launcher do Luma. Pode aparecer algum \"tearing\" (cortes horizontais) ao mover a câmera."},
+{"Funciona: el juego puede mostrar frames sin esperar al monitor.", "Working: the game can show frames without waiting for the monitor.", "Funcionando: o jogo pode mostrar quadros sem esperar o monitor."},
+{"Minecraft ya estaba abierto cuando se cargó Luma. Ciérralo y ábrelo con el botón JUGAR del launcher de Luma para quitar el límite del todo.", "Minecraft was already open when Luma loaded. Close it and open it with the Luma launcher's PLAY button so the limit is fully removed.", "O Minecraft já estava aberto quando o Luma carregou. Feche e abra pelo botão JOGAR do launcher do Luma para remover o limite por completo."},
+{"El juego no lo aceptó esta vez. Reinicia Minecraft desde el launcher de Luma.", "The game didn't accept it this time. Restart Minecraft from the Luma launcher.", "O jogo não aceitou desta vez. Reinicie o Minecraft pelo launcher do Luma."},
+{"Tu placa de video o tu versión de Windows no lo soportan.", "Your graphics card or Windows version doesn't support it.", "Sua placa de vídeo ou versão do Windows não suporta."},
+{"Mídelo con el benchmark (Rendimiento) antes y después: si no ayuda, apágalo.", "Measure it with the benchmark (Performance) before and after: if it doesn't help, turn it off.", "Meça com o benchmark (Desempenho) antes e depois: se não ajudar, desligue."},

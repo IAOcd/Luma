@@ -35,4 +35,9 @@ void Draw(ImDrawList* draw, ImVec2 display);
 // Lyric Flow turned off (or the module): remove the letters from the world.
 void Stop();
 
+// Pinned: every new line appears in the same place (instead of in front of
+// where you look). The key in the settings flips it (also from here).
+bool Pinned();
+void SetPinned(bool pinned);
+
 }  // namespace luma::render::lyricflow

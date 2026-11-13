@@ -950,6 +950,20 @@ bool DrawLyricsSettings() {
         changed |= ui::Slider("Height (blocks)", &s.flowHeight, -4.0f, 40.0f, "%.0f");
         changed |= ui::Slider("Word size (blocks)", &s.flowSize, 0.5f, 6.0f, "%.1f");
         if (s.flowLayout == 0) changed |= ui::Slider("Tilt (degrees)", &s.flowTilt, 0.0f, 30.0f, "%.0f");
+        ui::Section("Lyric Flow: place");
+        changed |= ui::Slider("Direction (degrees)", &s.flowAngle, -180.0f, 180.0f, "%.0f");
+        ui::Hint("Where around you the lines appear: 0 = in front, negative = to the left, positive = to the right.");
+        changed |= ui::Slider("Side to side", &s.flowSpread, 0.0f, 0.5f, "%.2f");
+        ui::Hint("Each line appears a little to one side and the next to the other: how much (0 = always in the middle).");
+        changed |= ui::Slider("Turn (degrees)", &s.flowTurn, -90.0f, 90.0f, "%.0f");
+        changed |= ui::Slider("Rotation (degrees)", &s.flowRoll, -45.0f, 45.0f, "%.0f");
+        ui::Hint("Turn: the sign turns sideways (0 = facing you). Rotation: the whole line leans, like a crooked sign.");
+        ui::Key("Pin the lyrics", &s.flowPinKey, "(press again to let them follow you)");
+        changed |= ui::Choice("Pin them", &s.flowPinTarget, {"Where the last line was", "Where I'm looking"});
+        if (render::lyricflow::Pinned()) {
+            ui::Hint("Pinned now: every line appears in the same place.");
+            if (ui::Button("Unpin")) render::lyricflow::SetPinned(false);
+        }
         ui::Section("Lyric Flow: letters");
         {
             // The font list (a combo with every font of render/lyric_flow.h).

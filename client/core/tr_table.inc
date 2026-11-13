@@ -804,3 +804,22 @@
 //  Luma menu (render/menu.cpp)
 // =============================================================================
 #include "core/tr_menu.inc"
+
+// --- Lyric Flow: place and pinning ---
+{"Lyric Flow: lugar", "Lyric Flow: place", "Lyric Flow: lugar"},
+{"Dirección (grados)", "Direction (degrees)", "Direção (graus)"},
+{"Dónde aparecen las líneas alrededor tuyo: 0 = al frente, negativo = a la izquierda, positivo = a la derecha.", "Where around you the lines appear: 0 = in front, negative = to the left, positive = to the right.", "Onde as linhas aparecem ao seu redor: 0 = na frente, negativo = à esquerda, positivo = à direita."},
+{"De lado a lado", "Side to side", "De lado a lado"},
+{"Cada línea aparece un poco hacia un lado y la siguiente hacia el otro: cuánto (0 = siempre en el medio).", "Each line appears a little to one side and the next to the other: how much (0 = always in the middle).", "Cada linha aparece um pouco para um lado e a próxima para o outro: quanto (0 = sempre no meio)."},
+{"Giro (grados)", "Turn (degrees)", "Giro (graus)"},
+{"Rotación (grados)", "Rotation (degrees)", "Rotação (graus)"},
+{"Giro: el cartel gira hacia un costado (0 = mirándote). Rotación: toda la línea se inclina, como un cartel torcido.", "Turn: the sign turns sideways (0 = facing you). Rotation: the whole line leans, like a crooked sign.", "Giro: a placa vira de lado (0 = olhando para você). Rotação: a linha inteira se inclina, como uma placa torta."},
+{"Fijar las letras", "Pin the lyrics", "Fixar as letras"},
+{"(apriétala otra vez para que te sigan)", "(press again to let them follow you)", "(aperte de novo para que sigam você)"},
+{"Fijarlas", "Pin them", "Fixá-las"},
+{"Donde estuvo la última línea", "Where the last line was", "Onde estava a última linha"},
+{"Donde estoy mirando", "Where I'm looking", "Onde estou olhando"},
+{"Fijadas ahora: cada línea aparece en el mismo lugar.", "Pinned now: every line appears in the same place.", "Fixadas agora: cada linha aparece no mesmo lugar."},
+{"Soltar", "Unpin", "Soltar"},
+{"Letras fijadas aquí", "Lyrics pinned here", "Letras fixadas aqui"},
+{"Letras sueltas: te siguen otra vez", "Lyrics unpinned: they follow you again", "Letras soltas: seguem você de novo"},

@@ -523,7 +523,9 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
                         {"outlineColor", {s.flowOutlineColor[0], s.flowOutlineColor[1], s.flowOutlineColor[2]}}, {"outlineAlpha", s.flowOutlineAlpha},
                         {"shadow", s.flowShadow}, {"font", s.flowFont}, {"bold", s.flowBold},
                         {"resolution", s.flowResolution}, {"letterSpacing", s.flowLetterSpacing},
-                        {"wordSpacing", s.flowWordSpacing}, {"leaveTime", s.flowLeaveTime}, {"pauseHide", s.flowPauseHide}};
+                        {"wordSpacing", s.flowWordSpacing}, {"leaveTime", s.flowLeaveTime}, {"pauseHide", s.flowPauseHide},
+                        {"angle", s.flowAngle}, {"spread", s.flowSpread}, {"turn", s.flowTurn}, {"roll", s.flowRoll},
+                        {"pinKey", s.flowPinKey}, {"pinTarget", s.flowPinTarget}};
     out["efficiency"] = {{"on", s.efficiency}, {"lyricAnim", s.effLyricAnim}, {"uiAnim", s.effUiAnim}, {"spin", s.effSpin}, {"songFade", s.effSongFade},
                          {"marquee", s.effMarquee}, {"albumColors", s.effAlbumColors}, {"hdCovers", s.effHdCovers},
                          {"prefetch", s.effPrefetch}, {"visualizer", s.effVisualizer}};
@@ -638,6 +640,12 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
         s.flowWordSpacing = std::clamp(f.value("wordSpacing", d.flowWordSpacing), 0.1f, 1.5f);
         s.flowLeaveTime = std::clamp(f.value("leaveTime", d.flowLeaveTime), 0.15f, 1.5f);
         s.flowPauseHide = std::clamp(f.value("pauseHide", d.flowPauseHide), 0.0f, 120.0f);
+        s.flowAngle = std::clamp(f.value("angle", d.flowAngle), -180.0f, 180.0f);
+        s.flowSpread = std::clamp(f.value("spread", d.flowSpread), 0.0f, 0.5f);
+        s.flowTurn = std::clamp(f.value("turn", d.flowTurn), -90.0f, 90.0f);
+        s.flowRoll = std::clamp(f.value("roll", d.flowRoll), -45.0f, 45.0f);
+        s.flowPinKey = f.value("pinKey", d.flowPinKey);
+        s.flowPinTarget = std::clamp(f.value("pinTarget", d.flowPinTarget), 0, 1);
     } else {
         s.lyricFlow = d.lyricFlow;
     }

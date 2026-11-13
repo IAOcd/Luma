@@ -43,8 +43,13 @@
 #include "render/music.h"
 #include "render/rainbow.h"
 #include "render/theme.h"
+#include "core/tr.h"
+#include "render/notifications.h"
+#include "render/overlay.h"
+#include "sdk/blocks.h"
 #include "sdk/camera.h"
 #include "sdk/draw3d.h"
+#include "sdk/mouse_grab.h"
 
 namespace luma::render::lyricflow {
 
@@ -94,6 +99,27 @@ struct FlowLine {
 FlowLine g_current;
 FlowLine g_previous;
 int g_lineCount = 0;
+
+// WHERE A LINE GOES. "base" = the sign's horizontal direction before the
+// "Turn" setting (so turning can change without moving the place).
+struct Place {
+    bool ok = false;
+    float offset[3]{};  // from the camera (the sky mode keeps only this direction)
+    float anchor[3]{};  // in the world
+    float base[3]{};    // the sign's horizontal direction, facing you
+};
+Place g_last;                  // where the last line was written
+Place g_pin;                   // pinned: every line goes here (g_pin.ok)
+std::uint32_t g_pinWorld = 0;  // the world it was pinned in (another world: unpinned)
+bool g_pinKeyWasDown = true;   // (true: a key held while Luma loads isn't a press)
+
+// The direction v turned by "deg" degrees around the vertical.
+void TurnAround(const float v[3], float deg, float out[3]) {
+    const float t = deg * kDegToRad, c = std::cos(t), sn = std::sin(t);
+    out[0] = v[0] * c - v[2] * sn;
+    out[1] = v[1];
+    out[2] = v[0] * sn + v[2] * c;
+}
 bool g_sent = false;  // did we hand shapes to draw3d (to clear them once when stopping)
 
 float Hash01(std::uint32_t a, std::uint32_t b) {
@@ -308,13 +334,29 @@ void BuildLine(FlowLine& f, const lyrics::Result& ly, int index, std::uint32_t t
     float pos[3], flat[3];
     if (!FlatView(pos, flat)) return;
     const lyrics::Line& line = ly.lines[static_cast<std::size_t>(index)];
-    f.right[0] = -flat[2];
-    f.right[1] = 0.0f;
-    f.right[2] = flat[0];
-    const float side = (g_lineCount++ % 2 == 0 ? -1.0f : 1.0f) * s.flowDistance * 0.12f;
-    for (int k = 0; k < 3; ++k) f.offset[k] = flat[k] * s.flowDistance + f.right[k] * side;
-    f.offset[1] = s.flowHeight;
-    for (int k = 0; k < 3; ++k) f.anchor[k] = pos[k] + f.offset[k];
+    Place where;
+    if (g_pin.ok) {
+        where = g_pin;  // pinned: always the same place
+    } else {
+        // "Direction": the line goes that many degrees to your right (or
+        // left) of where you look. Then a little to one side, then the other.
+        const float a = s.flowAngle * kDegToRad;
+        const float right0[3] = {-flat[2], 0.0f, flat[0]};
+        float dir[3];
+        for (int k = 0; k < 3; ++k) dir[k] = flat[k] * std::cos(a) + right0[k] * std::sin(a);
+        where.base[0] = -dir[2];
+        where.base[1] = 0.0f;
+        where.base[2] = dir[0];
+        const float side = (g_lineCount++ % 2 == 0 ? -1.0f : 1.0f) * s.flowDistance * s.flowSpread;
+        for (int k = 0; k < 3; ++k) where.offset[k] = dir[k] * s.flowDistance + where.base[k] * side;
+        where.offset[1] = s.flowHeight;
+        for (int k = 0; k < 3; ++k) where.anchor[k] = pos[k] + where.offset[k];
+        where.ok = true;
+    }
+    g_last = where;
+    std::memcpy(f.offset, where.offset, sizeof(f.offset));
+    std::memcpy(f.anchor, where.anchor, sizeof(f.anchor));
+    TurnAround(where.base, s.flowTurn, f.right);  // "Turn": the sign turns sideways
 
     // The words (syllables joined), or the line split by spaces.
     struct Piece {
@@ -518,6 +560,7 @@ void AddLine(std::vector<sdk::draw3d::WorldShapes>& out, const FlowLine& f, int 
         if (ms >= f.words[i].ms) singing = static_cast<int>(i);
     }
     const float motionT = static_cast<float>(now) * speed;
+    const float rollCos = std::cos(s.flowRoll * kDegToRad), rollSin = std::sin(s.flowRoll * kDegToRad);
 
     for (std::size_t i = 0; i < f.words.size(); ++i) {
         const Word& w = f.words[i];
@@ -624,8 +667,11 @@ void AddLine(std::vector<sdk::draw3d::WorldShapes>& out, const FlowLine& f, int 
             const float ly = (w.cells * 0.5f - py) * cellY + jy;
             const float rx = lx * cs - ly * sn;  // the tilt, on the sign
             const float ry = lx * sn + ly * cs;
-            for (int k = 0; k < 3; ++k) outP[k] = anchor[k] + f.right[k] * (wx + rx) + away[k] * push;
-            outP[1] += wy + ry;
+            // "Rotation": the whole line turns around its center, on the sign.
+            const float X = wx + rx, Y = wy + ry;
+            const float sx = X * rollCos - Y * rollSin, sy = X * rollSin + Y * rollCos;
+            for (int k = 0; k < 3; ++k) outP[k] = anchor[k] + f.right[k] * sx + away[k] * push;
+            outP[1] += sy;
         };
         auto addRects = [&](const std::vector<Rect>& rects, float push, float shiftX, float shiftY,
                             sdk::draw3d::WorldShapes& shape) {
@@ -748,7 +794,10 @@ void Draw(ImDrawList* draw, ImVec2 display) {
                          static_cast<std::uint64_t>(std::lround(s.flowWordSpacing * 100.0f)) * 1299709u +
                          static_cast<std::uint64_t>(std::lround(s.flowSize * 10.0f)) * 15485863u +
                          static_cast<std::uint64_t>(std::lround(s.flowTilt)) * 32452843u +
-                         static_cast<std::uint64_t>(s.flowLayout) * 49979687u;
+                         static_cast<std::uint64_t>(s.flowLayout) * 49979687u +
+                         static_cast<std::uint64_t>(std::lround(s.flowAngle + 400.0f)) * 86028121u +
+                         static_cast<std::uint64_t>(std::lround(s.flowSpread * 100.0f)) * 122949829u +
+                         static_cast<std::uint64_t>(std::lround(s.flowTurn + 400.0f)) * 179424691u;
     if (look != lastLook) {
         lastLook = look;
         g_current.index = -2;  // forces a rebuild below
@@ -782,6 +831,15 @@ void Draw(ImDrawList* draw, ImVec2 display) {
             view.forward[2] = std::cos(yaw) * std::cos(pitch);
         }
     }
+    // --- Pinning (the key in the settings) ---
+    if (g_pin.ok && g_pinWorld != sdk::blocks::WorldSession()) g_pin = Place{};  // another world: not pinned
+    {
+        const bool down = s.flowPinKey != 0 && (GetAsyncKeyState(s.flowPinKey) & 0x8000) != 0;
+        if (down && !g_pinKeyWasDown && sdk::mouse::GameMouseState() == 1 && !overlay::IsMenuOpen()) {
+            SetPinned(!g_pin.ok);
+        }
+        g_pinKeyWasDown = down;
+    }
     // How much of a line is still there (1 = all, 0 = gone), by its schedule.
     auto leaveOf = [&](const FlowLine& f) {
         if (ms >= f.leaveEnd) return 0.0f;
@@ -808,6 +866,46 @@ void Draw(ImDrawList* draw, ImVec2 display) {
 
 void Stop() {
     Clear();
+}
+
+bool Pinned() {
+    return g_pin.ok;
+}
+
+void SetPinned(bool pinned) {
+    if (!pinned) {
+        if (g_pin.ok) notify::Push(notify::Kind::Info, Tr("Lyrics unpinned: they follow you again"));
+        g_pin = Place{};
+        return;
+    }
+    const music::Settings& s = music::Get();
+    Place p;
+    if (s.flowPinTarget == 0 && g_last.ok) {
+        p = g_last;  // where the last line was
+    } else {
+        // Where you're looking now, at the chosen distance (also up or down).
+        sdk::camera::View v;
+        if (!sdk::camera::GetView(v)) return;
+        const float yaw = v.yaw * kDegToRad, pitch = v.pitch * kDegToRad;
+        const float fwd[3] = {-std::sin(yaw) * std::cos(pitch), -std::sin(pitch), std::cos(yaw) * std::cos(pitch)};
+        for (int k = 0; k < 3; ++k) {
+            p.offset[k] = fwd[k] * s.flowDistance;
+            p.anchor[k] = v.pos[k] + p.offset[k];
+        }
+        p.base[0] = -std::cos(yaw);
+        p.base[1] = 0.0f;
+        p.base[2] = -std::sin(yaw);
+        p.ok = true;
+        // The lines on screen jump there too (so you see where it is).
+        for (FlowLine* f : {&g_current, &g_previous}) {
+            std::memcpy(f->offset, p.offset, sizeof(p.offset));
+            std::memcpy(f->anchor, p.anchor, sizeof(p.anchor));
+            TurnAround(p.base, s.flowTurn, f->right);
+        }
+    }
+    g_pin = p;
+    g_pinWorld = sdk::blocks::WorldSession();
+    notify::Push(notify::Kind::Success, Tr("Lyrics pinned here"));
 }
 
 }  // namespace luma::render::lyricflow

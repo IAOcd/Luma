@@ -1,0 +1,47 @@
+{
+  "date": "13.11.2026",
+  "notes": {
+    "en": [
+      {
+        "title": "Free cam",
+        "body": "Fly the camera around your own worlds while your player stays still: F6 to turn it on (hold or toggle), WASD to move, Space and Shift to go up and down, Ctrl for speed and the mouse wheel to change it. When you leave, the view returns exactly where it was. Turns itself off on servers."
+      },
+      {
+        "title": "V-Sync off",
+        "body": "Removes the monitor's FPS limit, the one that stays even with V-Sync turned off in the game. Turn it on in Performance: it works instantly, no restart, when Minecraft was opened with the Luma launcher. You may see some tearing when turning the camera fast."
+      },
+      {
+        "title": "Luma loads while the game starts",
+        "body": "The launcher's PLAY button now loads Luma while Minecraft is still opening, instead of waiting for it to finish. Luma's HUD and menu appear as soon as the start screen does."
+      }
+    ],
+    "es": [
+      {
+        "title": "Free cam",
+        "body": "Vuela con la cámara por tus propios mundos mientras tu jugador se queda quieto: F6 para activarla (mantener o alternar), WASD para moverte, Espacio y Shift para subir y bajar, Ctrl para ir más rápido y la rueda del mouse para cambiar la velocidad. Al salir, la vista vuelve exactamente a donde estaba. Se apaga sola en servidores."
+      },
+      {
+        "title": "V-Sync desactivado",
+        "body": "Quita el límite de FPS del monitor, el que queda aunque apagues el V-Sync en el juego. Actívalo en Rendimiento: funciona al instante, sin reiniciar, si abriste Minecraft con el launcher de Luma. Al girar la cámara rápido puede verse algo de tearing."
+      },
+      {
+        "title": "Luma carga mientras el juego arranca",
+        "body": "El botón JUGAR del launcher ahora carga Luma mientras Minecraft todavía se está abriendo, en lugar de esperar a que termine. El HUD y el menú de Luma aparecen apenas aparece la pantalla de inicio."
+      }
+    ],
+    "pt": [
+      {
+        "title": "Free cam",
+        "body": "Voe com a câmera pelos seus próprios mundos enquanto seu jogador fica parado: F6 para ativar (segurar ou alternar), WASD para se mover, Espaço e Shift para subir e descer, Ctrl para ir mais rápido e a roda do mouse para mudar a velocidade. Ao sair, a visão volta exatamente para onde estava. Desliga sozinha em servidores."
+      },
+      {
+        "title": "V-Sync desativado",
+        "body": "Remove o limite de FPS do monitor, aquele que continua mesmo com o V-Sync desligado no jogo. Ative em Desempenho: funciona na hora, sem reiniciar, se você abriu o Minecraft pelo launcher do Luma. Ao girar a câmera rápido pode aparecer algum tearing."
+      },
+      {
+        "title": "O Luma carrega enquanto o jogo abre",
+        "body": "O botão JOGAR do launcher agora carrega o Luma enquanto o Minecraft ainda está abrindo, em vez de esperar terminar. O HUD e o menu do Luma aparecem assim que aparece a tela inicial."
+      }
+    ]
+  }
+}

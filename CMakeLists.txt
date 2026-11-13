@@ -13,7 +13,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 # Nombre del proyecto y lenguaje (CXX = C++).
-project(Luma VERSION 0.5.0 LANGUAGES CXX)
+project(Luma VERSION 0.6.0 LANGUAGES CXX)
 
 # --- Solo Windows x64 --------------------------------------------------------
 # Minecraft Bedrock (GDK) es un programa de 64 bits. Una DLL de 32 bits no

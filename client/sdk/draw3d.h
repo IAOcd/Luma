@@ -23,6 +23,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace luma::sdk::draw3d {
@@ -93,6 +94,28 @@ enum ShapeChannel { kChannelLyrics = 0, kChannelVisualizer = 1, kChannelWaypoint
 void SetWorldShapes(std::vector<WorldShapes> shapes, int channel = kChannelLyrics);
 // Which of the fill materials draws them (the same candidates as the outline fill).
 void SetWorldShapesMaterial(int index);
+
+// --- Con textura (las capas de Luma) ----------------------------------------------------
+// Triángulos con una imagen encima. "texture" = RUTA COMPLETA de un PNG en el
+// disco (el juego lo carga una vez y lo guarda). "vertices": por vértice
+// x, y, z (del mundo), u, v (0..1 dentro de la imagen); 3 vértices por
+// triángulo. Se ven de un solo lado: para verlos de los dos, mandar cada
+// triángulo dos veces (al revés).
+struct TexturedTriangles {
+    std::string texture;
+    std::vector<float> vertices;
+};
+// Quien arma lo que se dibuja con textura: se lo llama UNA vez por frame, en
+// el hilo de render, justo antes de dibujar ("partialTick": cuánto avanzó el
+// juego hacia el próximo tick, 0..1, para que lo que sigue a un jugador no se
+// vea a saltos). Llena "out". nullptr = nada.
+using TexturedProvider = void (*)(float partialTick, std::vector<TexturedTriangles>& out);
+void SetTexturedProvider(TexturedProvider provider);
+// Busca y engancha lo necesario para dibujar con textura (una vez; después
+// de Init). Lo llama quien lo necesita (las capas).
+bool InitTextures();
+// ¿Se encontró cómo dibujar con textura en esta versión del juego?
+bool TexturesAvailable();
 
 // sdk/camera.cpp las llama alrededor de LevelRenderer::renderLevel.
 void BeginLevel(std::uintptr_t levelRenderer);

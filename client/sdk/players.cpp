@@ -180,6 +180,28 @@ bool UuidOf(const std::string& name, std::uint8_t out[16]) {
     return false;
 }
 
+bool Find(const std::string& name, std::uint8_t uuid[16], std::uintptr_t& skin) {
+    const std::uintptr_t level = LevelPtr();
+    std::uintptr_t map = 0, head = 0, node = 0;
+    std::uint64_t count = 0;
+    if (level == 0 || !SafeRead(level + kLevelPlayerList, map) || !LooksLikePointer(map) ||
+        !SafeRead(map + kMapListHead, head) || !LooksLikePointer(head) || !SafeRead(map + kMapSize, count) || count > 5000) {
+        return false;
+    }
+    SafeRead(head, node);
+    for (std::size_t i = 0; i < count && node != head && LooksLikePointer(node); ++i) {
+        const std::uintptr_t entry = node + kNodeValue + kUuidSize;
+        char text[64]{};
+        if (SafeReadString(entry + kEntryName, text, sizeof(text)) && StripColors(text) == name) {
+            skin = 0;
+            return SafeCopy(node + kNodeValue, uuid, kUuidSize) && SafeRead(entry + kEntrySkin, skin) &&
+                   LooksLikePointer(skin);
+        }
+        if (!SafeRead(node, node)) break;
+    }
+    return false;
+}
+
 std::uintptr_t Level() {
     return LevelPtr();
 }

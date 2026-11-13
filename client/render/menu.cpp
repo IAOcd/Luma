@@ -51,6 +51,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/config.h"
+#include "core/cosmetics.h"
 #include "core/lyrics.h"
 #include "core/media.h"
 #include "core/keys.h"
@@ -65,6 +66,7 @@
 #include "perf/windows_info.h"
 #include "render/assets.h"
 #include "render/glass.h"
+#include "render/gpu.h"
 #include "render/hud.h"
 #include "render/hud_editor.h"
 #include "render/world_map.h"
@@ -2489,6 +2491,83 @@ void Equip(const ClosetSkin& s) {
     notify::Push(notify::Kind::Info, text);
 }
 
+// --- Closet: capas de Luma (core/cosmetics) ----------------------------------------------
+// Una tarjeta por capa (y "Ninguna") con su cara de afuera. Cada capa se sube
+// a la GPU UNA vez (la primera vez que abres el Closet) y se dibuja como
+// imagen: solo la parte de afuera (en una capa de W x H, el rectángulo que
+// empieza en (W/64, W/64) y mide 10 x 16 "píxeles de capa").
+struct CapePreview {
+    ImTextureID texture = 0;
+    float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
+    bool tried = false;
+};
+
+void DrawCapePreview(ImDrawList* draw, CapePreview& preview, const char* id, ImVec2 center, float height) {
+    if (!preview.tried) {
+        preview.tried = true;
+        const cosmetics::CapeTexture cape = cosmetics::CapeImage(id);
+        if (!cape.rgba.empty()) {
+            preview.texture = gpu::CreateTexture(cape.rgba.data(), cape.width, cape.height);
+            const float s = cape.width / 64.0f;  // 1 = capa normal, 4 = HD
+            preview.u0 = s / cape.width;
+            preview.v0 = s / cape.height;
+            preview.u1 = (s + 10.0f * s) / cape.width;
+            preview.v1 = (s + 16.0f * s) / cape.height;
+        }
+    }
+    if (preview.texture == 0) return;
+    const float width = height * 10.0f / 16.0f;
+    const ImVec2 a(center.x - width * 0.5f, center.y - height * 0.5f);
+    draw->AddImage(preview.texture, a, ImVec2(a.x + width, a.y + height), ImVec2(preview.u0, preview.v0),
+                   ImVec2(preview.u1, preview.v1));
+}
+
+void DrawCapes() {
+    static CapePreview previews[std::size(cosmetics::kCapes)];
+    const theme::Palette& p = theme::P();
+    const float fs = Fs();
+    SectionHeader(icons::kSparkle, i18n::T("closet.capes"));
+    const std::string selected = cosmetics::SelectedCape();
+    const float gap = fs * 0.7f;
+    const float tileW = fs * 7.0f;
+    const float tileH = fs * 11.0f;
+    const int count = static_cast<int>(std::size(cosmetics::kCapes)) + 1;
+    const int columns = std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + gap) / (tileW + gap)));
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    for (int i = 0; i < count; ++i) {
+        // 0 = ninguna; 1.. = los diseños
+        const std::string id = i == 0 ? std::string() : std::string(cosmetics::kCapes[i - 1].id);
+        const char* name = i18n::T(i == 0 ? "closet.cape_none" : cosmetics::kCapes[i - 1].nameKey);
+        if (i % columns != 0) ImGui::SameLine(0.0f, gap);
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+        const ImVec2 max(pos.x + tileW, pos.y + tileH);
+        const bool wearing = id == selected;
+        ModuleBackground(draw, pos, max, Rounding() * 0.8f, 0.0f, wearing ? 1.0f : 0.0f, wearing, 1.0f);
+        const ImVec2 center(pos.x + tileW * 0.5f, pos.y + fs * 4.2f);
+        if (i == 0) {
+            icons::Draw(draw, icons::kClose, center, fs * 2.0f, Col(p.textDim));
+        } else {
+            DrawCapePreview(draw, previews[i - 1], cosmetics::kCapes[i - 1].id, center, fs * 5.8f);
+        }
+        const ImVec2 ns = ImGui::CalcTextSize(name);
+        draw->AddText(ImVec2(pos.x + (tileW - ns.x) * 0.5f, pos.y + fs * 7.6f), Col(p.text), name);
+        ImGui::SetCursorScreenPos(ImVec2(pos.x + fs * 0.6f, max.y - fs * 2.5f));
+        ImGui::PushID(1000 + i);
+        if (wearing) ImGui::BeginDisabled();
+        if (GlassButton(wearing ? i18n::T("closet.cape_wearing") : i18n::T("closet.cape_wear"), nullptr,
+                        ImVec2(tileW - fs * 1.2f, 0), !wearing)) {
+            cosmetics::SelectCape(id);
+        }
+        if (wearing) ImGui::EndDisabled();
+        ImGui::PopID();
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::Dummy(ImVec2(tileW, tileH));
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", i18n::T("closet.capes_hint"));
+    ImGui::PopTextWrapPos();
+}
+
 void DrawClosetPage() {
     if (g_closetDirty) LoadCloset();
     const theme::Palette& p = theme::P();
@@ -2544,12 +2623,16 @@ void DrawClosetPage() {
         ImGui::TextDisabled("%s", i18n::T("closet.equip_hint"));
         ImGui::PopTextWrapPos();
     }
-    SectionHeader(icons::kSparkle, i18n::T("closet.cosmetics"));
-    BeginGroupCard("cosmetics");
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("%s", i18n::T("closet.cosmetics_soon"));
-    ImGui::PopTextWrapPos();
-    EndGroupCard();
+    if (cosmetics::kEnabled) {
+        DrawCapes();
+    } else {
+        SectionHeader(icons::kSparkle, i18n::T("closet.cosmetics"));
+        BeginGroupCard("cosmetics");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", i18n::T("closet.cosmetics_soon"));
+        ImGui::PopTextWrapPos();
+        EndGroupCard();
+    }
 }
 
 // Una entrada de la barra lateral: ícono, texto y (opcional) un número a la

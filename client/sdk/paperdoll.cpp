@@ -3,6 +3,7 @@
 // =============================================================================
 #include "sdk/paperdoll.h"
 #include "sdk/hud_ui.h"
+#include "sdk/cape.h"
 #include "sdk/skin_apply.h"
 
 #include <atomic>
@@ -228,7 +229,10 @@ void NoteScreen(std::uintptr_t root) {
 void __fastcall SetupAndRenderDetour(void* view, void* ctx) {
     hooks::ActiveCallGuard guard;
     // En el hilo de la interfaz: aplicar una skin equipada (si hay una pendiente).
-    if (!g_unloading.load(std::memory_order_relaxed)) skinapply::OnUiFrame();
+    if (!g_unloading.load(std::memory_order_relaxed)) {
+        skinapply::OnUiFrame();
+        cape::OnUiFrame();  // capas de Luma (mismo momento seguro del juego)
+    }
     // Antes de dibujar: volver a poner el scoreboard (si el juego lo recreó).
     if (!g_unloading.load(std::memory_order_relaxed)) {
         std::uintptr_t tree0 = 0;

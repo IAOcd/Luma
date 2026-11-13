@@ -93,9 +93,9 @@ void Release(SharedPtr& p) {
     p = {};
 }
 
-bool CallCreate(SharedPtr* out) {
+bool CallCreate(SharedPtr* out, int id = kPlayerSkinPacketId) {
     __try {
-        g_createPacket(out, kPlayerSkinPacketId);
+        g_createPacket(out, id);
         return out->object != nullptr;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -170,6 +170,22 @@ bool Init() {
 
 bool Available() {
     return g_ready.load(std::memory_order_relaxed);
+}
+
+bool CreatePacket(int id, PacketRef& out) {
+    out = {};
+    if (!g_ready.load(std::memory_order_relaxed)) return false;
+    SharedPtr p;
+    if (!CallCreate(&p, id)) return false;
+    out.object = p.object;
+    out.control = p.control;
+    return true;
+}
+
+void ReleasePacket(PacketRef& packet) {
+    SharedPtr p{packet.object, packet.control};
+    Release(p);
+    packet = {};
 }
 
 void Poll() {

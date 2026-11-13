@@ -51,6 +51,9 @@
 #include "sdk/blocks.h"
 #include "sdk/dynlight.h"
 #include "sdk/skin_apply.h"
+#include "sdk/cape.h"
+#include "core/cape_model.h"
+#include "core/cosmetics.h"
 #include "sdk/paperdoll.h"
 #include <nlohmann/json.hpp>
 
@@ -233,6 +236,10 @@ bool Startup(HMODULE module) {
         sdk::paperdoll::Init();  // moving the game's HUD paper doll
         sdk::hudui::Init();      // movable scoreboard without flicker (UIControl::updatePos)
         sdk::skinapply::Init();  // Equip changes the skin instantly
+        if (cosmetics::kEnabled) {  // (Luma capes: in development, off for now)
+            sdk::cape::Init();
+            cosmetics::Load();
+        }
         sdk::gamecrosshair::Init();  // hiding the game's crosshair (crosshair module)
         sdk::dynlight::Init();       // dynamic lights (dynamic lights module)
         sdk::blocks::Init();         // the biome of each block (map colors)
@@ -295,6 +302,7 @@ void WaitForUnload() {
         sdk::network::Poll();                   // ping of the connection to the server
         stats::Poll();
         sdk::skinapply::Poll();                 // did you equip another skin? (reads its PNG)
+        if (cosmetics::kEnabled) cosmetics::Poll();  // your Luma cape (in development, off for now)
         render::skinheads::Poll();              // skin faces requested by the menu (Closet)                          // time played and player name (for the launcher)
         render::icons_items::Poll();            // item icons requested by the HUD                // finish tests (calculations and CSV outside the render)
         modules::performance::PollRenderThread();  // render thread priority
@@ -335,6 +343,7 @@ void Shutdown() {
     spotify::Shutdown();  // the Spotify thread (a request takes 8 s at most)
     lyrics::Shutdown();  // the lyrics thread (a request takes 8 s at most)
     media::Shutdown();  // the music thread (it waits at most a couple of seconds)
+    cosmetics::model::Stop();  // la capa 3D deja de dibujarse
     sdk::camera::BeginUnload();
     sdk::paperdoll::BeginUnload();  // the paper doll goes back to its place
     sdk::network::BeginUnload();

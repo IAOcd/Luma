@@ -293,6 +293,19 @@ constexpr Entry kEntries[] = {
     {"closet.cosmetics_soon", {"Capes and more, visible between Luma users. Coming soon.",
                                "Capas y más, visibles entre usuarios de Luma. Próximamente.",
                                "Capas e mais, visíveis entre usuários do Luma. Em breve."}},
+    {"closet.capes",        {"Luma capes", "Capas de Luma", "Capas da Luma"}},
+    {"closet.capes_hint",   {"Only you and other Luma users see it: your skin on the server doesn't change. Persona skins may not show capes.",
+                             "Solo la ven tú y otros usuarios de Luma: tu skin en el servidor no cambia. Las skins Persona pueden no mostrar capas.",
+                             "Só você e outros usuários do Luma a veem: sua skin no servidor não muda. Skins Persona podem não mostrar capas."}},
+    {"closet.cape_none",    {"None", "Ninguna", "Nenhuma"}},
+    {"closet.cape_classic", {"Classic", "Clásica", "Clássica"}},
+    {"closet.cape_dawn",    {"Dawn", "Amanecer", "Amanhecer"}},
+    {"closet.cape_night",   {"Night", "Noche", "Noite"}},
+    {"closet.cape_grid",    {"Grid", "Cuadrícula", "Grade"}},
+    {"closet.cape_galaxy",  {"Galaxy", "Galaxia", "Galáxia"}},
+    {"closet.cape_apple",   {"Apple", "Manzana", "Maçã"}},
+    {"closet.cape_wear",    {"Wear", "Usar", "Usar"}},
+    {"closet.cape_wearing", {"Wearing", "Puesta", "Em uso"}},
 
     // --- Secciones que aún no existen ---------------------------------------------
     // --- Consejos de la barra lateral ---

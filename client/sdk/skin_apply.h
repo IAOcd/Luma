@@ -28,6 +28,16 @@ namespace luma::sdk::skinapply {
 bool Init();
 bool Available();
 
+// Para otras partes del SDK (sdk/cape): crear un paquete del juego por su
+// número (MinecraftPackets::createPacket) y soltarlo. Es un std::shared_ptr:
+// "object" es el paquete y "control" su contador.
+struct PacketRef {
+    void* object = nullptr;
+    void* control = nullptr;
+};
+bool CreatePacket(int id, PacketRef& out);
+void ReleasePacket(PacketRef& packet);
+
 // Hilo principal de Luma (cada 50 ms): si cambió la skin equipada
 // (skins\active.json, la escriben el Closet y el launcher), lee su PNG.
 void Poll();

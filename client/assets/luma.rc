@@ -8,3 +8,9 @@
 // =============================================================================
 
 101 RCDATA "luma-icon.png"
+
+// Capas de Luma con dibujo (core/cosmetics): texturas de capa HD de 256x128.
+201 RCDATA "capes/grid.png"
+202 RCDATA "capes/galaxy.png"
+203 RCDATA "capes/apple.png"
+204 RCDATA "capes/grid_anim.png"

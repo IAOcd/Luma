@@ -15,7 +15,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <mutex>
+#include <set>
+#include <vector>
 #include <string>
 
 #include "core/hooks.h"
@@ -104,6 +107,9 @@ RawSharedPtr g_boxMaterial;
 constexpr const char* kFillMaterials[kFillMaterialCount] = {"selection_overlay", "name_tag_depth_tested",
                                                             "fullscreen_cube_overlay_blend", "selection_box"};
 RawSharedPtr g_fillMaterials[kFillMaterialCount];
+// El de los nombres de jugador (con textura y respetando las paredes): el
+// mismo que usa Flarial para dibujar su logo junto al nombre.
+constexpr int kTexturedMaterial = 1;  // "name_tag_depth_tested"
 bool g_fillTried[kFillMaterialCount]{};
 
 std::mutex g_settingsMutex;
@@ -113,6 +119,142 @@ ChunkBorderSettings g_chunks;
 std::vector<WorldShapes> g_shapes[kChannelCount];  // other modules' shapes, by channel (SetWorldShapes)
 int g_shapesMaterial = 0;
 std::vector<WorldShapes> g_shapesFrame;  // the copy being drawn this frame (render thread only)
+
+// --- Dibujar CON TEXTURA (capas de Luma) -------------------------------------------------
+//  Tres piezas del juego (encontradas desensamblando 1.26.63; la idea de usar
+//  getTexture con un archivo y el material de los nombres viene de estudiar el
+//  client open source Flarial, el código es propio):
+//
+//  1. mce::TextureGroup::getTexture(grupo, TexturePtr* resultado,
+//         ResourceLocation const* nombre, bool recargar, ...): "dame la textura
+//     con este nombre". Si el nombre es la RUTA COMPLETA de un PNG y su sistema
+//     de archivos es "Raw" (2), el juego carga ese archivo del disco.
+//     El grupo de texturas lo conocemos la primera vez que el juego la llama
+//     (la enganchamos solo para eso).
+//  2. ResourceLocation: +0x0 sistema de archivos (int), +0x8 la ruta
+//     (std::string), +0x28 y +0x30 dos "huellas" FNV-1 de 64 bits (de la ruta,
+//     y de la ruta con el sistema de archivos). Comprobamos en el juego que
+//     calculamos igual (ver CheckHashes).
+//  3. Una variante de renderMeshImmediately que además recibe una LISTA de
+//     texturas (inicio, fin) de punteros a TexturePtr.
+//  Y en el Tessellator, la coordenada de textura del próximo vértice: +0x18C
+//  (u) y +0x190 (v), con la marca +0x194 = "tiene coordenada" (lo vimos en
+//  el código del juego que arma vértices con textura).
+constexpr const char* kGetTexture =
+    "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 ?? ?? ?? ?? FE FF "
+    "FF FF 44 88 8D ?? ?? ?? ?? 4D 89 C7 48 89 D6 48 89 CF 48 89 8D ?? ?? ?? ?? 4C 8B B5 ?? ?? ?? ?? 48 81 C1 90 01 00 00";
+constexpr const char* kRenderMeshTextured =
+    "55 41 57 41 56 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 ?? ?? ?? ?? FE FF FF FF "
+    "80 BA ?? ?? ?? ?? 00 0F 85 ?? ?? ?? ?? 4C 89 CB";
+constexpr std::uintptr_t kTessU = 0x18C;
+constexpr std::uintptr_t kTessV = 0x190;
+constexpr std::uintptr_t kTessHasUV = 0x194;
+constexpr std::int32_t kFileSystemRaw = 2;
+
+using GetTextureFn = void*(__fastcall*)(void* group, void* result, void* location, bool reload, void* a5, int a6,
+                                        void* a7);
+using RenderMeshTexturedFn = void(__fastcall*)(void* screenContext, void* tess, void* material, void* textures,
+                                               void* params, void* a6, void* a7);
+GetTextureFn g_getTexture = nullptr;
+RenderMeshTexturedFn g_renderMeshTextured = nullptr;
+std::atomic<std::uintptr_t> g_textureGroup{0};
+std::atomic<bool> g_hashesChecked{false};
+
+// Un ResourceLocation armado por Luma (misma forma que el del juego).
+struct ResLoc {
+    std::int32_t fileSystem = kFileSystemRaw;
+    std::int32_t pad = 0;
+    std::string path;
+    std::uint64_t pathHash = 0;
+    std::uint64_t fullHash = 0;
+};
+static_assert(sizeof(std::string) == 0x20, "std::string de MSVC");
+
+// Un TexturePtr del juego: { shared_ptr<textura>, shared_ptr<nombre> }.
+struct RawTexturePtr {
+    void* texture = nullptr;
+    void* textureControl = nullptr;
+    void* location = nullptr;
+    void* locationControl = nullptr;
+};
+
+// FNV-1 de 64 bits (el algoritmo público): por cada letra, multiplicar y
+// después mezclar (xor). La del sistema de archivos se mezcla con la de la ruta.
+void ComputeHashes(ResLoc& r) {
+    constexpr std::uint64_t kBasis = 0xCBF29CE484222325ull;
+    constexpr std::uint64_t kPrime = 0x100000001B3ull;
+    std::uint64_t h = kBasis;
+    for (char c : r.path) {
+        h *= kPrime;
+        h ^= static_cast<std::uint64_t>(static_cast<std::int64_t>(c));  // (letra con signo, como el juego)
+    }
+    if (r.path.empty()) h = 0;
+    const std::uint64_t fs = (kBasis ^ static_cast<std::uint8_t>(r.fileSystem)) * kPrime;
+    r.pathHash = h;
+    r.fullHash = h ^ fs;
+}
+
+// La primera vez que el juego pide una textura: ¿calculamos las huellas igual?
+void CheckHashes(void* location) {
+    if (g_hashesChecked.exchange(true)) return;
+    ResLoc mine;
+    char text[256]{};
+    std::uint64_t theirs[2]{};
+    if (!SafeRead(reinterpret_cast<std::uintptr_t>(location), mine.fileSystem) ||
+        !SafeReadString(reinterpret_cast<std::uintptr_t>(location) + 8, text, sizeof(text)) ||
+        !SafeRead(reinterpret_cast<std::uintptr_t>(location) + 0x28, theirs)) {
+        return;
+    }
+    mine.path = text;
+    ComputeHashes(mine);
+    log::Info("SDK: huellas de textura \"{}\": {} ({:X}/{:X} vs juego {:X}/{:X}).", mine.path,
+              mine.pathHash == theirs[0] && mine.fullHash == theirs[1] ? "iguales" : "DISTINTAS", mine.pathHash,
+              mine.fullHash, theirs[0], theirs[1]);
+}
+
+void* __fastcall GetTextureDetour(void* group, void* result, void* location, bool reload, void* a5, int a6, void* a7) {
+    hooks::ActiveCallGuard guard;
+    if (group != nullptr) g_textureGroup.store(reinterpret_cast<std::uintptr_t>(group), std::memory_order_relaxed);
+    if (!g_hashesChecked.load(std::memory_order_relaxed)) CheckHashes(location);
+    return g_getTexture(group, result, location, reload, a5, a6, a7);
+}
+
+bool CallGetTexture(void* group, RawTexturePtr* result, ResLoc* location) {
+    __try {
+        g_getTexture(group, result, location, false, nullptr, 0, nullptr);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Las texturas de Luma ya pedidas (hilo de render). Se quedan para siempre
+// (una por archivo): son pocas y el juego las comparte.
+std::map<std::string, RawTexturePtr> g_textures;
+std::set<std::string> g_textureFailed;
+
+const RawTexturePtr* TextureFor(const std::string& path) {
+    auto it = g_textures.find(path);
+    if (it != g_textures.end()) return &it->second;
+    const std::uintptr_t group = g_textureGroup.load(std::memory_order_relaxed);
+    if (group == 0 || g_getTexture == nullptr || g_textureFailed.count(path) != 0) return nullptr;
+    ResLoc location;
+    location.path = path;
+    ComputeHashes(location);
+    RawTexturePtr result;
+    if (!CallGetTexture(reinterpret_cast<void*>(group), &result, &location) || result.texture == nullptr) {
+        g_textureFailed.insert(path);
+        log::Warn("SDK: el juego no cargó la textura \"{}\".", path);
+        return nullptr;
+    }
+    log::Info("SDK: textura cargada: \"{}\".", path);
+    return &g_textures.emplace(path, result).first->second;
+}
+
+// Lo que dibujan otros módulos con textura (las capas), pedido cada frame.
+std::atomic<TexturedProvider> g_texturedProvider{nullptr};
+std::vector<TexturedTriangles> g_texturedFrame;           // (hilo de render)
+std::vector<const RawTexturePtr*> g_texturedFrameTex;     // su textura, en el mismo orden
 
 // --- HashedString (un texto con su "huella" precalculada) -----------------------------
 std::uint64_t Fnv1a64(const char* text) {
@@ -612,11 +754,21 @@ bool WorldWanted() {
     std::lock_guard lock(g_settingsMutex);
     bool shapes = false;
     for (const auto& channel : g_shapes) shapes |= !channel.empty();
-    return g_hitboxes.enabled || g_chunks.enabled || shapes;
+    return g_hitboxes.enabled || g_chunks.enabled || shapes ||
+           g_texturedProvider.load(std::memory_order_relaxed) != nullptr;
 }
 
 // Takes this frame's shapes (outside the __try: copying a vector isn't allowed in there).
 void TakeShapesForFrame() {
+    // Lo que va con textura (las capas): el módulo lo arma ahora (con la
+    // posición del jugador de ESTE frame) y acá cargamos sus texturas.
+    g_texturedFrame.clear();
+    g_texturedFrameTex.clear();
+    if (TexturedProvider provider = g_texturedProvider.load(std::memory_order_relaxed)) {
+        const std::uintptr_t player = sdk::player::LocalPlayer();
+        provider(player != 0 ? PartialTick(player) : 1.0f, g_texturedFrame);
+        for (const TexturedTriangles& t : g_texturedFrame) g_texturedFrameTex.push_back(TextureFor(t.texture));
+    }
     std::lock_guard lock(g_settingsMutex);
     g_shapesFrame.clear();
     for (const auto& channel : g_shapes) g_shapesFrame.insert(g_shapesFrame.end(), channel.begin(), channel.end());
@@ -779,7 +931,8 @@ void Submit(void* sc, void* tess, void* material, std::uint8_t* copy, void* a5, 
 // del juego, no se dibuja). Para eso, una línea transparente muy abajo.
 void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, void* a6, std::uintptr_t lrp,
                  const OutlineSettings& o, const HitboxSettings& h, const int* blockPos, bool hitboxes,
-                 void* fillMaterial, bool closeIfEmpty = false, void* shapesMaterial = nullptr) {
+                 void* fillMaterial, bool closeIfEmpty = false, void* shapesMaterial = nullptr,
+                 void* texturedMaterial = nullptr) {
     std::uintptr_t colorPtr = 0;
     float saved[4]{};
     bool haveColor = false;
@@ -883,6 +1036,41 @@ void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, v
                 }
             }
         }
+        // 5. Con textura (las capas de Luma): una llamada por textura.
+        if (hitboxes && texturedMaterial != nullptr && g_renderMeshTextured != nullptr) {
+            const std::uint8_t one = 1;
+            for (std::size_t m = 0; m < g_texturedFrame.size() && m < g_texturedFrameTex.size(); ++m) {
+                const TexturedTriangles& shape = g_texturedFrame[m];
+                const RawTexturePtr* texture = g_texturedFrameTex[m];
+                const std::size_t count = shape.vertices.size() / 15 * 3;  // vértices (de a triángulos enteros)
+                if (texture == nullptr || count == 0) continue;
+                float lo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
+                float hi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
+                g_begin(reinterpret_cast<void*>(f.tess), 0, kPrimitiveTriangles, static_cast<int>(count), false);
+                SetColor(f, white);
+                const float* v = shape.vertices.data();
+                for (std::size_t i = 0; i < count; ++i, v += 5) {
+                    *reinterpret_cast<float*>(f.tess + kTessU) = v[3];
+                    *reinterpret_cast<float*>(f.tess + kTessV) = v[4];
+                    *reinterpret_cast<std::uint8_t*>(f.tess + kTessHasUV) = one;
+                    g_vertex(reinterpret_cast<void*>(f.tess), v[0] - f.origin[0], v[1] - f.origin[1], v[2] - f.origin[2]);
+                    const float p[3] = {v[0], v[1], v[2]};
+                    Grow(lo, hi, p, p);
+                }
+                for (int k = 0; k < 3; ++k) {
+                    lo[k] -= 1.0f;
+                    hi[k] += 1.0f;
+                }
+                std::memcpy(copy + kParamsBoundsMin, lo, sizeof(float) * 3);
+                std::memcpy(copy + kParamsBoundsMax, hi, sizeof(float) * 3);
+                Tint(haveColor, colorPtr, white);
+                // La lista de texturas: { inicio, fin } de punteros a TexturePtr.
+                const void* list[1] = {texture};
+                const void* span[2] = {&list[0], &list[1]};
+                g_renderMeshTextured(sc, tess, texturedMaterial, const_cast<void**>(span), copy, a5, a6);
+                ++drawn;
+            }
+        }
         if (drawn == 0 && closeIfEmpty) {
             float lo[3] = {f.origin[0] - 0.1f, f.origin[1] - 4000.0f, f.origin[2] - 0.1f};
             float hi[3] = {f.origin[0] + 0.1f, f.origin[1] - 3999.9f, f.origin[2] + 0.1f};
@@ -961,7 +1149,8 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
             g_levelPathDraws.fetch_add(1, std::memory_order_relaxed);
             TakeShapesForFrame();
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, OutlineSettings{}, CopyHitboxes(), nullptr,
-                        true, nullptr, /*closeIfEmpty=*/true, g_shapesFrame.empty() ? nullptr : FillMaterial(ShapesMaterial()));
+                        true, nullptr, /*closeIfEmpty=*/true, g_shapesFrame.empty() ? nullptr : FillMaterial(ShapesMaterial()),
+                        g_texturedFrame.empty() ? nullptr : FillMaterial(kTexturedMaterial));
         } else if (g_ready.load(std::memory_order_relaxed) && LooksLikeParams(params)) {
             // (ya dibujamos este frame: solo cerrar el lote vacío)
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, OutlineSettings{}, HitboxSettings{}, nullptr,
@@ -1003,7 +1192,8 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
             if (hitboxes) TakeShapesForFrame();
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, o, h, o.enabled ? t_outlinePos : nullptr,
                         hitboxes, o.fill ? FillMaterial(o.fillMaterial) : nullptr, false,
-                        hitboxes && !g_shapesFrame.empty() ? FillMaterial(ShapesMaterial()) : nullptr);
+                        hitboxes && !g_shapesFrame.empty() ? FillMaterial(ShapesMaterial()) : nullptr,
+                        hitboxes && !g_texturedFrame.empty() ? FillMaterial(kTexturedMaterial) : nullptr);
             if (hitboxes) {
                 t_levelDrawn = true;
                 g_outlinePathDraws.fetch_add(1, std::memory_order_relaxed);
@@ -1223,6 +1413,38 @@ bool Init() {
     }
     g_ready.store(true);
     return true;
+}
+
+bool InitTextures() {
+    // (Solo si alguien lo pide: hoy, las capas de Luma. Así, si están
+    // apagadas, no se engancha getTexture, que el juego llama seguido.)
+    static bool tried = false;
+    if (tried) return g_renderMeshTextured != nullptr;
+    tried = true;
+    const ScanResult getTexture = FindPattern(kGetTexture);
+    const ScanResult textured = FindPattern(kRenderMeshTextured);
+    if (getTexture.matches == 1 && textured.matches == 1) {
+        void* target = reinterpret_cast<void*>(getTexture.address);
+        if (hooks::Create(target, reinterpret_cast<void*>(&GetTextureDetour), reinterpret_cast<void**>(&g_getTexture),
+                          "juego: TextureGroup::getTexture") &&
+            hooks::Enable(target, "juego: TextureGroup::getTexture")) {
+            g_renderMeshTextured = reinterpret_cast<RenderMeshTexturedFn>(textured.address);
+            log::Info("SDK: dibujar con textura listo (getTexture juego+0x{:X}, mallas con textura juego+0x{:X}).",
+                      getTexture.address - GameBase(), textured.address - GameBase());
+        }
+    } else {
+        log::Warn("SDK: no se encontró cómo dibujar con textura ({} {}): no habrá capas 3D.", getTexture.matches,
+                  textured.matches);
+    }
+    return g_renderMeshTextured != nullptr;
+}
+
+bool TexturesAvailable() {
+    return g_renderMeshTextured != nullptr;
+}
+
+void SetTexturedProvider(TexturedProvider provider) {
+    g_texturedProvider.store(provider);
 }
 
 bool Available() {

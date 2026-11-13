@@ -20,6 +20,8 @@ add_library(Luma SHARED
     core/stats.cpp
     core/tr.cpp                             # traducciones de los textos del juego
     core/cloud.cpp                          # hablar con el servidor de Luma (usuarios de Luma)
+    core/cosmetics.cpp                      # cosméticos de Luma (capas)
+    core/cape_model.cpp                     # la capa 3D (la dibuja Luma)
     core/media.cpp                          # la música que suena en Windows (módulo de música)
     core/lyrics.cpp                         # las letras de la canción (LRCLIB)
     core/audio_viz.cpp                      # el sonido de la musica, para el visualizer
@@ -98,6 +100,7 @@ add_library(Luma SHARED
     sdk/dynlight.cpp                        # dynamic lights (luz de la mano)
     sdk/game_crosshair.cpp                  # esconder la mira del juego
     sdk/skin_apply.cpp                      # Equipar cambia la skin al instante
+    sdk/cape.cpp                            # Capas de Luma (solo en tu pantalla)
     sdk/watch.cpp                           # diagnóstico: quién escribe en una dirección
     sdk/skin.cpp
     sdk/mouse_queue.cpp

@@ -1,0 +1,83 @@
+{
+  "date": "12.11.2026",
+  "notes": {
+    "en": [
+      {
+        "title": "Minimap",
+        "body": "Round or square, smooth zoom up to 200 blocks, optional rotation and N/E/S/W. Every block uses the color of the game's own textures, with relief, water depth, shores and biome colors. In caves it shows the floor at your height."
+      },
+      {
+        "title": "World map",
+        "body": "Press M for a full screen map of everything you explored, saved per world, server and dimension. Drag and zoom smoothly, and customize the map and the minimap from its sidebar."
+      },
+      {
+        "title": "Waypoints",
+        "body": "Press B to save one where you are. Pixel art banners on the map, arrows at its edge, a beam and a label with the distance in the world, and an automatic point where you died."
+      },
+      {
+        "title": "Entity radar",
+        "body": "Animals, monsters, villagers and more on the minimap and the world map, with their own icons and filters. Only in local worlds."
+      },
+      {
+        "title": "Lyric Flow, your way",
+        "body": "Choose where the lyrics appear around you, how much they move side to side, their turn and rotation, and pin them with a key where the last line was or where you're looking."
+      },
+      {
+        "title": "Fixes",
+        "body": "F1 now follows the game's own \"Hide HUD\" setting, dropping an item with toggle sprint no longer throws the whole stack, forests no longer turn on cave mode, and the F3 screen shows the biome and the seed (local worlds)."
+      }
+    ],
+    "es": [
+      {
+        "title": "Minimapa",
+        "body": "Redondo o cuadrado, zoom suave hasta 200 bloques, rotación opcional y N/E/S/O. Cada bloque usa el color de las texturas del propio juego, con relieve, profundidad del agua, orillas y colores por bioma. En las cuevas muestra el piso a tu altura."
+      },
+      {
+        "title": "Mapa del mundo",
+        "body": "Aprieta M para ver en pantalla completa todo lo que exploraste, guardado por mundo, servidor y dimensión. Arrástralo y haz zoom suavemente, y personaliza el mapa y el minimapa desde su barra lateral."
+      },
+      {
+        "title": "Waypoints",
+        "body": "Aprieta B para guardar uno donde estás. Banderines pixel art en el mapa, flechitas en su borde, un haz y una etiqueta con la distancia en el mundo, y un punto automático donde moriste."
+      },
+      {
+        "title": "Radar de entidades",
+        "body": "Animales, monstruos, aldeanos y más en el minimapa y en el mapa del mundo, con iconos propios y filtros. Solo en mundos locales."
+      },
+      {
+        "title": "Lyric Flow a tu manera",
+        "body": "Elige dónde aparecen las letras alrededor tuyo, cuánto van de lado a lado, su giro y su rotación, y fíjalas con una tecla donde estuvo la última línea o donde estás mirando."
+      },
+      {
+        "title": "Arreglos",
+        "body": "F1 ahora sigue la opción \"Ocultar HUD\" del propio juego, tirar un ítem con toggle sprint ya no tira todo el stack, los bosques ya no activan el modo cueva y la pantalla F3 muestra el bioma y la semilla (mundos locales)."
+      }
+    ],
+    "pt": [
+      {
+        "title": "Minimapa",
+        "body": "Redondo ou quadrado, zoom suave até 200 blocos, rotação opcional e N/L/S/O. Cada bloco usa a cor das texturas do próprio jogo, com relevo, profundidade da água, margens e cores por bioma. Nas cavernas mostra o chão na sua altura."
+      },
+      {
+        "title": "Mapa do mundo",
+        "body": "Aperte M para ver em tela cheia tudo o que você explorou, salvo por mundo, servidor e dimensão. Arraste e dê zoom suavemente, e personalize o mapa e o minimapa pela barra lateral."
+      },
+      {
+        "title": "Waypoints",
+        "body": "Aperte B para salvar um onde você está. Bandeirinhas pixel art no mapa, setinhas na borda, um feixe e uma etiqueta com a distância no mundo, e um ponto automático onde você morreu."
+      },
+      {
+        "title": "Radar de entidades",
+        "body": "Animais, monstros, aldeões e mais no minimapa e no mapa do mundo, com ícones próprios e filtros. Só em mundos locais."
+      },
+      {
+        "title": "Lyric Flow do seu jeito",
+        "body": "Escolha onde as letras aparecem ao seu redor, quanto vão de um lado para o outro, o giro e a rotação, e fixe-as com uma tecla onde estava a última linha ou onde você está olhando."
+      },
+      {
+        "title": "Correções",
+        "body": "O F1 agora segue a opção \"Ocultar HUD\" do próprio jogo, soltar um item com toggle sprint não joga mais a pilha toda, as florestas não ativam mais o modo caverna e a tela F3 mostra o bioma e a seed (mundos locais)."
+      }
+    ]
+  }
+}

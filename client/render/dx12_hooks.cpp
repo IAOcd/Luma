@@ -233,10 +233,11 @@ HRESULT STDMETHODCALLTYPE CreateSwapChainForHwndDetour(IDXGIFactory2* factory, I
     }
     ComPtr<ID3D12CommandQueue> queue;
     const bool dx12 = device != nullptr && SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&queue)));
-    // El permiso de tearing: solo con el módulo V-Sync off activo, en
-    // swapchains de DirectX 12 "flip" (las del juego).
+    // El permiso de tearing: SIEMPRE (en swapchains de DirectX 12 "flip", las
+    // del juego). Por sí solo no cambia nada: solo PERMITE presentar sin
+    // esperar al monitor. Así el módulo V-Sync off funciona al instante, sin
+    // reiniciar el juego (lo mismo hace Igneous, de Aetopia).
     const bool addTearing = !unloading && dx12 && desc != nullptr && g_tearingSupported &&
-                            g_uncapped.load(std::memory_order_relaxed) &&
                             (desc->SwapEffect == DXGI_SWAP_EFFECT_FLIP_DISCARD ||
                              desc->SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL);
     if (dx12) g_sawGameSwapchain.store(true);

@@ -122,13 +122,14 @@ void ProcessPriority::LoadSettings(const nlohmann::json& in) {
 // =============================================================================
 //  El juego ya pide no esperar al monitor (gfx_vsync:0), pero sin el permiso
 //  de "tearing" Windows igual frena los FPS. render/dx12_hooks le da ese
-//  permiso al swapchain del juego cuando se crea, y este módulo presenta sin
-//  esperar. El permiso solo se puede dar al crearlo: si Luma se cargó con el
-//  juego ya abierto, hay que reiniciar Minecraft desde el launcher de Luma.
+//  permiso al swapchain del juego SIEMPRE que lo ve crearse (por sí solo no
+//  cambia nada), y este módulo presenta sin esperar: se activa y desactiva al
+//  instante. El permiso solo se puede dar al crearlo: si Luma se cargó con el
+//  juego ya abierto (sin el launcher), hay que reiniciar Minecraft con JUGAR.
 
 VSyncOff::VSyncOff()
     : Module("opt_vsync", "V-Sync off",
-             "Removes the monitor's FPS limit (V-Sync). For it to fully work, open Minecraft from the Luma "
+             "Removes the monitor's FPS limit (V-Sync). Works instantly when Minecraft was opened with the Luma "
              "launcher. You may see some \"tearing\" (horizontal cuts) when turning the camera.",
              Category::Performance) {}
 

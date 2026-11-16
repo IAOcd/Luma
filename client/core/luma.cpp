@@ -54,6 +54,7 @@
 #include "sdk/cape.h"
 #include "core/cape_model.h"
 #include "core/cosmetics.h"
+#include "core/features.h"
 #include "sdk/paperdoll.h"
 #include <nlohmann/json.hpp>
 
@@ -229,20 +230,26 @@ bool Startup(HMODULE module) {
         sdk::mousequeue::Init();
         // The local player (Phase 6): captured when the mouse moves in a world.
         sdk::player::Init();
-        sdk::network::Init();  // ping and server detection
+        // Music-only Luma (core/features.h): only what the music needs from the
+        // game (the camera and drawing in the world, for Lyric Flow). The
+        // rest isn't hooked at all: less to collide with other clients.
+        const bool all = !features::kMusicOnly;
+        if (all) sdk::network::Init();  // ping and server detection
         sdk::gameoptions::Init();  // the game's settings ("Hide HUD"), before the hooks that use it
         sdk::camera::Init();   // gamma, perspective, camera (Phase 8)
-        sdk::draw3d::Init();   // drawing inside the world (outline, hitboxes)
-        sdk::paperdoll::Init();  // moving the game's HUD paper doll
-        sdk::hudui::Init();      // movable scoreboard without flicker (UIControl::updatePos)
-        sdk::skinapply::Init();  // Equip changes the skin instantly
-        if (cosmetics::kEnabled) {  // (Luma capes: in development, off for now)
-            sdk::cape::Init();
-            cosmetics::Load();
+        sdk::draw3d::Init();   // drawing inside the world (outline, hitboxes, Lyric Flow)
+        if (all) {
+            sdk::paperdoll::Init();  // moving the game's HUD paper doll
+            sdk::hudui::Init();      // movable scoreboard without flicker (UIControl::updatePos)
+            sdk::skinapply::Init();  // Equip changes the skin instantly
+            if (cosmetics::kEnabled) {  // (Luma capes: in development, off for now)
+                sdk::cape::Init();
+                cosmetics::Load();
+            }
+            sdk::gamecrosshair::Init();  // hiding the game's crosshair (crosshair module)
+            sdk::dynlight::Init();       // dynamic lights (dynamic lights module)
+            sdk::blocks::Init();         // the biome of each block (map colors)
         }
-        sdk::gamecrosshair::Init();  // hiding the game's crosshair (crosshair module)
-        sdk::dynlight::Init();       // dynamic lights (dynamic lights module)
-        sdk::blocks::Init();         // the biome of each block (map colors)
         std::lock_guard lock(StateMutex());
         modules::Manager::DisableUnavailable();
     }

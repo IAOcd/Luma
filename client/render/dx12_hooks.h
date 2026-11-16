@@ -41,6 +41,8 @@ void SetUncapped(bool on);
 // ¿El juego dejó de crear swapchains? (al arrancar crea y tira varias; el
 // overlay espera a esto para engancharse)
 bool SwapchainSettled();
+// ¿Vimos al juego crear alguna swapchain? (= Luma se cargó con el juego recién abierto)
+bool SawGameSwapchainCreated();
 // La cola de comandos con la que el juego creó esa swapchain (con AddRef: hay
 // que hacerle Release), o nullptr si no la vimos crearse (Luma llegó tarde).
 ID3D12CommandQueue* QueueFor(IDXGISwapChain* swapchain);

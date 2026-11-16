@@ -18,6 +18,7 @@
 #include "modules/hud/inventory_hud.h"
 #include "modules/hud/paperdoll.h"
 #include "modules/hud/player_list.h"
+#include "core/features.h"
 #include "modules/hud/music.h"
 #include "modules/hud/debug_screen.h"
 #include "modules/world/minimap.h"
@@ -38,6 +39,14 @@ namespace luma::modules {
 
 void Manager::RegisterAll() {
     modules_.clear();
+    // Luma es un client de música (core/features.h): solo el módulo de
+    // música. El resto sigue en el código, apagado: no se crea.
+    if (features::kMusicOnly) {
+        modules_.push_back(std::make_unique<hud::NowPlaying>());
+        activeHud_.reserve(modules_.size());
+        activeTick_.reserve(modules_.size());
+        return;
+    }
     // HUD
     modules_.push_back(std::make_unique<hud::Keystrokes>());
     modules_.push_back(std::make_unique<hud::FpsCounter>());

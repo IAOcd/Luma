@@ -51,6 +51,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/config.h"
+#include "core/features.h"
 #include "core/cosmetics.h"
 #include "core/lyrics.h"
 #include "core/media.h"
@@ -101,8 +102,12 @@ enum class Page { Modules, Theme, Profiles, Settings, Benchmark, Diagnostics, Cl
 int g_settingsTab = 0;  // 0 general, 1 appearance, 2 profiles, 3 performance
 int g_musicTab = 0;     // 0 lyrics, 1 styles, 2 halo
 constexpr const char* kMusicIcon = icons::kMusic;
+// ¿Se muestra todo, o solo la música? (core/features.h)
+bool ShowEverything() {
+    return !features::kMusicOnly;
+}
 
-Page g_page = Page::Modules;
+Page g_page = features::kMusicOnly ? Page::Music : Page::Modules;
 Category g_categoryFilter = Category::Count;  // Count = todas
 Module* g_detail = nullptr;                   // módulo con la página de opciones abierta
 char g_search[64] = "";
@@ -2348,10 +2353,18 @@ void DrawRadial(float appear, float scale) {
         if (!overHalo && dist > inner && dist < outer * 1.04f) {
             float a = std::atan2(dy, dx) * 180.0f / 3.14159265f;  // 0 = derecha, 90 = abajo
             if (a < 0.0f) a += 360.0f;
-            hovered = a >= 315.0f || a < 45.0f ? static_cast<int>(RadialItem::Closet)
-                      : a < 135.0f             ? static_cast<int>(RadialItem::Settings)
-                      : a < 225.0f             ? static_cast<int>(RadialItem::Hud)
-                                               : static_cast<int>(RadialItem::Mods);
+            if (features::kMusicOnly) {
+                // Tres botones: Música arriba (270°), Ajustes abajo a la
+                // derecha (30°) y HUD abajo a la izquierda (150°).
+                hovered = a >= 210.0f && a < 330.0f ? static_cast<int>(RadialItem::Mods)
+                          : a >= 330.0f || a < 90.0f ? static_cast<int>(RadialItem::Settings)
+                                                     : static_cast<int>(RadialItem::Hud);
+            } else {
+                hovered = a >= 315.0f || a < 45.0f ? static_cast<int>(RadialItem::Closet)
+                          : a < 135.0f             ? static_cast<int>(RadialItem::Settings)
+                          : a < 225.0f             ? static_cast<int>(RadialItem::Hud)
+                                                   : static_cast<int>(RadialItem::Mods);
+            }
         }
         ImGui::SetCursorScreenPos(ImVec2(c.x - outer, c.y - outer));
         const bool clicked = ImGui::InvisibleButton("##radial", ImVec2(outer * 2.0f, outer * 2.0f)) && hovered >= 0;
@@ -2365,16 +2378,18 @@ void DrawRadial(float appear, float scale) {
             const char* icon;
             float angle;  // grados (0 = derecha, 90 = abajo)
         };
+        // (Modo música: el lugar de "Mods" abre la página de Música y no hay Closet.)
         const Item items[4] = {
-            {i18n::T("radial.mods"), icons::kAll, 270.0f},
+            features::kMusicOnly ? Item{Tr("Music"), kMusicIcon, 270.0f} : Item{i18n::T("radial.mods"), icons::kAll, 270.0f},
             {i18n::T("radial.closet"), icons::kCloset, 0.0f},
-            {i18n::T("radial.settings"), icons::kSettings, 90.0f},
-            {i18n::T("radial.hud"), icons::kHud, 180.0f},
+            {i18n::T("radial.settings"), icons::kSettings, features::kMusicOnly ? 30.0f : 90.0f},
+            {i18n::T("radial.hud"), icons::kHud, features::kMusicOnly ? 150.0f : 180.0f},
         };
         constexpr float kToRad = 3.14159265f / 180.0f;
         for (int i = 0; i < 4; ++i) {
+            if (features::kMusicOnly && i == static_cast<int>(RadialItem::Closet)) continue;
             const float h = Animate(ImGui::GetID("##radial") + 10 + i, hovered == i ? 1.0f : 0.0f, 16.0f);
-            const float half = 45.0f - 2.5f;  // separación entre botones
+            const float half = (features::kMusicOnly ? 60.0f : 45.0f) - 2.5f;  // separación entre botones
             const float a0 = (items[i].angle - half) * kToRad;
             const float a1 = (items[i].angle + half) * kToRad;
             const float ro = outer - fs * 0.35f + h * fs * 0.25f;
@@ -2428,7 +2443,7 @@ void DrawRadial(float appear, float scale) {
         if (clicked) {
             sound::Play(sound::Effect::Click);
             switch (static_cast<RadialItem>(hovered)) {
-                case RadialItem::Mods: OpenPage(Page::Modules); break;
+                case RadialItem::Mods: OpenPage(features::kMusicOnly ? Page::Music : Page::Modules); break;
                 case RadialItem::Closet: OpenPage(Page::Closet); break;
                 case RadialItem::Settings: OpenPage(Page::Settings); break;
                 case RadialItem::Hud: hudeditor::Begin(); break;
@@ -2724,14 +2739,17 @@ void Sidebar() {
         g_windowsInfoDirty = true;
         OnNavigate();
     };
-    if (NavItem("Modules", icons::kAll, g_page == Page::Modules, CountModules(Category::Count)) && g_page != Page::Modules) {
+    // (Luma es un client de música: sin la lista de módulos ni el Closet.)
+    if (ShowEverything() &&
+        NavItem("Modules", icons::kAll, g_page == Page::Modules, CountModules(Category::Count)) && g_page != Page::Modules) {
         g_categoryFilter = Category::Count;
         go(Page::Modules);
     }
     if (NavItem("Music", kMusicIcon, g_page == Page::Music) && g_page != Page::Music) {
         go(Page::Music);
     }
-    if (NavItem(i18n::T("closet.title"), icons::kCloset, g_page == Page::Closet) && g_page != Page::Closet) {
+    if (ShowEverything() && NavItem(i18n::T("closet.title"), icons::kCloset, g_page == Page::Closet) &&
+        g_page != Page::Closet) {
         go(Page::Closet);
     }
     if (NavItem("Settings", icons::kSettings, g_page == Page::Settings) && g_page != Page::Settings) {

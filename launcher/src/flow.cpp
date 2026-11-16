@@ -44,6 +44,35 @@ constexpr const wchar_t* kPackageFamily = L"Microsoft.MinecraftUWP_8wekyb3d8bbwe
 constexpr auto kGameOpenTimeout = std::chrono::seconds(120);
 constexpr auto kProcessPoll = std::chrono::milliseconds(20);
 
+// APAGADO desde que Luma es un client de música (client/core/features.h): la
+// carga temprana era solo para el V-Sync off, y con otro client (Flarial) es
+// mejor llegar cuando el juego ya terminó de abrir, como en la 0.5.0: esperar
+// a su ventana visible y unos segundos más. Para volver a la carga temprana:
+// kInjectEarly = true.
+constexpr bool kInjectEarly = false;
+constexpr auto kAfterWindowDelay = std::chrono::seconds(6);
+
+// ¿El proceso ya tiene una ventana visible con título? (señal de que arrancó)
+bool HasVisibleWindow(DWORD pid) {
+    struct Search {
+        DWORD pid;
+        bool found;
+    } search{pid, false};
+    EnumWindows(
+        [](HWND hwnd, LPARAM param) -> BOOL {
+            auto* s = reinterpret_cast<Search*>(param);
+            DWORD owner = 0;
+            GetWindowThreadProcessId(hwnd, &owner);
+            if (owner == s->pid && IsWindowVisible(hwnd) && GetWindowTextLengthW(hwnd) > 0) {
+                s->found = true;
+                return FALSE;
+            }
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&search));
+    return search.found;
+}
+
 // ¿Ese proceso ya creó la ventana del juego? (clase "Bedrock", visible o no)
 bool HasGameWindow(DWORD pid) {
     struct Search {
@@ -243,7 +272,7 @@ void PlayFlow::Run(const std::vector<std::string>& supported, bool force) {
             }
             pids = FindProcessesByName(kGameExe);
             for (DWORD candidate : pids) {
-                if (HasGameWindow(candidate)) {
+                if (kInjectEarly ? HasGameWindow(candidate) : HasVisibleWindow(candidate)) {
                     pids = {candidate};  // el de verdad (no el intermedio)
                     ready = true;
                     break;
@@ -253,6 +282,17 @@ void PlayFlow::Run(const std::vector<std::string>& supported, bool force) {
         if (!ready) {
             Set(PlayState::Failed, "error.game_timeout");
             return;
+        }
+        if (!kInjectEarly) {
+            // El juego muestra la ventana antes de terminar de arrancar.
+            if (!SleepUnlessQuitting(quitting_, kAfterWindowDelay)) {
+                return;
+            }
+            pids = FindProcessesByName(kGameExe);
+            if (pids.empty()) {
+                Set(PlayState::Failed, "error.game_closed");
+                return;
+            }
         }
         if (pids.empty()) {
             Set(PlayState::Failed, "error.game_closed");

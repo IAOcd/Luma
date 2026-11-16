@@ -569,7 +569,10 @@ bool OnPresent(IDXGISwapChain* swapchain) {
         // a que muestre su primera pantalla "de verdad" (la de inicio o el
         // HUD), o 45 segundos si no podemos saberlo.
         static const ULONGLONG startedAt = GetTickCount64();
-        const bool uiReady = sdk::paperdoll::GameUiReady() || GetTickCount64() - startedAt > 45000;
+        // (Solo si Luma se cargó temprano: si llegó con el juego ya abierto, no
+        // vio crearse ninguna swapchain y no hay nada que esperar.)
+        const bool uiReady = !dx12::SawGameSwapchainCreated() || sdk::paperdoll::GameUiReady() ||
+                             GetTickCount64() - startedAt > 45000;
         if (!dx12::SwapchainSettled() || !uiReady) {
             return false;
         }

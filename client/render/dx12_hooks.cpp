@@ -535,6 +535,10 @@ ID3D12CommandQueue* QueueFor(IDXGISwapChain* swapchain) {
     return found;
 }
 
+bool SawGameSwapchainCreated() {
+    return g_lastCreate.load(std::memory_order_relaxed) != 0;
+}
+
 bool SwapchainSettled() {
     const ULONGLONG last = g_lastCreate.load(std::memory_order_relaxed);
     return last == 0 || GetTickCount64() - last >= kSettleMs;

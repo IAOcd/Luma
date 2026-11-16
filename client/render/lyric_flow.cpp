@@ -665,7 +665,14 @@ void AddLine(std::vector<sdk::draw3d::WorldShapes>& out, const FlowLine& f, int 
         }
         const float scatterAmount = size * 3.0f;
         const bool byLuma = worlddraw::ByLuma();
+        // When the GAME draws them, everything has a depth: two things at the
+        // same distance "fight" (each pixel shows one or the other: stripes).
+        // The new line arrives where the old one is still leaving, so the
+        // leaving line goes a bit farther back (quickly, at the start of its
+        // exit), and the new one always wins. (Luma just paints in order.)
+        const float lineBack = byLuma ? 0.0f : std::min(1.0f, raw * 8.0f) * std::max(0.6f, size * 0.5f);
         auto place = [&](float px, float py, float push, float jx, float jy, float* outP) {
+            push += lineBack;
             const float lx = (px - w.width * 0.5f) * cellX + jx;
             const float ly = (w.cells * 0.5f - py) * cellY + jy;
             const float rx = lx * cs - ly * sn;  // the tilt, on the sign
@@ -673,8 +680,22 @@ void AddLine(std::vector<sdk::draw3d::WorldShapes>& out, const FlowLine& f, int 
             // "Rotation": the whole line turns around its center, on the sign.
             const float X = wx + rx, Y = wy + ry;
             const float sx = X * rollCos - Y * rollSin, sy = X * rollSin + Y * rollCos;
-            for (int k = 0; k < 3; ++k) outP[k] = anchor[k] + f.right[k] * sx + away[k] * push;
+            for (int k = 0; k < 3; ++k) outP[k] = anchor[k] + f.right[k] * sx;
             outP[1] += sy;
+            if (push == 0.0f) return;
+            // The push goes along the line from the camera to THIS point, not
+            // one direction for the whole line: that way the layer behind
+            // lands exactly behind the same spot on the screen. With one
+            // direction, the words far from the middle of the screen saw the
+            // border and the shadow slide out from under the letters
+            // ("parallax"), and they looked striped.
+            float ray[3];
+            float len = 0.0f;
+            if (view.ok) {
+                for (int k = 0; k < 3; ++k) ray[k] = outP[k] - view.pos[k];
+                len = std::sqrt(ray[0] * ray[0] + ray[1] * ray[1] + ray[2] * ray[2]);
+            }
+            for (int k = 0; k < 3; ++k) outP[k] += (len > 0.001f ? ray[k] / len : away[k]) * push;
         };
         auto addRects = [&](const std::vector<Rect>& rects, float push, float shiftX, float shiftY,
                             sdk::draw3d::WorldShapes& shape) {
@@ -703,30 +724,10 @@ void AddLine(std::vector<sdk::draw3d::WorldShapes>& out, const FlowLine& f, int 
                 }
                 return;
             }
-            if (s.flowGameLetters == 0) {
-                // The game, filled: two triangles per pixel of the letter
-                // (draw3d sends each one both ways, so it's seen from both sides).
-                shape.triangles.reserve(shape.triangles.size() + rects.size() * 18);
-                for (std::size_t r = 0; r < rects.size(); ++r) {
-                    const Rect& rc = rects[r];
-                    if (rc.letter >= lettersShown) continue;
-                    float jx = 0.0f, jy = 0.0f;
-                    if (scatter > 0.0f) {
-                        const float ang =
-                            Hash01(static_cast<std::uint32_t>(i * 131 + r), static_cast<std::uint32_t>(f.index)) * 6.2831f;
-                        jx = std::cos(ang) * scatter * scatterAmount;
-                        jy = std::sin(ang) * scatter * scatterAmount;
-                    }
-                    const float x0 = rc.x0 + shiftX, x1 = rc.x1 + shiftX, y0 = rc.y0 + shiftY, y1 = rc.y1 + shiftY;
-                    float a[3], b[3], c[3], d[3];
-                    place(x0, y0, push, jx, jy, a);
-                    place(x1, y0, push, jx, jy, b);
-                    place(x1, y1, push, jx, jy, c);
-                    place(x0, y1, push, jx, jy, d);
-                    for (const float* v : {a, b, c, a, c, d}) shape.triangles.insert(shape.triangles.end(), v, v + 3);
-                }
-                return;
-            }
+            // The game draws them with LINES: its block outline material only
+            // draws lines (we tested it: triangles came out as their edges,
+            // with gaps, and the letters looked striped). Enough lines per
+            // pixel of the letter to look solid.
             shape.lines = true;
             shape.triangles.reserve(shape.triangles.size() + rects.size() * static_cast<std::size_t>(perCell + 2) * 6);
             for (std::size_t r = 0; r < rects.size(); ++r) {

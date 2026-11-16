@@ -86,7 +86,9 @@ struct WorldShapes {
     std::vector<float> triangles;
     // true = "triangles" holds LINES instead (2 points each, 6 floats).
     // (Both are drawn with the game's own block outline material: the
-    // materials Luma asks the game for draw nothing in this version.)
+    // materials Luma asks the game for draw nothing in this version. That
+    // material draws LINES: filled triangles come out as their edges only,
+    // so to look solid, send lines.)
     bool lines = false;
     // true = 4 points each (12 floats), filled: only when LUMA draws them
     // (render/world_draw.h); the game never receives these.

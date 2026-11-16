@@ -71,10 +71,6 @@ struct Settings {
     // 1 = the game, as part of the world (the terrain covers it), with the
     //     block outline's material: other clients or packs can change its look.
     int worldDraw = 1;
-    // When the GAME draws the lyrics: 0 = filled letters (each pixel of a
-    // letter is two triangles), 1 = thin lines (the old way). Both with the
-    // block outline's material (sdk/draw3d.h).
-    int flowGameLetters = 0;
     // --- Lyric Flow: the lyrics floating in the world (render/lyric_flow.h) ---
     bool lyricFlow = false;
     float flowDistance = 22.0f;   // blocks in front of you

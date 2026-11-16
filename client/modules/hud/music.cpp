@@ -526,7 +526,7 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
                         {"resolution", s.flowResolution}, {"letterSpacing", s.flowLetterSpacing},
                         {"wordSpacing", s.flowWordSpacing}, {"leaveTime", s.flowLeaveTime}, {"pauseHide", s.flowPauseHide},
                         {"angle", s.flowAngle}, {"spread", s.flowSpread}, {"turn", s.flowTurn}, {"roll", s.flowRoll},
-                        {"pinKey", s.flowPinKey}, {"pinTarget", s.flowPinTarget}, {"gameLetters", s.flowGameLetters}};
+                        {"pinKey", s.flowPinKey}, {"pinTarget", s.flowPinTarget}};
     out["efficiency"] = {{"on", s.efficiency}, {"lyricAnim", s.effLyricAnim}, {"uiAnim", s.effUiAnim}, {"spin", s.effSpin}, {"songFade", s.effSongFade},
                          {"marquee", s.effMarquee}, {"albumColors", s.effAlbumColors}, {"hdCovers", s.effHdCovers},
                          {"prefetch", s.effPrefetch}, {"visualizer", s.effVisualizer}};
@@ -636,7 +636,6 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
         s.flowOutline = f.value("outline", d.flowOutline);
         s.flowOutlineAlpha = std::clamp(f.value("outlineAlpha", d.flowOutlineAlpha), 0.1f, 1.0f);
         s.flowShadow = f.value("shadow", d.flowShadow);
-        s.flowGameLetters = std::clamp(f.value("gameLetters", d.flowGameLetters), 0, 1);
         s.flowFont = std::clamp(f.value("font", d.flowFont), 0, render::lyricflow::kFontCount - 1);
         s.flowBold = f.value("bold", d.flowBold);
         s.flowResolution = std::clamp(f.value("resolution", d.flowResolution), 9, 32);

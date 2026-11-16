@@ -943,9 +943,6 @@ bool DrawLyricsSettings() {
     changed |= ui::Toggle("Lyrics in the sky", &s.lyricFlow, "(each word written in the world as it's sung)");
     if (s.lyricFlow) {
         changed |= DrawWorldDrawChoice();
-        if (s.worldDraw == 1) {
-            changed |= ui::Choice("Letters", &s.flowGameLetters, {"Filled", "Lines"});
-        }
         changed |= ui::Choice("Where", &s.flowMode, {"In the world", "In the sky"});
         if (s.flowMode == 1) {
             if (s.worldDraw == 1) {

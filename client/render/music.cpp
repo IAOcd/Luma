@@ -12,6 +12,7 @@
 #include <imgui_internal.h>  // ImLerp for colors
 
 #include "core/audio_viz.h"
+#include "core/features.h"
 #include "core/spotify.h"
 #include "core/tr.h"
 #include "render/gpu.h"
@@ -552,53 +553,13 @@ bool DrawHalo(ImDrawList* draw, ImVec2 c, float outer, float inner, float appear
 
 
 bool DrawStyleSettings() {
-    Settings& s = Get();
-    bool changed = false;
     ui::Section("On screen");
-    changed |= ui::Choice("Style", &s.hudStyle, {"Compact", "With progress", "Card", "One line", "Vinyl", "Lyrics", "Wide + lyrics"});
-    changed |= ui::Toggle("Album art", &s.showArt);
-    if (s.showArt) {
-        changed |= ui::Choice("Art shape", &s.artShape, {"Square", "Rounded", "Round"});
-        if (s.artShape == 2) {
-            changed |= ui::Toggle("Spin while playing", &s.spinArt);
-        }
-    }
-    changed |= ui::Toggle("Artist", &s.showArtist);
-    changed |= ui::Toggle("Album", &s.showAlbum);
-    changed |= ui::Toggle("App (Spotify, Chrome...)", &s.showApp);
-    changed |= ui::Toggle("Time", &s.showTime);
-    changed |= ui::Choice("Accent color", &s.accent, {"Like the text", "Album colors", "Rainbow"});
-    changed |= ui::SliderInt("Max width", &s.maxWidth, 60, 320, "%d");
-    changed |= ui::Toggle("Scroll long names", &s.marquee);
-    changed |= ui::Toggle("Fade in new songs", &s.animateChanges);
-    changed |= ui::Toggle("Hide when paused", &s.hideWhenPaused);
-    changed |= ui::Toggle("Hide when nothing plays", &s.hideWhenNothing);
-
-    return changed;
+    return DrawWholePage(kPageOnScreen);
 }
 
 bool DrawHaloSettings() {
-    Settings& s = Get();
-    bool changed = false;
     ui::Section("Halo (radial menu)");
-    if (ui::Toggle("Show the Halo", &s.halo)) {
-        media::Want(media::kRadial, s.halo && s.active);
-        changed = true;
-    }
-    if (s.halo) {
-        changed |= ui::Choice("Halo color", &s.haloColor, {"Luma's accent", "Album colors", "Rainbow"});
-        changed |= ui::Slider("Ring thickness", &s.haloThickness, 0.1f, 1.0f, "%.2f");
-        changed |= ui::Slider("Distance from the radial", &s.haloGap, 0.5f, 4.0f, "%.1f");
-        changed |= ui::Toggle("Dim full ring", &s.haloTrack);
-        changed |= ui::Toggle("Position dot (drag to seek)", &s.haloKnob);
-        changed |= ui::Toggle("Title and artist", &s.haloTitle);
-        changed |= ui::Choice("Buttons", &s.haloButtons, {"Under the ring", "Around it", "None"});
-        changed |= ui::Toggle("Album art in the middle", &s.haloArtCenter);
-        if (s.haloArtCenter) {
-            changed |= ui::Choice("Middle art shape", &s.haloArtShape, {"Square", "Rounded", "Round"});
-        }
-    }
-    return changed;
+    return DrawWholePage(kPageHalo);
 }
 
 
@@ -916,127 +877,15 @@ void DrawLyrics(ImVec2 min, ImVec2 max) {
 }
 
 bool DrawAlbumColorSettings() {
-    Settings& s = Get();
-    bool changed = false;
     ui::Section("Album colors");
-    if (ui::Toggle("HD album art", &s.hdCovers, "(when the app's is small)")) {
-        ApplyEfficiency();
-        changed = true;
-    }
-    ui::Hint("Some apps give Windows a tiny album art (Liner: 150x150). Luma then looks the song up in Apple's "
-             "iTunes catalog (only its title and artist) and saves the sharp art on your PC.");
-    changed |= ui::Toggle("Color the whole HUD", &s.hudFollowAlbum, "(every module takes the album's color)");
-    changed |= ui::Toggle("Color Luma's menu", &s.menuFollowAlbum, "(the accent follows the album)");
-    changed |= ui::Toggle("Color the crosshair", &s.crosshairAlbum);
-    changed |= ui::Toggle("Color Luma's watermark", &s.watermarkAlbum);
-    return changed;
+    return DrawWholePage(kPageColors);
 }
 
 bool DrawLyricsSettings() {
-    Settings& s = Get();
-    bool changed = false;
-    ImGui::PushID("lyricflow");  // (its controls share names with other sections)
-    struct PopId {
-        ~PopId() { ImGui::PopID(); }
-    } popId;
     ui::Section("Lyric Flow");
-    changed |= ui::Toggle("Lyrics in the sky", &s.lyricFlow, "(each word written in the world as it's sung)");
-    if (s.lyricFlow) {
-        changed |= DrawWorldDrawChoice();
-        changed |= ui::Choice("Where", &s.flowMode, {"In the world", "In the sky"});
-        if (s.flowMode == 1) {
-            if (s.worldDraw == 1) {
-                ui::Hint("In the sky: very far, like the sun or the clouds. It follows you when you walk (you never get "
-                         "closer), but stays put when you turn: it's part of the sky. Everything in front covers it.");
-            } else {
-                ui::Hint("In the sky: very far, like the sun or the clouds. It follows you when you walk (you never get "
-                         "closer), but stays put when you turn: it's part of the sky.");
-            }
-        }
-        changed |= ui::Choice("Layout", &s.flowLayout, {"Scattered", "Centered", "Left", "Arc", "Stacked", "Staircase"});
-        changed |= ui::Slider("Distance (blocks)", &s.flowDistance, 8.0f, 200.0f, "%.0f");
-        changed |= ui::Slider("Height (blocks)", &s.flowHeight, -4.0f, 120.0f, "%.0f");
-        changed |= ui::Slider("Word size (blocks)", &s.flowSize, 0.5f, 20.0f, "%.1f");
-        if (s.flowLayout == 0) changed |= ui::Slider("Tilt (degrees)", &s.flowTilt, 0.0f, 30.0f, "%.0f");
-        ui::Section("Lyric Flow: place");
-        changed |= ui::Slider("Direction (degrees)", &s.flowAngle, -180.0f, 180.0f, "%.0f");
-        ui::Hint("Where around you the lines appear: 0 = in front, negative = to the left, positive = to the right.");
-        changed |= ui::Slider("Side to side", &s.flowSpread, 0.0f, 0.5f, "%.2f");
-        ui::Hint("Each line appears a little to one side and the next to the other: how much (0 = always in the middle).");
-        changed |= ui::Slider("Turn (degrees)", &s.flowTurn, -90.0f, 90.0f, "%.0f");
-        changed |= ui::Slider("Rotation (degrees)", &s.flowRoll, -45.0f, 45.0f, "%.0f");
-        ui::Hint("Turn: the sign turns sideways (0 = facing you). Rotation: the whole line leans, like a crooked sign.");
-        ui::Key("Pin the lyrics", &s.flowPinKey, "(press again to let them follow you)");
-        changed |= ui::Choice("Pin them", &s.flowPinTarget, {"Where the last line was", "Where I'm looking"});
-        if (render::lyricflow::Pinned()) {
-            ui::Hint("Pinned now: every line appears in the same place.");
-            if (ui::Button("Unpin")) render::lyricflow::SetPinned(false);
-        }
-        ui::Section("Lyric Flow: letters");
-        {
-            // The font list (a combo with every font of render/lyric_flow.h).
-            const char* current = render::lyricflow::kFonts[std::clamp(s.flowFont, 0, render::lyricflow::kFontCount - 1)];
-            ImGui::TextUnformatted(Tr("Font"));
-            ImGui::SameLine(ImGui::GetFontSize() * 11.0f);
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::BeginCombo("##flowFont", current)) {
-                for (int i = 0; i < render::lyricflow::kFontCount; ++i) {
-                    if (ImGui::Selectable(render::lyricflow::kFonts[i], i == s.flowFont)) {
-                        s.flowFont = i;
-                        changed = true;
-                    }
-                }
-                ImGui::EndCombo();
-            }
-        }
-        if (s.flowFont != 0) {
-            changed |= ui::Toggle("Bold", &s.flowBold);
-            changed |= ui::SliderInt("Resolution", &s.flowResolution, 9, 32, "%d");
-            ui::Hint("How many pixels tall a letter is: more = smoother letters (and a little more work).");
-        }
-        changed |= ui::Toggle("Uppercase", &s.flowUppercase);
-        changed |= ui::Slider("Letter spacing", &s.flowLetterSpacing, -1.0f, 4.0f, "%.1f");
-        changed |= ui::Slider("Word spacing", &s.flowWordSpacing, 0.1f, 1.5f, "%.2f");
-        ui::Section("Lyric Flow: effects");
-        changed |= ui::Choice("Appear", &s.flowAppear,
-                              {"Pop", "Fade", "Drop", "Rise", "Zoom", "Spin", "Flip", "Typewriter", "Scatter"});
-        changed |= ui::Choice("Leave", &s.flowLeave, {"Float up", "Fade", "Fall", "Shrink", "Scatter"});
-        changed |= ui::Choice("Motion", &s.flowMotion, {"None", "Float", "Wave", "Sway", "Pulse"});
-        changed |= ui::Slider("Effect speed", &s.flowSpeed, 0.3f, 3.0f, "%.1fx");
-        changed |= ui::Slider("Leave time (s)", &s.flowLeaveTime, 0.15f, 1.5f, "%.2f");
-        changed |= ui::Slider("Hide when paused (s)", &s.flowPauseHide, 0.0f, 60.0f, "%.0f");
-        ui::Hint("A line starts leaving just before the next one arrives and is gone when it appears: they never overlap.");
-        ui::Section("Lyric Flow: colors");
-        changed |= ui::Choice("Color", &s.flowColorMode, {"One color", "Album", "Album gradient", "Two colors", "Rainbow"});
-        if (s.flowColorMode == 0 || s.flowColorMode == 3) changed |= ui::Color("Color 1", s.flowColor);
-        if (s.flowColorMode == 3) changed |= ui::Color("Color 2", s.flowColor2);
-        changed |= ui::Toggle("Highlight the word being sung", &s.flowHighlight);
-        if (s.flowHighlight) changed |= ui::Color("Highlight color", s.flowHighlightColor);
-        changed |= ui::Slider("Opacity", &s.flowOpacity, 0.2f, 1.0f, "%.2f");
-        changed |= ui::Toggle("Outline", &s.flowOutline, "(a border around the letters)");
-        if (s.flowOutline) {
-            changed |= ui::Color("Outline color", s.flowOutlineColor);
-            changed |= ui::Slider("Outline opacity", &s.flowOutlineAlpha, 0.1f, 1.0f, "%.2f");
-        }
-        changed |= ui::Toggle("Shadow", &s.flowShadow, "(a dark copy behind)");
-    }
-    ui::Hint("Each line is written in the sky in front of where you look, as real pixel letters in the world: "
-             "turn your head and it stays there, and mountains in front cover it. Best with word-by-word lyrics.");
+    bool changed = DrawWholePage(kPageLyricFlow);
     ui::Section("Lyrics");
-    if (ui::Toggle("Search lyrics online", &s.lyricsOnline)) {
-        lyrics::SetOnline(s.lyricsOnline);
-        changed = true;
-    }
-    if (ui::Toggle("Advanced source: LiriQo", &s.lyricsLiriqo, "(word by word, third-party service)")) {
-        lyrics::SetLiriqo(s.lyricsLiriqo);
-        changed = true;
-    }
-    changed |= ui::Slider("Offset (seconds)", &s.lyricsOffset, -5.0f, 5.0f, "%+.1f");
-    changed |= ui::Toggle("Next line on the HUD", &s.lyricsNextLine);
-    changed |= ui::Toggle("Smooth word sweep on the HUD", &s.lyricsSweep, "(off: each word lights up at once)");
-    ui::Hint("To find the lyrics, the song's title, artist, album and length are sent to LiriQo (a free service run "
-             "by one developer, which asks Apple Music, NetEase and others) and, if it doesn't have them, to LRCLIB "
-             "(lrclib.net). Nothing about you. Found lyrics are saved on your PC, so each song is looked up once.");
+    changed |= DrawWholePage(kPageLyrics);
     return changed;
 }
 
@@ -1165,64 +1014,18 @@ bool VisualizerOn() {
 }
 
 bool DrawVisualizerSettings() {
-    Settings& s = Get();
-    bool changed = false;
-    // Its own ID scope: "Style", "Color", "Opacity"... also exist in other
-    // sections of this page, and ImGui needs every control to be unique.
-    ImGui::PushID("visualizer");
-    struct PopId {
-        ~PopId() { ImGui::PopID(); }
-    } popId;
     ui::Section("Visualizer in the sky");
-    changed |= ui::Toggle("Visualizer", &s.visualizer, "(the sky dances with your music)");
-    if (s.visualizer) {
-        const audioviz::Levels lv = audioviz::Get();
-        if (lv.live) {
-            ui::Hint(lv.processOnly ? "Listening to everything except Minecraft (its own sounds don't move it)."
-                                    : "Listening to all the sound of your PC (this Windows can't leave Minecraft out).");
-        }
-        changed |= DrawWorldDrawChoice();
-        changed |= ui::Choice("Style", &s.vizStyle, {"Bars", "Mirrored", "Wave", "Aurora", "Rings", "Pillars", "Layered wave"});
-        changed |= ui::Toggle("Layers", &s.vizLayers, "(a soft glow behind and peaks on top)");
-        changed |= ui::Slider("Reaction to hits", &s.vizHitReaction, 0.0f, 2.0f, "%.1fx");
-        changed |= ui::SliderInt("Bars", &s.vizBars, 24, 256, "%d");
-        changed |= ui::Slider("Distance (blocks)", &s.vizDistance, 30.0f, 200.0f, "%.0f");
-        changed |= ui::Toggle("Follow my height", &s.vizFollowHeight, "(off: always at the same height of the world)");
-        if (s.vizFollowHeight) {
-            changed |= ui::Slider("Height (blocks)", &s.vizHeight, -30.0f, 60.0f, "%.0f");
-        } else {
-            changed |= ui::Slider("World height (Y)", &s.vizWorldY, -60.0f, 320.0f, "%.0f");
-        }
-        changed |= ui::Slider("Size (blocks)", &s.vizScale, 4.0f, 80.0f, "%.0f");
-        changed |= ui::Toggle("Reflection below", &s.vizReflection, "(a mirrored copy going down, like on water)");
-        changed |= ui::Slider("Thickness", &s.vizThickness, 0.1f, 1.0f, "%.2f");
-        changed |= ui::Slider("Sensitivity", &s.vizSensitivity, 0.3f, 3.0f, "%.1fx");
-        changed |= ui::Slider("Smoothing", &s.vizSmoothing, 0.0f, 0.95f, "%.2f");
-        changed |= ui::Slider("Spin (degrees/s)", &s.vizSpin, -30.0f, 30.0f, "%.0f");
-        changed |= ui::Choice("Color", &s.vizColorMode, {"One color", "Album", "Album gradient", "Two colors", "Rainbow",
-                                                         "Album palette", "Album colors changing", "Album + my color"});
-        if (s.vizColorMode == 0 || s.vizColorMode == 3 || s.vizColorMode == 7) {
-            changed |= ui::Color(s.vizColorMode == 7 ? "My color" : "Color 1", s.vizColor);
-        }
-        if (s.vizColorMode >= 5 && s.vizColorMode <= 6) {
-            ui::Hint("The palette is taken from the album art: its most present colors.");
-        }
-        if (s.vizColorMode == 3) changed |= ui::Color("Color 2", s.vizColor2);
-        changed |= ui::Slider("Opacity", &s.vizOpacity, 0.1f, 1.0f, "%.2f");
-    }
-    ui::Hint("Luma listens to the sound your PC plays (never the microphone), only in memory: nothing is recorded. "
-             "It's part of the sky: it follows you when you walk, and the terrain and clouds in front cover it.");
-    return changed;
+    return DrawWholePage(kPageVisualizer);
 }
 
-bool DrawSpotifySettings() {
-    Settings& s = Get();
+namespace {
+// The Client ID box and the connect button (without the long help).
+bool DrawSpotifyConnect(Settings& s) {
     bool changed = false;
     ImGui::PushID("spotify");
     struct PopId {
         ~PopId() { ImGui::PopID(); }
     } popId;
-    ui::Section("Spotify (optional)");
     static char clientId[72] = "";
     static bool loaded = false;
     if (!loaded) {
@@ -1263,11 +1066,519 @@ bool DrawSpotifySettings() {
             break;
         }
     }
+    return changed;
+}
+}  // namespace
+
+bool DrawSpotifySettings() {
+    Settings& s = Get();
+    ui::Section("Spotify (optional)");
+    const bool changed = DrawSpotifyConnect(s);
     ui::Hint("How to get a Client ID (once, 5 minutes): 1. Go to developer.spotify.com/dashboard and sign in. "
              "2. Create app: any name, Redirect URI exactly http://127.0.0.1:43821/callback, tick \"Web API\". "
              "3. Copy its Client ID here and press Connect. Spotify requires the app's owner to have Premium.");
     ui::Hint("Luma only asks to see what you're playing and your queue. Everything stays on your PC (encrypted); "
              "you can disconnect here or in your Spotify account at any time.");
+    return changed;
+}
+
+// =============================================================================
+//  Settings pages (Music > Settings in the menu; render/menu.cpp draws the
+//  cards, the page header and the "More options" switch)
+// =============================================================================
+//  Every page shows its 3 or 4 most used settings first ("basic") and keeps
+//  the fine ones in "More options", split in small tabs. The old functions
+//  (DrawStyleSettings...) still exist for the module's own panel: they draw
+//  a page whole (basic + every tab).
+
+namespace {
+
+// The tabs of "More options", per page (English keys: Tr() translates them).
+constexpr const char* kTabsOnScreen[] = {"Look"};
+constexpr const char* kTabsLyrics[] = {"Sources", "On the HUD"};
+constexpr const char* kTabsFlow[] = {"Place", "Letters", "Effects", "Look"};
+constexpr const char* kTabsViz[] = {"Place", "Shape", "Reaction", "Look"};
+constexpr const char* kTabsHalo[] = {"Ring"};
+constexpr const char* kTabsColors[] = {"Album art"};
+constexpr const char* kTabsAccount[] = {"Spotify help", "Lighter mode"};
+
+// --- On screen ----------------------------------------------------------------------
+bool OnScreenBasic(Settings& s) {
+    bool changed = false;
+    changed |= ui::Choice("Style", &s.hudStyle, {"Compact", "With progress", "Card", "One line", "Vinyl", "Lyrics", "Wide + lyrics"});
+    changed |= ui::Toggle("Album art", &s.showArt);
+    if (s.showArt) {
+        changed |= ui::Choice("Art shape", &s.artShape, {"Square", "Rounded", "Round"});
+        if (s.artShape == 2) changed |= ui::Toggle("Spin while playing", &s.spinArt);
+    }
+    changed |= ui::Toggle("Artist", &s.showArtist);
+    changed |= ui::Toggle("Album", &s.showAlbum);
+    changed |= ui::Toggle("Time", &s.showTime);
+    return changed;
+}
+bool OnScreenMore(Settings& s) {
+    bool changed = false;
+    changed |= ui::Choice("Accent color", &s.accent, {"Like the text", "Album colors", "Rainbow"});
+    changed |= ui::Toggle("App (Spotify, Chrome...)", &s.showApp);
+    changed |= ui::SliderInt("Max width", &s.maxWidth, 60, 320, "%d");
+    changed |= ui::Toggle("Scroll long names", &s.marquee);
+    changed |= ui::Toggle("Fade in new songs", &s.animateChanges);
+    changed |= ui::Toggle("Hide when paused", &s.hideWhenPaused);
+    changed |= ui::Toggle("Hide when nothing plays", &s.hideWhenNothing);
+    return changed;
+}
+
+// --- Lyrics -------------------------------------------------------------------------
+bool LyricsBasic(Settings& s) {
+    bool changed = false;
+    if (ui::Toggle("Search lyrics online", &s.lyricsOnline)) {
+        lyrics::SetOnline(s.lyricsOnline);
+        changed = true;
+    }
+    changed |= ui::Slider("Offset (seconds)", &s.lyricsOffset, -5.0f, 5.0f, "%+.1f");
+    ui::Hint("If the lyrics come early or late, move the offset.");
+    return changed;
+}
+bool LyricsMore(Settings& s, int tab) {
+    bool changed = false;
+    if (tab == 0) {
+        if (ui::Toggle("Advanced source: LiriQo", &s.lyricsLiriqo, "(word by word, third-party service)")) {
+            lyrics::SetLiriqo(s.lyricsLiriqo);
+            changed = true;
+        }
+        ui::Hint("To find the lyrics, the song's title, artist, album and length are sent to LiriQo (a free service run "
+                 "by one developer, which asks Apple Music, NetEase and others) and, if it doesn't have them, to LRCLIB "
+                 "(lrclib.net). Nothing about you. Found lyrics are saved on your PC, so each song is looked up once.");
+    } else {
+        changed |= ui::Toggle("Next line on the HUD", &s.lyricsNextLine);
+        changed |= ui::Toggle("Smooth word sweep on the HUD", &s.lyricsSweep);
+    }
+    return changed;
+}
+
+// --- Lyric Flow ---------------------------------------------------------------------
+bool FlowBasic(Settings& s) {
+    bool changed = false;
+    changed |= ui::Toggle("Lyrics in the sky", &s.lyricFlow);
+    if (!s.lyricFlow) {
+        ui::Hint("Each line is written in the world as it's sung, with real pixel letters. Best with word-by-word lyrics.");
+        return changed;
+    }
+    changed |= ui::Choice("Where", &s.flowMode, {"In the world", "In the sky"});
+    ui::Hint(s.flowMode == 1 ? "Very far, like the sun: it follows you when you walk."
+                             : "At a place of the world: walk to it and it gets bigger.");
+    changed |= ui::Slider("Word size (blocks)", &s.flowSize, 0.5f, 20.0f, "%.1f");
+    changed |= ui::Choice("Color", &s.flowColorMode, {"One color", "Album", "Album gradient", "Two colors", "Rainbow"});
+    if (s.flowColorMode == 0 || s.flowColorMode == 3) changed |= ui::Color("Color 1", s.flowColor);
+    if (s.flowColorMode == 3) changed |= ui::Color("Color 2", s.flowColor2);
+    return changed;
+}
+bool FlowMore(Settings& s, int tab) {
+    bool changed = false;
+    if (!s.lyricFlow) {
+        ui::Hint("Turn on Lyric Flow to change these.");
+        return false;
+    }
+    if (tab == 0) {
+        changed |= ui::Choice("Layout", &s.flowLayout, {"Scattered", "Centered", "Left", "Arc", "Stacked", "Staircase"});
+        if (s.flowLayout == 0) changed |= ui::Slider("Tilt (degrees)", &s.flowTilt, 0.0f, 30.0f, "%.0f");
+        changed |= ui::Slider("Distance (blocks)", &s.flowDistance, 8.0f, 200.0f, "%.0f");
+        changed |= ui::Slider("Height (blocks)", &s.flowHeight, -4.0f, 120.0f, "%.0f");
+        changed |= ui::Slider("Direction (degrees)", &s.flowAngle, -180.0f, 180.0f, "%.0f");
+        ui::Hint("0 = in front, negative = to the left, positive = to the right.");
+        changed |= ui::Slider("Side to side", &s.flowSpread, 0.0f, 0.5f, "%.2f");
+        changed |= ui::Slider("Turn (degrees)", &s.flowTurn, -90.0f, 90.0f, "%.0f");
+        changed |= ui::Slider("Rotation (degrees)", &s.flowRoll, -45.0f, 45.0f, "%.0f");
+        ui::Key("Pin the lyrics", &s.flowPinKey);
+        changed |= ui::Choice("Pin them", &s.flowPinTarget, {"Where the last line was", "Where I'm looking"});
+        if (render::lyricflow::Pinned()) {
+            ui::Hint("Pinned now: every line appears in the same place.");
+            if (ui::Button("Unpin")) render::lyricflow::SetPinned(false);
+        }
+    } else if (tab == 1) {
+        // The font list (a combo with every font of render/lyric_flow.h).
+        const char* current = render::lyricflow::kFonts[std::clamp(s.flowFont, 0, render::lyricflow::kFontCount - 1)];
+        ImGui::TextUnformatted(Tr("Font"));
+        ImGui::SameLine(ImGui::GetFontSize() * 11.0f);
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##flowFont", current)) {
+            for (int i = 0; i < render::lyricflow::kFontCount; ++i) {
+                if (ImGui::Selectable(render::lyricflow::kFonts[i], i == s.flowFont)) {
+                    s.flowFont = i;
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (s.flowFont != 0) {
+            changed |= ui::Toggle("Bold", &s.flowBold);
+            changed |= ui::SliderInt("Resolution", &s.flowResolution, 9, 32, "%d");
+            ui::Hint("More = smoother letters (and a little more work).");
+        }
+        changed |= ui::Toggle("Uppercase", &s.flowUppercase);
+        changed |= ui::Slider("Letter spacing", &s.flowLetterSpacing, -1.0f, 4.0f, "%.1f");
+        changed |= ui::Slider("Word spacing", &s.flowWordSpacing, 0.1f, 1.5f, "%.2f");
+    } else if (tab == 2) {
+        changed |= ui::Choice("Appear", &s.flowAppear,
+                              {"Pop", "Fade", "Drop", "Rise", "Zoom", "Spin", "Flip", "Typewriter", "Scatter"});
+        changed |= ui::Choice("Leave", &s.flowLeave, {"Float up", "Fade", "Fall", "Shrink", "Scatter"});
+        changed |= ui::Choice("Motion", &s.flowMotion, {"None", "Float", "Wave", "Sway", "Pulse"});
+        changed |= ui::Slider("Effect speed", &s.flowSpeed, 0.3f, 3.0f, "%.1fx");
+        changed |= ui::Slider("Leave time (s)", &s.flowLeaveTime, 0.15f, 1.5f, "%.2f");
+        changed |= ui::Slider("Hide when paused (s)", &s.flowPauseHide, 0.0f, 60.0f, "%.0f");
+    } else {
+        changed |= ui::Toggle("Highlight the word being sung", &s.flowHighlight);
+        if (s.flowHighlight) changed |= ui::Color("Highlight color", s.flowHighlightColor);
+        changed |= ui::Slider("Opacity", &s.flowOpacity, 0.2f, 1.0f, "%.2f");
+        changed |= ui::Toggle("Outline", &s.flowOutline);
+        if (s.flowOutline) {
+            changed |= ui::Color("Outline color", s.flowOutlineColor);
+            changed |= ui::Slider("Outline opacity", &s.flowOutlineAlpha, 0.1f, 1.0f, "%.2f");
+        }
+        changed |= ui::Toggle("Shadow", &s.flowShadow);
+        changed |= DrawWorldDrawChoice();
+    }
+    return changed;
+}
+
+// --- Visualizer ---------------------------------------------------------------------
+bool VizBasic(Settings& s) {
+    bool changed = false;
+    changed |= ui::Toggle("Visualizer", &s.visualizer);
+    if (!s.visualizer) {
+        ui::Hint("The sky dances with your music. Luma listens to the sound your PC plays (never the microphone), "
+                 "only in memory: nothing is recorded.");
+        return changed;
+    }
+    const audioviz::Levels lv = audioviz::Get();
+    if (lv.live) {
+        ui::Hint(lv.processOnly ? "Listening to everything except Minecraft (its own sounds don't move it)."
+                                : "Listening to all the sound of your PC (this Windows can't leave Minecraft out).");
+    }
+    changed |= ui::Choice("Style", &s.vizStyle, {"Bars", "Mirrored", "Wave", "Aurora", "Rings", "Pillars", "Layered wave"});
+    changed |= ui::Slider("Size (blocks)", &s.vizScale, 4.0f, 80.0f, "%.0f");
+    changed |= ui::Choice("Color", &s.vizColorMode, {"One color", "Album", "Album gradient", "Two colors", "Rainbow",
+                                                     "Album palette", "Album colors changing", "Album + my color"});
+    if (s.vizColorMode == 0 || s.vizColorMode == 3 || s.vizColorMode == 7) {
+        changed |= ui::Color(s.vizColorMode == 7 ? "My color" : "Color 1", s.vizColor);
+    }
+    if (s.vizColorMode == 3) changed |= ui::Color("Color 2", s.vizColor2);
+    return changed;
+}
+bool VizMore(Settings& s, int tab) {
+    bool changed = false;
+    if (!s.visualizer) {
+        ui::Hint("Turn on the visualizer to change these.");
+        return false;
+    }
+    if (tab == 0) {
+        changed |= ui::Slider("Distance (blocks)", &s.vizDistance, 30.0f, 200.0f, "%.0f");
+        changed |= ui::Toggle("Follow my height", &s.vizFollowHeight);
+        if (s.vizFollowHeight) {
+            changed |= ui::Slider("Height (blocks)", &s.vizHeight, -30.0f, 60.0f, "%.0f");
+        } else {
+            changed |= ui::Slider("World height (Y)", &s.vizWorldY, -60.0f, 320.0f, "%.0f");
+        }
+        changed |= ui::Slider("Spin (degrees/s)", &s.vizSpin, -30.0f, 30.0f, "%.0f");
+    } else if (tab == 1) {
+        changed |= ui::SliderInt("Bars", &s.vizBars, 24, 256, "%d");
+        changed |= ui::Slider("Thickness", &s.vizThickness, 0.1f, 1.0f, "%.2f");
+        changed |= ui::Toggle("Layers", &s.vizLayers, "(a soft glow behind and peaks on top)");
+        changed |= ui::Toggle("Reflection below", &s.vizReflection);
+    } else if (tab == 2) {
+        changed |= ui::Slider("Sensitivity", &s.vizSensitivity, 0.3f, 3.0f, "%.1fx");
+        changed |= ui::Slider("Reaction to hits", &s.vizHitReaction, 0.0f, 2.0f, "%.1fx");
+        changed |= ui::Slider("Smoothing", &s.vizSmoothing, 0.0f, 0.95f, "%.2f");
+    } else {
+        changed |= ui::Slider("Opacity", &s.vizOpacity, 0.1f, 1.0f, "%.2f");
+        if (s.vizColorMode >= 5 && s.vizColorMode <= 6) {
+            ui::Hint("The palette is taken from the album art: its most present colors.");
+        }
+        changed |= DrawWorldDrawChoice();
+    }
+    return changed;
+}
+
+// --- Halo ---------------------------------------------------------------------------
+bool HaloBasic(Settings& s) {
+    bool changed = false;
+    if (ui::Toggle("Show the Halo", &s.halo)) {
+        media::Want(media::kRadial, s.halo && s.active);
+        changed = true;
+    }
+    if (!s.halo) {
+        ui::Hint("A ring with the song around Luma's radial menu.");
+        return changed;
+    }
+    changed |= ui::Choice("Halo color", &s.haloColor, {"Luma's accent", "Album colors", "Rainbow"});
+    changed |= ui::Choice("Buttons", &s.haloButtons, {"Under the ring", "Around it", "None"});
+    changed |= ui::Toggle("Album art in the middle", &s.haloArtCenter);
+    if (s.haloArtCenter) changed |= ui::Choice("Middle art shape", &s.haloArtShape, {"Square", "Rounded", "Round"});
+    return changed;
+}
+bool HaloMore(Settings& s) {
+    if (!s.halo) {
+        ui::Hint("Turn on the Halo to change these.");
+        return false;
+    }
+    bool changed = false;
+    changed |= ui::Slider("Ring thickness", &s.haloThickness, 0.1f, 1.0f, "%.2f");
+    changed |= ui::Slider("Distance from the radial", &s.haloGap, 0.5f, 4.0f, "%.1f");
+    changed |= ui::Toggle("Dim full ring", &s.haloTrack);
+    changed |= ui::Toggle("Position dot (drag to seek)", &s.haloKnob);
+    changed |= ui::Toggle("Title and artist", &s.haloTitle);
+    return changed;
+}
+
+// --- Album colors -------------------------------------------------------------------
+bool ColorsBasic(Settings& s) {
+    bool changed = false;
+    // (In the music-only Luma there's no other HUD, crosshair or watermark of
+    // Luma to color: only the menu.)
+    if (!features::kMusicOnly) changed |= ui::Toggle("Color the whole HUD", &s.hudFollowAlbum);
+    changed |= ui::Toggle("Color Luma's menu", &s.menuFollowAlbum);
+    if (!features::kMusicOnly) {
+        changed |= ui::Toggle("Color the crosshair", &s.crosshairAlbum);
+        changed |= ui::Toggle("Color Luma's watermark", &s.watermarkAlbum);
+    }
+    ui::Hint("They take the color of the album art of the song that's playing.");
+    return changed;
+}
+bool ColorsMore(Settings& s) {
+    bool changed = false;
+    if (ui::Toggle("HD album art", &s.hdCovers, "(when the app's is small)")) {
+        ApplyEfficiency();
+        changed = true;
+    }
+    ui::Hint("Some apps give Windows a tiny album art (Liner: 150x150). Luma then looks the song up in Apple's "
+             "iTunes catalog (only its title and artist) and saves the sharp art on your PC.");
+    return changed;
+}
+
+// --- Spotify and performance --------------------------------------------------------
+bool AccountBasic(Settings& s) {
+    bool changed = DrawSpotifyConnect(s);
+    ui::Section("Performance");
+    if (ui::Toggle("Music efficiency mode", &s.efficiency)) {
+        ApplyEfficiency();
+        changed = true;
+    }
+    ui::Hint("Turns off the music's extras (animations, album colors, background downloads). The music and its "
+             "lyrics keep working.");
+    return changed;
+}
+bool AccountMore(Settings& s, int tab) {
+    bool changed = false;
+    if (tab == 0) {
+        ui::Hint("How to get a Client ID (once, 5 minutes): 1. Go to developer.spotify.com/dashboard and sign in. "
+                 "2. Create app: any name, Redirect URI exactly http://127.0.0.1:43821/callback, tick \"Web API\". "
+                 "3. Copy its Client ID here and press Connect. Spotify requires the app's owner to have Premium.");
+        ui::Hint("Luma only asks to see what you're playing and your queue. Everything stays on your PC (encrypted); "
+                 "you can disconnect here or in your Spotify account at any time.");
+        return false;
+    }
+    ui::Hint("What the efficiency mode turns off:");
+    ImGui::BeginDisabled(!s.efficiency);
+    changed |= ui::Toggle("Lyric animations", &s.effLyricAnim);
+    changed |= ui::Toggle("Music page animations", &s.effUiAnim);
+    changed |= ui::Toggle("Spinning art", &s.effSpin);
+    changed |= ui::Toggle("Song change fade", &s.effSongFade);
+    changed |= ui::Toggle("Scrolling names", &s.effMarquee);
+    changed |= ui::Toggle("Album colors", &s.effAlbumColors);
+    changed |= ui::Toggle("HD album art", &s.effHdCovers);
+    changed |= ui::Toggle("Lyrics ahead (Spotify)", &s.effPrefetch);
+    changed |= ui::Toggle("Visualizer", &s.effVisualizer);
+    ImGui::EndDisabled();
+    if (changed) ApplyEfficiency();
+    return changed;
+}
+
+template <std::size_t N>
+int Tabs(const char* const (&tabs)[N], const char* const** out) {
+    *out = tabs;
+    return static_cast<int>(N);
+}
+
+}  // namespace
+
+const char* PageTitle(int page) {
+    static constexpr const char* kTitles[kPageCount] = {"On screen", "Lyrics", "Lyric Flow", "Visualizer",
+                                                        "Halo",      "Album colors", "Spotify and performance"};
+    return kTitles[std::clamp(page, 0, kPageCount - 1)];
+}
+
+int PageMoreTabs(int page, const char* const** names) {
+    switch (page) {
+        case kPageOnScreen: return Tabs(kTabsOnScreen, names);
+        case kPageLyrics: return Tabs(kTabsLyrics, names);
+        case kPageLyricFlow: return Tabs(kTabsFlow, names);
+        case kPageVisualizer: return Tabs(kTabsViz, names);
+        case kPageHalo: return Tabs(kTabsHalo, names);
+        case kPageColors: return Tabs(kTabsColors, names);
+        default: return Tabs(kTabsAccount, names);
+    }
+}
+
+void PageSummary(int page, char* out, std::size_t size) {
+    const Settings& s = Get();
+    const char* text = "";
+    switch (page) {
+        case kPageOnScreen: {
+            static constexpr const char* kStyles[] = {"Compact", "With progress", "Card", "One line",
+                                                      "Vinyl",   "Lyrics",        "Wide + lyrics"};
+            text = kStyles[std::clamp(s.hudStyle, 0, 6)];
+            break;
+        }
+        case kPageLyrics: text = s.lyricsOnline ? "Searched online" : "Only saved ones"; break;
+        case kPageLyricFlow: text = !s.lyricFlow ? "Off" : (s.flowMode == 1 ? "In the sky" : "In the world"); break;
+        case kPageVisualizer: {
+            static constexpr const char* kStyles[] = {"Bars", "Mirrored", "Wave", "Aurora", "Rings", "Pillars", "Layered wave"};
+            text = s.visualizer ? kStyles[std::clamp(s.vizStyle, 0, 6)] : "Off";
+            break;
+        }
+        case kPageHalo: text = s.halo ? "On" : "Off"; break;
+        case kPageColors: {
+            const int n = features::kMusicOnly ? (s.menuFollowAlbum ? 1 : 0)
+                                               : (s.hudFollowAlbum ? 1 : 0) + (s.menuFollowAlbum ? 1 : 0) +
+                                                     (s.crosshairAlbum ? 1 : 0) + (s.watermarkAlbum ? 1 : 0);
+            if (features::kMusicOnly && n == 1) {
+                text = "Luma's menu";
+            } else if (n == 0) {
+                text = "Off";
+            } else {
+                std::snprintf(out, size, Tr(n == 1 ? "%d place" : "%d places"), n);
+                return;
+            }
+            break;
+        }
+        default: {
+            const bool connected = spotify::GetStatus().state == spotify::State::Connected;
+            std::snprintf(out, size, "%s%s%s", Tr(connected ? "Spotify connected" : "Spotify not connected"),
+                          s.efficiency ? " · " : "", s.efficiency ? Tr("Lighter mode") : "");
+            return;
+        }
+    }
+    std::snprintf(out, size, "%s", Tr(text));
+}
+
+bool DrawPageBasic(int page) {
+    Settings& s = Get();
+    ImGui::PushID(page);
+    bool changed = false;
+    switch (page) {
+        case kPageOnScreen: changed = OnScreenBasic(s); break;
+        case kPageLyrics: changed = LyricsBasic(s); break;
+        case kPageLyricFlow: changed = FlowBasic(s); break;
+        case kPageVisualizer: changed = VizBasic(s); break;
+        case kPageHalo: changed = HaloBasic(s); break;
+        case kPageColors: changed = ColorsBasic(s); break;
+        default: changed = AccountBasic(s); break;
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+bool DrawPageMore(int page, int tab) {
+    Settings& s = Get();
+    ImGui::PushID(page + 100);
+    ImGui::PushID(tab);
+    bool changed = false;
+    switch (page) {
+        case kPageOnScreen: changed = OnScreenMore(s); break;
+        case kPageLyrics: changed = LyricsMore(s, tab); break;
+        case kPageLyricFlow: changed = FlowMore(s, tab); break;
+        case kPageVisualizer: changed = VizMore(s, tab); break;
+        case kPageHalo: changed = HaloMore(s); break;
+        case kPageColors: changed = ColorsMore(s); break;
+        default: changed = AccountMore(s, tab); break;
+    }
+    ImGui::PopID();
+    ImGui::PopID();
+    return changed;
+}
+
+void ResetPage(int page) {
+    Settings& s = Get();
+    const Settings d{};
+    auto copy3 = [](float* to, const float* from) { std::memcpy(to, from, sizeof(float) * 3); };
+    switch (page) {
+        case kPageOnScreen:
+            s.hudStyle = d.hudStyle; s.artShape = d.artShape; s.spinArt = d.spinArt; s.showArt = d.showArt;
+            s.showArtist = d.showArtist; s.showAlbum = d.showAlbum; s.showApp = d.showApp; s.showTime = d.showTime;
+            s.accent = d.accent; s.marquee = d.marquee; s.maxWidth = d.maxWidth; s.hideWhenPaused = d.hideWhenPaused;
+            s.hideWhenNothing = d.hideWhenNothing; s.animateChanges = d.animateChanges;
+            break;
+        case kPageLyrics:
+            s.lyricsOnline = d.lyricsOnline; s.lyricsLiriqo = d.lyricsLiriqo; s.lyricsOffset = d.lyricsOffset;
+            s.lyricsNextLine = d.lyricsNextLine; s.lyricsSweep = d.lyricsSweep;
+            lyrics::SetOnline(s.lyricsOnline);
+            lyrics::SetLiriqo(s.lyricsLiriqo);
+            break;
+        case kPageLyricFlow: {
+            // Everything of Lyric Flow except whether it's on and the pin key.
+            const bool on = s.lyricFlow;
+            const int pinKey = s.flowPinKey;
+            s.flowDistance = d.flowDistance; s.flowHeight = d.flowHeight; s.flowSize = d.flowSize; s.flowTilt = d.flowTilt;
+            s.flowOpacity = d.flowOpacity; s.flowUppercase = d.flowUppercase; s.flowMode = d.flowMode;
+            s.flowAngle = d.flowAngle; s.flowSpread = d.flowSpread; s.flowTurn = d.flowTurn; s.flowRoll = d.flowRoll;
+            s.flowPinTarget = d.flowPinTarget; s.flowLayout = d.flowLayout; s.flowAppear = d.flowAppear;
+            s.flowLeave = d.flowLeave; s.flowMotion = d.flowMotion; s.flowSpeed = d.flowSpeed;
+            s.flowColorMode = d.flowColorMode; copy3(s.flowColor, d.flowColor); copy3(s.flowColor2, d.flowColor2);
+            s.flowHighlight = d.flowHighlight; copy3(s.flowHighlightColor, d.flowHighlightColor);
+            s.flowOutline = d.flowOutline; copy3(s.flowOutlineColor, d.flowOutlineColor);
+            s.flowOutlineAlpha = d.flowOutlineAlpha; s.flowShadow = d.flowShadow; s.flowFont = d.flowFont;
+            s.flowBold = d.flowBold; s.flowResolution = d.flowResolution; s.flowLetterSpacing = d.flowLetterSpacing;
+            s.flowWordSpacing = d.flowWordSpacing; s.flowLeaveTime = d.flowLeaveTime; s.flowPauseHide = d.flowPauseHide;
+            s.worldDraw = d.worldDraw;
+            s.lyricFlow = on;
+            s.flowPinKey = pinKey;
+            break;
+        }
+        case kPageVisualizer: {
+            const bool on = s.visualizer;
+            s.vizStyle = d.vizStyle; s.vizBars = d.vizBars; s.vizDistance = d.vizDistance; s.vizHeight = d.vizHeight;
+            s.vizScale = d.vizScale; s.vizThickness = d.vizThickness; s.vizSensitivity = d.vizSensitivity;
+            s.vizSmoothing = d.vizSmoothing; s.vizSpin = d.vizSpin; s.vizColorMode = d.vizColorMode;
+            copy3(s.vizColor, d.vizColor); copy3(s.vizColor2, d.vizColor2); s.vizOpacity = d.vizOpacity;
+            s.vizFollowHeight = d.vizFollowHeight; s.vizWorldY = d.vizWorldY; s.vizLayers = d.vizLayers;
+            s.vizHitReaction = d.vizHitReaction; s.vizReflection = d.vizReflection;
+            s.worldDraw = d.worldDraw;
+            s.visualizer = on;
+            break;
+        }
+        case kPageHalo: {
+            const bool on = s.halo;
+            s.haloThickness = d.haloThickness; s.haloGap = d.haloGap; s.haloColor = d.haloColor;
+            s.haloTrack = d.haloTrack; s.haloKnob = d.haloKnob; s.haloArtCenter = d.haloArtCenter;
+            s.haloArtShape = d.haloArtShape; s.haloTitle = d.haloTitle; s.haloButtons = d.haloButtons;
+            s.halo = on;
+            break;
+        }
+        case kPageColors:
+            s.hudFollowAlbum = d.hudFollowAlbum; s.menuFollowAlbum = d.menuFollowAlbum;
+            s.crosshairAlbum = d.crosshairAlbum; s.watermarkAlbum = d.watermarkAlbum; s.hdCovers = d.hdCovers;
+            ApplyEfficiency();
+            break;
+        default:
+            // (The Spotify account stays: disconnecting is its own button.)
+            s.efficiency = d.efficiency; s.effLyricAnim = d.effLyricAnim; s.effUiAnim = d.effUiAnim;
+            s.effSpin = d.effSpin; s.effSongFade = d.effSongFade; s.effMarquee = d.effMarquee;
+            s.effAlbumColors = d.effAlbumColors; s.effHdCovers = d.effHdCovers; s.effPrefetch = d.effPrefetch;
+            s.effVisualizer = d.effVisualizer;
+            ApplyEfficiency();
+            break;
+    }
+}
+
+// A whole page (basic + every tab of "More options"), for the module's own panel.
+bool DrawWholePage(int page) {
+    bool changed = DrawPageBasic(page);
+    const char* const* tabs = nullptr;
+    const int count = PageMoreTabs(page, &tabs);
+    for (int t = 0; t < count; ++t) {
+        ui::Section(tabs[t]);
+        changed |= DrawPageMore(page, t);
+    }
     return changed;
 }
 

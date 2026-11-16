@@ -264,6 +264,19 @@ void DrawLyrics(ImVec2 min, ImVec2 max);
 
 // The settings controls (used by the module's panel and by the Music page).
 // They return true if something changed (so it gets saved).
+// --- Settings pages (Music > Settings) ----------------------------------------------
+// The menu shows one card per page; a page has its most used settings first
+// ("basic") and the rest in "More options", split in small tabs.
+enum Page { kPageOnScreen = 0, kPageLyrics, kPageLyricFlow, kPageVisualizer, kPageHalo, kPageColors, kPageAccount };
+inline constexpr int kPageCount = 7;
+const char* PageTitle(int page);                         // English key (Tr() it)
+int PageMoreTabs(int page, const char* const** names);   // the tabs of "More options"
+void PageSummary(int page, char* out, std::size_t size); // a short "how it is now", translated
+bool DrawPageBasic(int page);
+bool DrawPageMore(int page, int tab);
+bool DrawWholePage(int page);                            // basic + every tab, one after another
+void ResetPage(int page);                                // back to Luma's defaults (not on/off)
+
 bool DrawStyleSettings();
 bool DrawHaloSettings();
 bool DrawLyricsSettings();

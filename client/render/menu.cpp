@@ -100,7 +100,7 @@ using modules::Module;
 // their own Page value so old links still work: they open the right tab).
 enum class Page { Modules, Theme, Profiles, Settings, Benchmark, Diagnostics, Closet, Music };
 int g_settingsTab = 0;  // 0 general, 1 appearance, 2 profiles, 3 performance
-int g_musicTab = 0;     // 0 lyrics, 1 styles, 2 halo
+int g_musicTab = 0;     // 0 lyrics, 1 up next, 2 settings (cards and pages)
 constexpr const char* kMusicIcon = icons::kMusic;
 // ¿Se muestra todo, o solo la música? (core/features.h)
 bool ShowEverything() {
@@ -2008,6 +2008,132 @@ bool MusicButton(const char* id, ImVec2 center, float radius, const char* icon, 
     return clicked;
 }
 
+// --- Music > Settings: cards, and one page at a time ---------------------------------
+//  The music settings were one long list (about 90 options). Now the tab
+//  shows a card per part (render/music.h Page); a card opens its page, with
+//  its most used settings first and the rest under "More options".
+int g_musicPage = -1;                         // -1 = the cards
+bool g_musicMore[music::kPageCount] = {};     // "More options" open, per page
+int g_musicMoreTab[music::kPageCount] = {};   // its tab, per page
+
+const char* MusicPageIcon(int page) {
+    static const char* const kIcons[music::kPageCount] = {icons::kAppWindow, icons::kNewspaper, icons::kSparkle,
+                                                          icons::kChart,     icons::kAperture,  icons::kTheme,
+                                                          icons::kZap};
+    return kIcons[std::clamp(page, 0, music::kPageCount - 1)];
+}
+
+bool MusicSettingsCard(int page, ImVec2 size) {
+    ImGui::PushID(page);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton("##card", size);
+    const bool hovered = ImGui::IsItemHovered();
+    HoverFeedback(hovered);
+    const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 18.0f);
+    ImGui::PopID();
+    const theme::Palette& p = theme::P();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 max(pos.x + size.x, pos.y + size.y);
+    const float r = Rounding() * 0.6f;
+    draw->AddRectFilled(pos, max, Col(theme::WithAlpha(p.field, 1.0f + 0.9f * hover)), r);
+    draw->AddRect(pos, max, Col(theme::WithAlpha(p.border, 0.55f + 0.45f * hover)), r, 0, 1.0f);
+    const float fs = Fs();
+    const float pad = fs * 0.8f;
+    draw->PushClipRect(pos, max, true);
+    icons::Draw(draw, MusicPageIcon(page), ImVec2(pos.x + pad + fs * 0.6f, pos.y + pad + fs * 0.6f), fs * 1.2f,
+                Col(theme::Accent(1.0f)));
+    icons::Draw(draw, icons::kChevronRight, ImVec2(max.x - pad - fs * 0.4f, pos.y + pad + fs * 0.6f), fs * 0.9f,
+                Col(p.textDim, 0.6f + 0.4f * hover));
+    ImFont* medium = theme::GetFonts().medium;
+    const float titleY = pos.y + pad + fs * 1.7f;
+    draw->AddText(medium, medium->FontSize, ImVec2(pos.x + pad, titleY), Col(p.text), Tr(music::PageTitle(page)));
+    char summary[96];
+    music::PageSummary(page, summary, sizeof(summary));
+    draw->AddText(ImVec2(pos.x + pad, titleY + medium->FontSize + fs * 0.15f), Col(p.textDim), summary);
+    draw->PopClipRect();
+    if (clicked) sound::Play(sound::Effect::Click);
+    return clicked;
+}
+
+// The cards, or the open page. Returns true if a setting changed.
+bool DrawMusicSettings() {
+    const float fs = Fs();
+    const float width = ImGui::GetContentRegionAvail().x;
+    const int page = g_musicPage;
+    if (page < 0 || page >= music::kPageCount) {
+        g_musicPage = -1;
+        const int cols = width > fs * 30.0f ? 3 : 2;
+        const float gap = fs * 0.6f;
+        const ImVec2 card((width - gap * static_cast<float>(cols - 1)) / static_cast<float>(cols), fs * 4.8f);
+        for (int i = 0; i < music::kPageCount; ++i) {
+            if (i % cols != 0) ImGui::SameLine(0.0f, gap);
+            if (MusicSettingsCard(i, card)) {
+                g_musicPage = i;
+                ImGui::SetScrollY(0.0f);
+            }
+        }
+        return false;
+    }
+    bool changed = false;
+    // Header: back, the page's name, and "Reset" on the right.
+    const float h = ImGui::GetFrameHeight() * 1.05f;
+    if (GlassButton("##back", icons::kBack, ImVec2(h * 1.3f, h))) {
+        g_musicPage = -1;
+        ImGui::SetScrollY(0.0f);
+        return false;
+    }
+    ImGui::SameLine(0.0f, fs * 0.6f);
+    {
+        ImFont* medium = theme::GetFonts().medium;
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddText(medium, medium->FontSize * 1.15f,
+                                            ImVec2(at.x, at.y + (h - medium->FontSize * 1.15f) * 0.5f), Col(theme::P().text),
+                                            Tr(music::PageTitle(page)));
+    }
+    const char* resetLabel = Tr("Reset");
+    const float resetW = ImGui::CalcTextSize(resetLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f + fs * 1.6f;
+    ImGui::SameLine(std::max(0.0f, width - resetW));
+    if (GlassButton("Reset", icons::kRotate, ImVec2(resetW, h))) {
+        music::ResetPage(page);
+        changed = true;
+    }
+    ImGui::Dummy(ImVec2(0.0f, fs * 0.3f));
+
+    changed |= music::DrawPageBasic(page);
+
+    // "More options": the rest, in small tabs.
+    ImGui::Dummy(ImVec2(0.0f, fs * 0.5f));
+    bool& more = g_musicMore[page];
+    if (GlassButton(more ? "Fewer options" : "More options", more ? icons::kChevronUp : icons::kChevronDown,
+                    ImVec2(width, h))) {
+        more = !more;
+    }
+    if (more) {
+        const char* const* tabs = nullptr;
+        const int count = music::PageMoreTabs(page, &tabs);
+        int& tab = g_musicMoreTab[page];
+        tab = std::clamp(tab, 0, count - 1);
+        if (count > 1) {
+            ImGui::Dummy(ImVec2(0.0f, fs * 0.3f));
+            if (fs * 7.0f * static_cast<float>(count) <= width) {
+                Segmented("##moreTabs", tabs, count, &tab);
+            } else {
+                ImGui::SetNextItemWidth(width);
+                if (ImGui::BeginCombo("##moreTabs", Tr(tabs[tab]))) {
+                    for (int i = 0; i < count; ++i) {
+                        if (ImGui::Selectable(Tr(tabs[i]), i == tab)) tab = i;
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+        }
+        ImGui::Dummy(ImVec2(0.0f, fs * 0.2f));
+        changed |= music::DrawPageMore(page, tab);
+    }
+    ImGui::Dummy(ImVec2(0.0f, fs * 0.5f));
+    return changed;
+}
+
 void DrawMusicPage() {
     // While drawing this page, the widgets follow the MUSIC efficiency mode.
     g_musicUi = true;
@@ -2194,8 +2320,9 @@ void DrawMusicPage() {
     const float rightX = origin.x + leftW + gap;
     const float rightW = total - leftW - gap;
     ImGui::SetCursorScreenPos(ImVec2(rightX, origin.y));
-    static const char* const kTabs[] = {"Lyrics", "Up next", "Styles", "Halo"};
-    Segmented("##musicTabs", kTabs, 4, &g_musicTab);
+    static const char* const kTabs[] = {"Lyrics", "Up next", "Settings"};
+    g_musicTab = std::clamp(g_musicTab, 0, 2);
+    Segmented("##musicTabs", kTabs, 3, &g_musicTab);
     const float tabsBottom = ImGui::GetCursorScreenPos().y + fs * 0.6f;
     const float rightH = std::max(fs * 10.0f, ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - tabsBottom -
                                                   ImGui::GetStyle().WindowPadding.y);
@@ -2214,16 +2341,7 @@ void DrawMusicPage() {
     } else {
         ui::SetLabelColumn(11.0f);
         bool changed = false;
-        if (g_musicTab == 2) {
-            changed |= music::DrawEfficiencySettings();
-            changed |= music::DrawStyleSettings();
-            changed |= music::DrawAlbumColorSettings();
-            changed |= music::DrawLyricsSettings();
-            changed |= music::DrawVisualizerSettings();
-            changed |= music::DrawSpotifySettings();
-        } else {
-            changed = music::DrawHaloSettings();
-        }
+        changed = DrawMusicSettings();
         ui::SetLabelColumn(15.0f);
         if (changed) {
             config::MarkDirty();

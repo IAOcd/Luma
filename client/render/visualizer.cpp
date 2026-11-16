@@ -389,4 +389,94 @@ void Stop() {
     }
 }
 
+// --- The preview in the menu (Music > Settings > Visualizer) ----------------------
+//  A small flat version, with the same sound data and colors. If nothing is
+//  being listened to (the visualizer is off), a gentle made-up movement, so
+//  the style and colors can still be seen.
+void DrawPreview(ImDrawList* draw, ImVec2 min, ImVec2 max) {
+    const music::Settings& s = music::Get();
+    audioviz::Levels lv = audioviz::Get();
+    const double now = ImGui::GetTime();
+    if (!lv.live) {
+        for (int b = 0; b < audioviz::kBands; ++b) {
+            const float t = static_cast<float>(b) / static_cast<float>(audioviz::kBands);
+            const float v = 0.35f + 0.3f * std::sin(static_cast<float>(now) * 2.1f + t * 9.0f) * (1.0f - t * 0.5f);
+            lv.fast[b] = lv.bands[b] = std::clamp(v, 0.05f, 1.0f);
+            lv.peaks[b] = std::min(1.0f, lv.fast[b] + 0.08f);
+        }
+        for (int i = 0; i < audioviz::kWavePoints; ++i) {
+            lv.wave[i] = std::sin(static_cast<float>(i) * 0.35f + static_cast<float>(now) * 3.0f) * 0.6f;
+        }
+    }
+    const media::Track track = media::Current();
+    g_paletteCount = std::clamp(track.paletteCount, 1, 5);
+    std::memcpy(g_palette, track.palette, sizeof(g_palette));
+    const float w = max.x - min.x, h = max.y - min.y;
+    const float alpha = std::clamp(s.vizOpacity, 0.0f, 1.0f);
+    auto col = [&](float t, float level, float a, float light) {
+        float c[3];
+        Color(s, t, level, now, c);
+        for (float& k : c) k += (1.0f - k) * light;
+        return ImGui::ColorConvertFloat4ToU32(ImVec4(c[0], c[1], c[2], a));
+    };
+    draw->PushClipRect(min, max, true);
+    const int style = std::clamp(s.vizStyle, 0, 6);
+    const float base = s.vizReflection ? min.y + h * 0.68f : max.y - h * 0.08f;
+    const float tall = (base - min.y) * 0.9f;
+    if (style == kWave || style == kLayeredWave) {
+        const int layersN = style == kLayeredWave ? 3 : 1;
+        for (int l = layersN - 1; l >= 0; --l) {
+            ImVec2 pts[64];
+            const int n = 64;
+            for (int i = 0; i < n; ++i) {
+                const float t = static_cast<float>(i) / static_cast<float>(n - 1);
+                const float v = Around(lv.fast, static_cast<int>(t * 63.0f), 64) * (1.0f - 0.25f * static_cast<float>(l));
+                pts[i] = ImVec2(min.x + t * w, base - tall * 0.5f - (v - 0.4f) * tall * 0.8f + static_cast<float>(l) * h * 0.06f);
+            }
+            draw->AddPolyline(pts, n, col(0.5f, 0.6f, alpha * (l == 0 ? 1.0f : 0.45f), 0.0f), 0,
+                              std::max(1.5f, h * 0.035f * s.vizThickness * 2.0f));
+        }
+    } else if (style == kRings) {
+        const ImVec2 c((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+        for (int r = 0; r < 4; ++r) {
+            const float v = lv.fast[std::min(audioviz::kBands - 1, r * audioviz::kBands / 4)];
+            const float radius = h * (0.12f + 0.09f * static_cast<float>(r)) * (0.8f + 0.5f * v);
+            draw->AddCircle(c, radius, col(static_cast<float>(r) / 4.0f, v, alpha, 0.0f), 48,
+                            std::max(1.5f, h * 0.03f * s.vizThickness * 2.0f));
+        }
+    } else {
+        const int bars = std::clamp(static_cast<int>(w / 6.0f), 12, std::min(64, s.vizBars));
+        const float slot = w / static_cast<float>(bars);
+        const float thick = slot * std::clamp(style == kPillars ? s.vizThickness * 1.4f : s.vizThickness, 0.1f, 1.0f);
+        for (int i = 0; i < bars; ++i) {
+            const float t = (static_cast<float>(i) + 0.5f) / static_cast<float>(bars);
+            const float v = Around(lv.fast, i, bars);
+            const float x0 = min.x + slot * static_cast<float>(i) + (slot - thick) * 0.5f;
+            const float barH = std::max(1.0f, v * tall);
+            if (s.vizLayers) {
+                const float g = Around(lv.bands, i, bars) * tall * 1.1f;
+                draw->AddRectFilled(ImVec2(x0 - thick * 0.3f, base - g), ImVec2(x0 + thick * 1.3f, base),
+                                    col(t, v, alpha * 0.28f, 0.45f));
+            }
+            if (style == kAurora) {
+                draw->AddRectFilledMultiColor(ImVec2(x0, min.y + h * 0.05f), ImVec2(x0 + thick, min.y + h * 0.05f + barH),
+                                              col(t, v, alpha, 0.3f), col(t, v, alpha, 0.3f), col(t, v, 0.0f, 0.0f),
+                                              col(t, v, 0.0f, 0.0f));
+                continue;
+            }
+            const float y1 = style == kMirror ? base - tall * 0.5f + barH * 0.5f : base;
+            draw->AddRectFilled(ImVec2(x0, y1 - barH), ImVec2(x0 + thick, y1), col(t, v, alpha, 0.0f));
+            if (s.vizLayers) {
+                const float pk = Around(lv.peaks, i, bars) * tall;
+                draw->AddRectFilled(ImVec2(x0, y1 - pk - 2.0f), ImVec2(x0 + thick, y1 - pk), col(t, 1.0f, alpha, 0.55f));
+            }
+            if (s.vizReflection && style != kMirror) {
+                draw->AddRectFilled(ImVec2(x0, base + 1.0f), ImVec2(x0 + thick, base + 1.0f + barH * 0.35f),
+                                    col(t, v, alpha * 0.3f, 0.0f));
+            }
+        }
+    }
+    draw->PopClipRect();
+}
+
 }  // namespace luma::render::visualizer

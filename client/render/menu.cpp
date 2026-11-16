@@ -73,6 +73,8 @@
 #include "render/world_map.h"
 #include "render/icons.h"
 #include "render/music.h"
+#include "render/lyric_flow.h"
+#include "render/visualizer.h"
 #include "render/module_options.h"
 #include "render/input.h"
 #include "render/notifications.h"
@@ -2023,6 +2025,110 @@ const char* MusicPageIcon(int page) {
     return kIcons[std::clamp(page, 0, music::kPageCount - 1)];
 }
 
+// --- Previews (Music > Settings): what each page changes, live -------------------------
+// The music HUD element itself, drawn in a box (the same code as in the HUD).
+// "style" -1 = the chosen one. Returns the height it used.
+//  SIZE: the HUD's pixel font only comes in whole sizes (1, 2, 3... screen
+//  pixels per HUD pixel), so we pick a whole size that fits the width and
+//  remember the element's size in HUD pixels (it only grows, so it never
+//  jumps when the text changes). The box's height follows the element
+//  (a tall style, like "Card", gets a taller box).
+float HudPreview(ImDrawList* draw, ImVec2 min, float width, int style) {
+    const float fs = Fs();
+    Module* module = Manager::Find("now_playing");
+    if (module == nullptr) return 0.0f;
+    static ImVec2 unit[8];
+    music::Settings& s = music::Get();
+    const int saved = s.hudStyle;
+    if (style >= 0) s.hudStyle = style;
+    const int slot = std::clamp(s.hudStyle, 0, 6);
+    const ImVec2 u = unit[slot].x > 0.0f ? unit[slot] : ImVec2(90.0f, 24.0f);
+    const float base = std::max(0.5f, hud::Measure(1.0f).px);
+    const float fit = std::floor(std::min(width * 0.9f / u.x, fs * 9.0f / u.y));
+    float scale = std::clamp(fit, 1.0f, 6.0f) / base;
+    // (with the pixel font Measure rounds: never bigger than what fits)
+    while (scale > 0.2f && hud::Measure(scale).px * u.x > width * 0.92f) scale *= 0.9f;
+    const float px = hud::Measure(scale).px;
+    const ImVec2 size(u.x * px, u.y * px);
+    const float height = std::max(fs * 4.0f, size.y + fs * 1.4f);
+    const ImVec2 max(min.x + width, min.y + height);
+    draw->AddRectFilled(min, max, Col(theme::WithAlpha(theme::P().field, 0.7f)), Rounding() * 0.45f);
+    modules::HudFrame frame;
+    frame.draw = draw;
+    frame.pos = ImVec2(std::floor(min.x + (width - size.x) * 0.5f), std::floor(min.y + (height - size.y) * 0.5f));
+    frame.scale = scale;
+    frame.editing = true;  // (nothing playing: a sample song)
+    draw->PushClipRect(min, max, true);
+    const ImVec2 drawn = module->OnRenderHud(frame);
+    draw->PopClipRect();
+    if (drawn.x > 0.0f && drawn.y > 0.0f && px > 0.0f) {
+        unit[slot] = ImVec2(std::max(unit[slot].x, drawn.x / px), std::max(unit[slot].y, drawn.y / px));
+    }
+    s.hudStyle = saved;
+    return height;
+}
+
+void PreviewNote(ImDrawList* draw, ImVec2 min, ImVec2 max, const char* text) {
+    CenteredText(draw, ImGui::GetFont(), min, max, Col(theme::P().textDim), Tr(text));
+}
+
+// One page's preview, from "min", "width" wide. Returns its height (the HUD
+// ones choose theirs; the rest use "height"). "thumb" = a small version.
+float DrawMusicPreview(int page, ImDrawList* draw, ImVec2 min, float width, float height, bool thumb) {
+    if (page == music::kPageOnScreen) return HudPreview(draw, min, width, -1);
+    if (page == music::kPageLyrics) return HudPreview(draw, min, width, 5);
+    const ImVec2 max(min.x + width, min.y + height);
+    const theme::Palette& p = theme::P();
+    const float fs = Fs();
+    draw->AddRectFilled(min, max, Col(theme::WithAlpha(p.field, 0.7f)), Rounding() * 0.45f);
+    const music::Settings& s = music::Get();
+    switch (page) {
+        case music::kPageLyricFlow: lyricflow::DrawPreview(draw, min, max); break;
+        case music::kPageVisualizer: visualizer::DrawPreview(draw, min, max); break;
+        case music::kPageHalo: {
+            const ImVec2 c((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+            if (thumb || !s.halo) {
+                icons::Draw(draw, icons::kAperture, c, fs * 1.8f, Col(theme::Accent(s.halo ? 1.0f : 0.4f)));
+                break;
+            }
+            const float outer = std::max(fs * 0.8f, (max.y - min.y) * 0.5f - fs * (s.haloGap + s.haloThickness + 0.6f));
+            draw->PushClipRect(min, max, true);
+            bool drewCenter = false;
+            const bool shown = music::DrawHalo(draw, c, outer, outer * 0.75f, 1.0f, drewCenter);
+            if (!drewCenter) draw->AddCircleFilled(c, outer * 0.85f, Col(p.field), 32);
+            draw->PopClipRect();
+            if (!shown && !media::Current().present) PreviewNote(draw, min, max, "Play a song to see it");
+            break;
+        }
+        case music::kPageColors: {
+            const media::Track t = media::Current();
+            if (!t.present) {
+                PreviewNote(draw, min, max, "Play a song to see it");
+                break;
+            }
+            const float hgt = max.y - min.y;
+            const float art = hgt * 0.7f;
+            const ImVec2 a0(min.x + hgt * 0.15f, min.y + hgt * 0.15f);
+            music::DrawArt(draw, a0, ImVec2(a0.x + art, a0.y + art), 1, 0.0f, 1.0f);
+            const int n = std::clamp(t.paletteCount, 1, 5);
+            const float sw = std::min(art * 0.6f, (max.x - a0.x - art - hgt * 0.3f) / static_cast<float>(n) - 4.0f);
+            float x = a0.x + art + hgt * 0.15f;
+            for (int i = 0; i < n && sw > 2.0f; ++i) {
+                const float* c = t.palette[i];
+                draw->AddRectFilled(ImVec2(x, min.y + (hgt - sw) * 0.5f), ImVec2(x + sw, min.y + (hgt + sw) * 0.5f),
+                                    ImGui::ColorConvertFloat4ToU32(ImVec4(c[0], c[1], c[2], 1.0f)), sw * 0.25f);
+                x += sw + 4.0f;
+            }
+            break;
+        }
+        default:
+            icons::Draw(draw, icons::kMusic2, ImVec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f), fs * 1.8f,
+                        Col(theme::Accent(1.0f)));
+            break;
+    }
+    return height;
+}
+
 bool MusicSettingsCard(int page, ImVec2 size) {
     ImGui::PushID(page);
     const ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -2067,6 +2173,7 @@ bool DrawMusicSettings() {
         const ImVec2 card((width - gap * static_cast<float>(cols - 1)) / static_cast<float>(cols), fs * 4.8f);
         for (int i = 0; i < music::kPageCount; ++i) {
             if (i % cols != 0) ImGui::SameLine(0.0f, gap);
+            if (i % cols == 0 && i > 0) ImGui::Dummy(ImVec2(0.0f, gap * 0.2f));
             if (MusicSettingsCard(i, card)) {
                 g_musicPage = i;
                 ImGui::SetScrollY(0.0f);
@@ -2098,6 +2205,13 @@ bool DrawMusicSettings() {
         changed = true;
     }
     ImGui::Dummy(ImVec2(0.0f, fs * 0.3f));
+    // The live preview of what this page changes.
+    if (page != music::kPageAccount) {
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const float ph = DrawMusicPreview(page, ImGui::GetWindowDrawList(), at, width,
+                                          fs * (page == music::kPageHalo ? 9.0f : 5.0f), false);
+        ImGui::Dummy(ImVec2(width, ph + fs * 0.3f));
+    }
 
     changed |= music::DrawPageBasic(page);
 

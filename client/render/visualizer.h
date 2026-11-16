@@ -25,4 +25,7 @@ void Draw(ImVec2 display);
 // Off: remove it from the sky and stop listening.
 void Stop();
 
+// A small flat preview in a box of the menu (only while the menu shows it).
+void DrawPreview(ImDrawList* draw, ImVec2 min, ImVec2 max);
+
 }  // namespace luma::render::visualizer

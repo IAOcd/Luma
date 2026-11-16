@@ -961,4 +961,62 @@ void SetPinned(bool pinned) {
     notify::Push(notify::Kind::Success, Tr("Lyrics pinned here"));
 }
 
+// --- The preview in the menu (Music > Settings > Lyric Flow) -------------------------
+//  The same pixel words as in the world, flat: with your font, colors,
+//  border and shadow. A sample line (built again only when a letters
+//  setting changes), the last word as "the one being sung".
+void DrawPreview(ImDrawList* draw, ImVec2 min, ImVec2 max) {
+    const music::Settings& s = music::Get();
+    static std::vector<Word> words;
+    static std::uint64_t key = ~0ull;
+    const std::uint64_t look = static_cast<std::uint64_t>(s.flowFont) * 1000003u +
+                               static_cast<std::uint64_t>(s.flowResolution) * 7919u + (s.flowBold ? 13u : 0u) +
+                               (s.flowUppercase ? 17u : 0u) +
+                               static_cast<std::uint64_t>(std::lround(s.flowLetterSpacing * 10.0f + 50.0f)) * 104729u;
+    if (look != key) {
+        key = look;
+        words.clear();
+        for (const char* text : {"Luma", "lyric", "flow"}) {
+            Word w;
+            Pixelate(w, s.flowUppercase ? Upper(text) : std::string(text), s);
+            if (!w.rects.empty()) words.push_back(std::move(w));
+        }
+    }
+    if (words.empty()) return;
+    // Fit the line in the box (in font pixels, then to screen pixels).
+    float total = 0.0f;
+    const float cells = words[0].cells;
+    const float gap = cells * s.flowWordSpacing;
+    for (const Word& w : words) total += w.width;
+    total += gap * static_cast<float>(words.size() - 1);
+    const float boxW = max.x - min.x, boxH = max.y - min.y;
+    const float cell = std::max(0.5f, std::min(boxW * 0.86f / total, boxH * 0.62f / cells));
+    float x = min.x + (boxW - total * cell) * 0.5f;
+    const float top = min.y + (boxH - cells * cell) * 0.5f;
+    const double now = ImGui::GetTime();
+    const float alpha = std::clamp(s.flowOpacity, 0.0f, 1.0f);
+    auto rects = [&](const std::vector<Rect>& list, float ox, float oy, ImU32 color) {
+        for (const Rect& r : list) {
+            draw->AddRectFilled(ImVec2(x + (r.x0 + ox) * cell, top + (r.y0 + oy) * cell),
+                                ImVec2(x + (r.x1 + ox) * cell, top + (r.y1 + oy) * cell), color);
+        }
+    };
+    draw->PushClipRect(min, max, true);
+    for (std::size_t i = 0; i < words.size(); ++i) {
+        const Word& w = words[i];
+        float color[3];
+        WordColor(s, i, words.size(), now, color);
+        if (s.flowHighlight && i + 1 == words.size()) std::memcpy(color, s.flowHighlightColor, sizeof(color));
+        if (s.flowShadow) rects(w.rects, 0.9f, 0.9f, ImGui::ColorConvertFloat4ToU32(ImVec4(0, 0, 0, alpha * 0.55f)));
+        if (s.flowOutline) {
+            rects(w.outline, 0.0f, 0.0f,
+                  ImGui::ColorConvertFloat4ToU32(ImVec4(s.flowOutlineColor[0], s.flowOutlineColor[1], s.flowOutlineColor[2],
+                                                        alpha * s.flowOutlineAlpha)));
+        }
+        rects(w.rects, 0.0f, 0.0f, ImGui::ColorConvertFloat4ToU32(ImVec4(color[0], color[1], color[2], alpha)));
+        x += (w.width + gap) * cell;
+    }
+    draw->PopClipRect();
+}
+
 }  // namespace luma::render::lyricflow

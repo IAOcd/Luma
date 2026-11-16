@@ -40,4 +40,8 @@ void Stop();
 bool Pinned();
 void SetPinned(bool pinned);
 
+// A flat preview of the letters (font, colors, border, shadow) in a box of
+// the menu. Only while the menu shows it.
+void DrawPreview(ImDrawList* draw, ImVec2 min, ImVec2 max);
+
 }  // namespace luma::render::lyricflow

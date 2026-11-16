@@ -20,6 +20,12 @@ struct RenderInfo {
 // Dibuja la ventana del menú. Se llama entre ImGui::NewFrame y ImGui::Render.
 void Draw(const RenderInfo& info);
 
+// "ADJUST IN THE WORLD" (Music > Lyric Flow / Visualizer): the big menu hides
+// and a small panel stays in a corner, with the settings of where it is, so
+// you change them while looking at the real thing. "page" = render/music.h
+// Page (kPageLyricFlow or kPageVisualizer).
+void StartLiveEdit(int page);
+
 // El menú se acaba de abrir / cerrar (animaciones y sonidos).
 void OnOpened();
 void OnClosed();

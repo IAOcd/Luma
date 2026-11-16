@@ -290,6 +290,9 @@ bool DrawPageBasic(int page);
 bool DrawPageMore(int page, int tab);
 bool DrawWholePage(int page);                            // basic + every tab, one after another
 void ResetPage(int page);                                // back to Luma's defaults (not on/off)
+// The settings of WHERE it is (Lyric Flow or the visualizer), for the small
+// panel of "Adjust in the world" (render/menu.h StartLiveEdit).
+bool DrawLivePanel(int page);
 
 bool DrawStyleSettings();
 bool DrawHaloSettings();

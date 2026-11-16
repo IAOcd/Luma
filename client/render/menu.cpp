@@ -2491,6 +2491,47 @@ void DrawMusicPage() {
 }
 
 bool g_radial = true;  // ¿se muestra el radial (true) o el menú grande (false)?
+int g_liveEdit = -1;   // "Adjust in the world": which music page (-1 = off)
+
+// The small panel of "Adjust in the world": in the bottom-right corner, over
+// the game (no darkening, no big menu), with the page's "where" settings.
+void DrawLiveEdit() {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float fs = Fs();
+    const float width = fs * 25.0f;
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - width - fs * 1.5f, viewport->Pos.y + viewport->Size.y - fs * 1.5f),
+                            ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    ImGui::SetNextWindowSize(ImVec2(width, 0.0f), ImGuiCond_Always);
+    const float pad = fs * 1.0f;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove |
+                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+    if (ImGui::Begin("##luma_live_edit", nullptr, kFlags)) {
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        const ImVec2 pos = ImGui::GetWindowPos();
+        const ImVec2 size = ImGui::GetWindowSize();
+        draw->ChannelsSplit(2);
+        draw->ChannelsSetCurrent(1);
+        ImFont* medium = theme::GetFonts().medium;
+        ImGui::PushFont(medium);
+        ImGui::TextUnformatted(Tr(music::PageTitle(g_liveEdit)));
+        ImGui::PopFont();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", Tr("Change it while you look at it."));
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0.0f, fs * 0.2f));
+        ui::SetLabelColumn(9.0f);
+        if (music::DrawLivePanel(g_liveEdit)) config::MarkDirty();
+        ui::SetLabelColumn(15.0f);
+        ImGui::Dummy(ImVec2(0.0f, fs * 0.3f));
+        if (GlassButton("Done", icons::kCheck, ImVec2(ImGui::GetContentRegionAvail().x, 0.0f), true)) g_liveEdit = -1;
+        draw->ChannelsSetCurrent(0);
+        glass::Panel(draw, pos, ImVec2(pos.x + size.x, pos.y + size.y), Rounding(), 1.0f);
+        draw->ChannelsMerge();
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
 
 enum class RadialItem { Mods = 0, Closet = 1, Settings = 2, Hud = 3, Count = 4 };
 
@@ -3054,6 +3095,10 @@ void Sidebar() {
 //  Funciones públicas
 // =============================================================================
 
+void StartLiveEdit(int page) {
+    g_liveEdit = page;
+}
+
 void OnOpened() {
     // QUICK REOPEN: if you closed the menu a moment ago (3 s by default), it
     // opens exactly where you were: same page, same module options, same tab,
@@ -3061,6 +3106,7 @@ void OnOpened() {
     // "start" was forced before). Later than that, it starts at the radial.
     const double closedFor = g_closedAt == 0 ? 1.0e9 : perf::TicksToMs(perf::Now() - g_closedAt) / 1000.0;
     const bool quick = closedFor <= static_cast<double>(theme::Get().reopenSeconds);
+    if (!quick) g_liveEdit = -1;
     g_radial = quick ? g_radialWhenClosed : !hudeditor::IsActive();
     if (hudeditor::IsActive() || worldmap::IsActive()) g_radial = false;
     g_closetDirty = true;
@@ -3148,6 +3194,12 @@ void Draw(const RenderInfo& info) {
     // The world map: replaces the menu while it's open.
     if (worldmap::IsActive()) {
         worldmap::Draw();
+        return;
+    }
+    // "Adjust in the world": only the small panel (the world stays visible).
+    if (g_liveEdit >= 0 && !closing) {
+        DrawLiveEdit();
+        if (g_liveEdit < 0) OnOpened();  // ("Done": the menu comes back with its animation)
         return;
     }
     // Editor de HUD: reemplaza al menú mientras está abierto.
@@ -3362,6 +3414,14 @@ int FilterCount() {
 
 bool Matches(const char* label) {
     return PassFilter(label);
+}
+
+bool WideButton(const char* label) {
+    if (!PassFilter(label)) return false;
+    m::FlushRow();
+    const bool clicked = m::GlassButton(label, icons::kMove, ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight() * 1.15f));
+    ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize() * 0.2f));
+    return clicked;
 }
 
 int Presets(std::initializer_list<const char*> names, int selected) {

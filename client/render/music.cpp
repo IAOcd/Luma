@@ -25,6 +25,7 @@
 #include "render/rainbow.h"
 #include "render/theme.h"
 #include "render/ui.h"
+#include "render/menu.h"
 
 namespace luma::render::music {
 
@@ -1306,6 +1307,7 @@ bool FlowBasic(Settings& s) {
             changed = true;
         }
     }
+    if (ui::WideButton("Adjust in the world")) menu::StartLiveEdit(kPageLyricFlow);
     changed |= ui::Choice("Where", &s.flowMode, {"In the world", "In the sky"});
     ui::Hint(s.flowMode == 1 ? "Very far, like the sun: it follows you when you walk."
                              : "At a place of the world: walk to it and it gets bigger.");
@@ -1428,6 +1430,7 @@ bool VizBasic(Settings& s) {
                                 : "Listening to all the sound of your PC (this Windows can't leave Minecraft out).");
     }
     changed |= ui::Choice("Style", &s.vizStyle, {"Bars", "Mirrored", "Wave", "Aurora", "Rings", "Pillars", "Layered wave"});
+    if (ui::WideButton("Adjust in the world")) menu::StartLiveEdit(kPageVisualizer);
     changed |= ui::Slider("Size (blocks)", &s.vizScale, 4.0f, 80.0f, "%.0f");
     changed |= ui::Choice("Color", &s.vizColorMode, {"One color", "Album", "Album gradient", "Two colors", "Rainbow",
                                                      "Album palette", "Album colors changing", "Album + my color"});
@@ -1744,6 +1747,34 @@ void ResetPage(int page) {
             ApplyEfficiency();
             break;
     }
+}
+
+bool DrawLivePanel(int page) {
+    Settings& s = Get();
+    bool changed = false;
+    ImGui::PushID("live");
+    if (page == kPageVisualizer) {
+        changed |= ui::Slider("Distance (blocks)", &s.vizDistance, 30.0f, 200.0f, "%.0f");
+        changed |= ui::Toggle("Follow my height", &s.vizFollowHeight);
+        if (s.vizFollowHeight) {
+            changed |= ui::Slider("Height (blocks)", &s.vizHeight, -30.0f, 60.0f, "%.0f");
+        } else {
+            changed |= ui::Slider("World height (Y)", &s.vizWorldY, -60.0f, 320.0f, "%.0f");
+        }
+        changed |= ui::Slider("Size (blocks)", &s.vizScale, 4.0f, 80.0f, "%.0f");
+        changed |= ui::Slider("Spin (degrees/s)", &s.vizSpin, -30.0f, 30.0f, "%.0f");
+    } else {
+        changed |= ui::Choice("Where", &s.flowMode, {"In the world", "In the sky"});
+        changed |= ui::Slider("Distance (blocks)", &s.flowDistance, 8.0f, 200.0f, "%.0f");
+        changed |= ui::Slider("Height (blocks)", &s.flowHeight, -4.0f, 120.0f, "%.0f");
+        changed |= ui::Slider("Direction (degrees)", &s.flowAngle, -180.0f, 180.0f, "%.0f");
+        changed |= ui::Slider("Word size (blocks)", &s.flowSize, 0.5f, 20.0f, "%.1f");
+        changed |= ui::Slider("Turn (degrees)", &s.flowTurn, -90.0f, 90.0f, "%.0f");
+        changed |= ui::Slider("Rotation (degrees)", &s.flowRoll, -45.0f, 45.0f, "%.0f");
+        if (render::lyricflow::Pinned()) ui::Hint("Pinned: the lyrics stay where they were pinned.");
+    }
+    ImGui::PopID();
+    return changed;
 }
 
 // A whole page (basic + every tab of "More options"), for the module's own panel.

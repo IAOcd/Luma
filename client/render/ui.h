@@ -57,6 +57,9 @@ bool Key(const char* label, int* key, const char* hint = nullptr);
 // Botón (en su propia fila, a la derecha de la etiqueta si la hay).
 bool Button(const char* label, const char* rowLabel = nullptr);
 
+// A big button, as wide as the page (for an action that must be easy to find).
+bool WideButton(const char* label);
+
 // A row of buttons for ready-made styles ("presets"): returns the one
 // clicked (-1 = none). "selected" is drawn lit (-1 = none of them).
 int Presets(std::initializer_list<const char*> names, int selected);

@@ -1627,7 +1627,11 @@ void Draw(ImDrawList* draw, ImVec2 display) {
                          static_cast<std::uint64_t>(s.flowLayout) * 49979687u +
                          static_cast<std::uint64_t>(std::lround(s.flowAngle + 400.0f)) * 86028121u +
                          static_cast<std::uint64_t>(std::lround(s.flowSpread * 100.0f)) * 122949829u +
-                         static_cast<std::uint64_t>(std::lround(s.flowTurn + 400.0f)) * 179424691u;
+                         static_cast<std::uint64_t>(std::lround(s.flowTurn + 400.0f)) * 179424691u +
+                         // (where it is, so "Adjust in the world" moves the line right away)
+                         static_cast<std::uint64_t>(std::lround(s.flowDistance * 4.0f)) * 252097800623u +
+                         static_cast<std::uint64_t>(std::lround(s.flowHeight * 4.0f + 1000.0f)) * 3367900313u +
+                         static_cast<std::uint64_t>(s.flowMode) * 5915587277u;
     if (look != lastLook) {
         lastLook = look;
         g_current.index = -2;  // forces a rebuild below

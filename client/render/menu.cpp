@@ -1581,6 +1581,11 @@ void DrawSettingsPage() {
     ImGui::PopTextWrapPos();
     EndGroupCard();
 
+    SectionHeader(icons::kMusic, "Music keys");
+    BeginGroupCard("musickeys");
+    music::DrawMusicKeySettings();
+    EndGroupCard();
+
     SectionHeader(icons::kAll, "Files");
     BeginGroupCard("files");
     if (GlassButton("Open the Luma folder", nullptr, ImVec2(0, 0))) {
@@ -3189,8 +3194,20 @@ void OnKeyCaptured(int vk) {
     config::MarkDirty();
 }
 
+// THE MUSIC IN THE MENU: Space plays or pauses, the left and right arrows
+// change the song, in every view of Luma's menu (the radial, the big menu,
+// "Adjust in the world"). Not while typing (the search box) or while a
+// key is being chosen.
+void MenuMusicKeys() {
+    if (ImGui::GetIO().WantTextInput || g_capture != CaptureTarget::None) return;
+    if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) media::PlayPause();
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) media::Next();
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) media::Previous();
+}
+
 void Draw(const RenderInfo& info) {
     const bool closing = g_closing.load(std::memory_order_relaxed);
+    if (!closing && !hudeditor::IsActive() && !worldmap::IsActive()) MenuMusicKeys();
     // The world map: replaces the menu while it's open.
     if (worldmap::IsActive()) {
         worldmap::Draw();

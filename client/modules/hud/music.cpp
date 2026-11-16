@@ -538,6 +538,7 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
                          {"prefetch", s.effPrefetch}, {"visualizer", s.effVisualizer}};
     out["worldDraw"] = s.worldDraw;
     out["lyricsOffset"] = s.lyricsOffset;
+    out["keys"] = {{"playPause", s.keyPlayPause}, {"next", s.keyNext}, {"previous", s.keyPrevious}};
     out["lyricsNextLine"] = s.lyricsNextLine;
     out["hudFollowAlbum"] = s.hudFollowAlbum;
     out["hdCovers"] = s.hdCovers;
@@ -687,6 +688,12 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
         s.efficiency = d.efficiency;
     }
     s.lyricsOffset = std::clamp(in.value("lyricsOffset", d.lyricsOffset), -5.0f, 5.0f);
+    if (in.contains("keys") && in["keys"].is_object()) {
+        const nlohmann::json& k = in["keys"];
+        s.keyPlayPause = std::clamp(k.value("playPause", 0), 0, 255);
+        s.keyNext = std::clamp(k.value("next", 0), 0, 255);
+        s.keyPrevious = std::clamp(k.value("previous", 0), 0, 255);
+    }
     s.lyricsNextLine = in.value("lyricsNextLine", d.lyricsNextLine);
     s.hudFollowAlbum = in.value("hudFollowAlbum", d.hudFollowAlbum);
     s.hdCovers = in.value("hdCovers", d.hdCovers);

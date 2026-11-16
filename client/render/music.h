@@ -164,6 +164,10 @@ struct Settings {
     bool menuFollowAlbum = false; // Luma's menu accent takes the album color
     bool crosshairAlbum = false;  // the Crosshair module takes the album color
     bool watermarkAlbum = false;  // the Watermark module takes the album color
+    // Keys to control the music while playing (menu closed). 0 = none (the default).
+    int keyPlayPause = 0;
+    int keyNext = 0;
+    int keyPrevious = 0;
 };
 
 Settings& Get();
@@ -271,6 +275,10 @@ bool VisualizerOn();
 // every frame, also while the HUD is hidden (F1, a game menu), so they never
 // freeze half-way. Nothing happens if the music module is off.
 void DrawWorldEffects();
+// The music keys while playing (Luma > Settings): called every frame.
+void PollMusicKeys();
+// Their settings (for Luma's Settings page).
+bool DrawMusicKeySettings();
 
 // The lyrics panel of the Music page: synced lyrics scroll by themselves.
 // Draws in the current ImGui window, inside min..max.

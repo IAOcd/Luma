@@ -3,6 +3,8 @@
 // =============================================================================
 #include "render/music.h"
 
+#include <windows.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -26,6 +28,7 @@
 #include "render/theme.h"
 #include "render/ui.h"
 #include "render/menu.h"
+#include "render/overlay.h"
 
 namespace luma::render::music {
 
@@ -989,6 +992,7 @@ bool DrawWorldDrawChoice() {
 
 void DrawWorldEffects() {
     const Settings& s = Get();
+    PollMusicKeys();
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     if (s.active && s.lyricFlow) {
         lyrics::Want(lyrics::kHud, true);
@@ -1007,6 +1011,36 @@ void DrawWorldEffects() {
     // (With Luma's own menu open they stay: the menu is drawn above them.)
     const bool gameScreen = sdk::mouse::GameMouseState() == 0 && !sdk::mouse::ReleasedByLuma();
     if (!gameScreen) render::worlddraw::Draw(ImGui::GetBackgroundDrawList(), display);
+}
+
+// THE MUSIC KEYS WHILE PLAYING: pressed once (not held), only while you're
+// really playing (the game has the mouse: not in the chat, the inventory or
+// a menu, so typing a letter never skips a song) and Luma's menu is closed
+// (in the menu, Space and the arrows do it: render/menu.cpp).
+void PollMusicKeys() {
+    const Settings& s = Get();
+    static bool wasDown[3] = {true, true, true};  // (a key held while Luma loads isn't a press)
+    const int keys[3] = {s.keyPlayPause, s.keyNext, s.keyPrevious};
+    const bool playing = sdk::mouse::GameMouseState() == 1 && !overlay::IsMenuOpen();
+    for (int i = 0; i < 3; ++i) {
+        const bool down = keys[i] != 0 && (GetAsyncKeyState(keys[i]) & 0x8000) != 0;
+        if (down && !wasDown[i] && playing) {
+            if (i == 0) media::PlayPause();
+            if (i == 1) media::Next();
+            if (i == 2) media::Previous();
+        }
+        wasDown[i] = down;
+    }
+}
+
+bool DrawMusicKeySettings() {
+    Settings& s = Get();
+    ui::Key("Play / pause", &s.keyPlayPause);
+    ui::Key("Next song", &s.keyNext);
+    ui::Key("Previous song", &s.keyPrevious);
+    ui::Hint("While you play (not in the chat or the inventory). None by default: click a key to choose one, right click to "
+             "remove it. In Luma's menu: Space plays or pauses, the left and right arrows change the song.");
+    return false;
 }
 
 bool VisualizerOn() {

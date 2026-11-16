@@ -3,6 +3,8 @@
 // =============================================================================
 #include "gui/theme.h"
 
+#include <algorithm>
+
 namespace luma::launcher::gui {
 
 namespace {
@@ -48,11 +50,37 @@ constexpr Palette kLight{
 };
 
 ThemeKind g_theme = ThemeKind::Dark;
+Palette g_live = kDark;   // the palette in use: the theme's, with the accent of the moment
+bool g_hasAccent = false;
+ImVec4 g_accent{};
+
+float Luminance(const ImVec4& c) {
+    return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+}
+
+void Rebuild() {
+    g_live = g_theme == ThemeKind::Light ? kLight : kDark;
+    if (!g_hasAccent) return;
+    ImVec4 c = g_accent;
+    c.w = 1.0f;
+    const float l = Luminance(c);
+    if (g_theme == ThemeKind::Dark && l < 0.55f) {
+        // Too dark for a dark window: toward white until it reads.
+        const float k = (0.55f - l) / std::max(0.001f, 1.0f - l);
+        c = ImVec4(c.x + (1.0f - c.x) * k, c.y + (1.0f - c.y) * k, c.z + (1.0f - c.z) * k, 1.0f);
+    } else if (g_theme == ThemeKind::Light && l > 0.42f) {
+        const float k = 0.42f / l;
+        c = ImVec4(c.x * k, c.y * k, c.z * k, 1.0f);
+    }
+    g_live.accent = c;
+    g_live.onAccent = Luminance(c) > 0.5f ? Hex(0x1B1D1F) : Hex(0xF4F1EA);
+}
 
 }  // namespace
 
 void SetTheme(ThemeKind kind) {
     g_theme = kind;
+    Rebuild();
 }
 
 ThemeKind CurrentTheme() {
@@ -60,7 +88,13 @@ ThemeKind CurrentTheme() {
 }
 
 const Palette& P() {
-    return g_theme == ThemeKind::Light ? kLight : kDark;
+    return g_live;
+}
+
+void SetAccent(const ImVec4* color) {
+    g_hasAccent = color != nullptr;
+    if (color != nullptr) g_accent = *color;
+    Rebuild();
 }
 
 }  // namespace luma::launcher::gui

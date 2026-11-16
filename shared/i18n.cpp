@@ -25,6 +25,20 @@ struct Entry {
 // clang-format off
 constexpr Entry kEntries[] = {
     // --- Barra lateral -------------------------------------------------------------
+    {"nav.lyrics", {"Lyrics", "Letras", "Letras"}},
+    {"nav.spotify", {"Spotify", "Spotify", "Spotify"}},
+    {"home.good_morning", {"Good morning", "Buenos días", "Bom dia"}},
+    {"home.good_afternoon", {"Good afternoon", "Buenas tardes", "Boa tarde"}},
+    {"home.good_evening", {"Good evening", "Buenas noches", "Boa noite"}},
+    {"home.good_night", {"Late night", "Buenas noches", "Boa madrugada"}},
+    {"home.music_tagline", {"Your music, inside Minecraft.", "Tu música, dentro de Minecraft.", "Sua música, dentro do Minecraft."}},
+    {"music.now_playing", {"Now playing", "Sonando ahora", "Tocando agora"}},
+    {"music.paused", {"Paused", "En pausa", "Pausado"}},
+    {"music.nothing_title", {"Play some music", "Pon algo de música", "Coloque uma música"}},
+    {"music.nothing_text", {"Spotify, YouTube Music, a browser... any app with media controls shows up here, and in the game.", "Spotify, YouTube Music, un navegador... cualquier app con controles de música aparece aquí, y en el juego.", "Spotify, YouTube Music, um navegador... qualquer app com controles de música aparece aqui, e no jogo."}},
+    {"lyrics.soon_text", {"The lyrics' styles, with their previews, come next.", "Los estilos de las letras, con su vista previa, vienen en la próxima parte.", "Os estilos das letras, com a prévia, vêm na próxima parte."}},
+    {"spotify.soon_text", {"Connecting Spotify and your queue come in a next part.", "Conectar Spotify y tu cola vienen en una próxima parte.", "Conectar o Spotify e sua fila vêm numa próxima parte."}},
+    {"orb.in_game", {"In the game", "En el juego", "No jogo"}},
     {"nav.home",            {"Home", "Inicio", "Início"}},
     {"nav.addons",          {"Add-ons", "Add-ons", "Add-ons"}},
     {"nav.skins",           {"Skins", "Skins", "Skins"}},

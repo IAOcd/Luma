@@ -36,6 +36,11 @@ struct Palette {
 void SetTheme(ThemeKind kind);
 ThemeKind CurrentTheme();
 const Palette& P();
+// The ALBUM'S COLOR as the accent (the Play button, the active section, the
+// progress...): nullptr = the theme's own. It's adjusted so it always reads
+// well on the theme (lighter on the dark one, darker on the light one), and
+// the text on it is dark or light by its brightness.
+void SetAccent(const ImVec4* color);
 
 // Color con transparencia extra (alpha multiplicado).
 inline ImU32 Col(const ImVec4& c, float alpha = 1.0f) {

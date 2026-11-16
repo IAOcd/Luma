@@ -38,6 +38,11 @@ add_executable(LumaLauncher WIN32
     src/net.cpp          # pedidos HTTPS (WinHTTP)
     src/signature.cpp    # comprobar la firma de las actualizaciones
     src/updater.cpp      # actualizaciones automáticas desde GitHub
+    # The music, with the SAME code as the game (what's playing, its art,
+    # and how the sound moves): the launcher shows what Luma shows.
+    ${PROJECT_SOURCE_DIR}/client/core/media.cpp
+    ${PROJECT_SOURCE_DIR}/client/core/audio_viz.cpp
+    ${PROJECT_SOURCE_DIR}/client/core/logger.cpp
     ${PROJECT_SOURCE_DIR}/client/render/icons.cpp   # el mismo dibujador de íconos del menú
     ${PROJECT_SOURCE_DIR}/client/render/nanosvg_impl.cpp
     assets/launcher.rc
@@ -78,6 +83,8 @@ target_link_libraries(LumaLauncher PRIVATE
     crypt32        # DPAPI: guardar la sesión cifrada
     windowscodecs  # WIC: decodificar la foto de perfil
     shlwapi        # SHCreateMemStream
+    windowsapp     # WinRT: the music playing in Windows (core/media.cpp)
+    mmdevapi       # listening to the sound (core/audio_viz.cpp)
 )
 
 # --- La consola (pruebas) ----------------------------------------------------------

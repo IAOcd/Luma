@@ -46,6 +46,9 @@
 #include <nlohmann/json.hpp>
 
 #include "account.h"
+#include "core/audio_viz.h"
+#include "core/media.h"
+#include "perf/timer.h"
 #include "core/version.h"
 #include "flow.h"
 #include "gui/sky.h"
@@ -96,7 +99,9 @@ constexpr float kPad = 24.0f;      // margen del contenido
 constexpr float kGap = 18.0f;      // separación entre tarjetas
 constexpr float kRound = 14.0f;    // esquinas de las tarjetas
 
-enum class Page { Home = 0, Addons, Skins, Settings };
+// (Add-ons and Skins are kept in the code, but the music launcher shows
+// Home, Lyrics, Spotify and Settings.)
+enum class Page { Home = 0, Addons, Skins, Settings, Lyrics, Spotify };
 
 // --- Estado ---------------------------------------------------------------------
 HWND g_hwnd = nullptr;
@@ -291,10 +296,20 @@ float TextWrap(ImDrawList* d, ImFont* font, ImVec2 pos, ImU32 color, const char*
     return font->CalcTextSizeA(font->FontSize, FLT_MAX, width, text).y;
 }
 
+// 0..1: how much the window is "glass" over the album's light (Home, with music).
+float g_glass = 0.0f;
+
 void Card(ImDrawList* d, ImVec2 min, ImVec2 max, float hover = 0.0f) {
     const Palette& p = P();
-    d->AddRectFilled(min, max, C(Mix(p.card, p.cardHover, hover)), S(kRound));
-    d->AddRect(min, max, C(p.border), S(kRound), 0, 1.0f);
+    // Over the album's light the cards are glass: see-through, with a fine
+    // bright edge on top (like light catching the edge of a pane).
+    const float alpha = 1.0f - 0.52f * g_glass;
+    d->AddRectFilled(min, max, C(Mix(p.card, p.cardHover, hover), alpha), S(kRound));
+    d->AddRect(min, max, C(Mix(p.border, ImVec4(1, 1, 1, 0.10f), g_glass)), S(kRound), 0, 1.0f);
+    if (g_glass > 0.01f) {
+        d->AddLine(ImVec2(min.x + S(kRound), min.y + 1.0f), ImVec2(max.x - S(kRound), min.y + 1.0f), C(ImVec4(1, 1, 1, 1), 0.10f * g_glass),
+                   1.0f);
+    }
 }
 
 // Rectángulo redondeado con degradado vertical (top -> bottom).
@@ -881,7 +896,7 @@ void DrawSettingsLinks(ImDrawList* d, ImVec2 min, ImVec2 max) {
 void DrawSidebar(ImDrawList* d, ImVec2 display, const account::Info& acc, const LocalData& data) {
     const Palette& p = P();
     const float width = S(kSidebarWidth);
-    d->AddRectFilled(ImVec2(0, 0), ImVec2(width, display.y), Col(p.sidebar));
+    d->AddRectFilled(ImVec2(0, 0), ImVec2(width, display.y), Col(p.sidebar, 1.0f - 0.58f * g_glass));
     d->AddLine(ImVec2(width, 0), ImVec2(width, display.y), Col(p.border));
 
     DrawSidebarStars(d, width);
@@ -901,8 +916,8 @@ void DrawSidebar(ImDrawList* d, ImVec2 display, const account::Info& acc, const 
     };
     const Item items[] = {
         {Page::Home, kIconHome, "nav.home"},
-        {Page::Addons, kIconAddons, "nav.addons"},
-        {Page::Skins, kIconSkins, "nav.skins"},
+        {Page::Lyrics, icons::kList, "nav.lyrics"},
+        {Page::Spotify, icons::kMusic2, "nav.spotify"},
         {Page::Settings, kIconSliders, "nav.settings"},
     };
     float y = S(170.0f);
@@ -920,6 +935,10 @@ void DrawSidebar(ImDrawList* d, ImVec2 display, const account::Info& acc, const 
         const bool active = g_page == item.page;
         const float on = Anim(ImGui::GetID(id) + 1, active, 12.0f);
         if (on > 0.0f) {
+            for (int g = 3; g >= 1; --g) {
+                const float e = S(3.0f) * static_cast<float>(g);
+                d->AddRectFilled(ImVec2(min.x - e, min.y - e), ImVec2(max.x + e, max.y + e), Col(p.accent, 0.07f * on), S(11.0f) + e);
+            }
             d->AddRectFilled(min, max, Col(p.accent, on), S(11.0f));
         }
         if (hover > 0.0f && on < 1.0f) {
@@ -1600,6 +1619,1013 @@ void DrawClientInfo(ImDrawList* d, ImVec2 min, ImVec2 max, const GameStatus& sta
             status.lumaLoaded ? &p.success : &p.textDim, icons::kLumaLogo);
     y += rowH;
     InfoRow(d, ImVec2(x, y), w, T("home.platform"), WindowsName(), nullptr, kIconWindows);
+}
+
+// =============================================================================
+//  THE MUSIC (Inicio): what's playing, with the SAME code as the game
+// =============================================================================
+//  client/core/media.cpp reads what Windows says is playing (Spotify, a
+//  browser, any app with media controls), its album art and its colors.
+//  client/core/audio_viz.cpp listens to how the sound moves (only while the
+//  launcher is on screen), and the page breathes with it.
+//
+//  THE ALBUM'S COLOR: the accent of the whole launcher (the Play button, the
+//  active section, the progress) follows the album art, sliding slowly to
+//  the new one when the song changes (theme.h SetAccent).
+// =============================================================================
+
+// The album art on the GPU. Two of them while a new one fades in over the old.
+struct ArtTexture {
+    ID3D11ShaderResourceView* view = nullptr;
+};
+ArtTexture g_art;         // the current one
+ArtTexture g_artOld;      // the one fading out
+float g_artFade = 1.0f;   // 0..1: how far the new one came in
+std::uint32_t g_artVersion = 0;
+std::vector<std::uint8_t> g_artPixels;
+
+ImVec4 g_accentNow{0.91f, 0.90f, 0.87f, 1.0f};  // the accent this frame (it slides toward the album's)
+bool g_accentReady = false;
+std::uint32_t g_shownTrack = 0;
+float g_trackIn = 1.0f;   // 0..1: the new song's text coming in
+float g_playMorph = 1.0f; // 0 = pause icon, 1 = play icon (animated)
+float g_discOut = 0.0f;   // the record sliding out from behind the art while playing
+float g_discAngle = 0.0f;
+float g_bassSmooth = 0.0f;
+float g_levelSmooth = 0.0f;
+
+void ReleaseArt(ArtTexture& t) {
+    if (t.view != nullptr) {
+        t.view->Release();
+        t.view = nullptr;
+    }
+}
+
+ID3D11ShaderResourceView* MakeArt(const std::vector<std::uint8_t>& rgba) {
+    if (g_device == nullptr || rgba.size() < static_cast<std::size_t>(media::kArtSize) * media::kArtSize * 4) return nullptr;
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = media::kArtSize;
+    desc.Height = media::kArtSize;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA init{rgba.data(), media::kArtSize * 4, 0};
+    ID3D11Texture2D* texture = nullptr;
+    ID3D11ShaderResourceView* view = nullptr;
+    if (SUCCEEDED(g_device->CreateTexture2D(&desc, &init, &texture))) {
+        g_device->CreateShaderResourceView(texture, nullptr, &view);
+        texture->Release();
+    }
+    return view;
+}
+
+// A soft round light (no blur in ImGui: many see-through circles, bigger and
+// fainter, add up to a glow).
+// The light itself is a picture: white with a perfectly smooth round fade
+// (a gaussian), made once, tinted when drawn. Its transparency has a tiny
+// bit of noise ("dither"): without it, a dark screen shows the steps of the
+// fade as rings.
+ID3D11ShaderResourceView* g_lightTex = nullptr;
+
+ID3D11ShaderResourceView* LightTexture() {
+    if (g_lightTex != nullptr || g_device == nullptr) return g_lightTex;
+    constexpr int N = 256;
+    std::vector<std::uint8_t> rgba(static_cast<std::size_t>(N) * N * 4, 255);
+    std::uint32_t seed = 12345u;
+    for (int y = 0; y < N; ++y) {
+        for (int x = 0; x < N; ++x) {
+            const float fx = (static_cast<float>(x) + 0.5f) / N * 2.0f - 1.0f;
+            const float fy = (static_cast<float>(y) + 0.5f) / N * 2.0f - 1.0f;
+            const float r2 = fx * fx + fy * fy;
+            float a = r2 >= 1.0f ? 0.0f : std::exp(-3.6f * r2) * (1.0f - r2 * r2);
+            seed = seed * 1664525u + 1013904223u;
+            const float noise = (static_cast<float>(seed >> 8) / 16777216.0f - 0.5f) / 255.0f;
+            a = std::clamp(a + noise * 1.5f, 0.0f, 1.0f);
+            rgba[(static_cast<std::size_t>(y) * N + x) * 4 + 3] = static_cast<std::uint8_t>(a * 255.0f + 0.5f);
+        }
+    }
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = N;
+    desc.Height = N;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA init{rgba.data(), N * 4, 0};
+    ID3D11Texture2D* texture = nullptr;
+    if (SUCCEEDED(g_device->CreateTexture2D(&desc, &init, &texture))) {
+        g_device->CreateShaderResourceView(texture, nullptr, &g_lightTex);
+        texture->Release();
+    }
+    return g_lightTex;
+}
+
+// A soft light: round (or stretched: "rx" x "ry"), its color, its strength.
+void SoftLightOval(ImDrawList* d, ImVec2 center, float rx, float ry, const ImVec4& color, float strength) {
+    ID3D11ShaderResourceView* tex = LightTexture();
+    if (tex == nullptr) return;
+    d->AddImage(reinterpret_cast<ImTextureID>(tex), ImVec2(center.x - rx, center.y - ry), ImVec2(center.x + rx, center.y + ry), ImVec2(0, 0),
+                ImVec2(1, 1), C(color, std::clamp(strength * 0.55f, 0.0f, 1.0f)));
+}
+void SoftLight(ImDrawList* d, ImVec2 center, float radius, const ImVec4& color, float strength) {
+    SoftLightOval(d, center, radius, radius, color, strength);
+}
+
+// THE AMBIENT LIGHT: the album art, very blurred, behind the whole window (like
+// the light of the record filling the room), with its colors drifting
+// slowly as soft lights that swell with the bass. The blur is cheap: the art
+// shrunk to 24x24 pixels (and softened) and stretched over the window: the
+// GPU's smooth stretching does the rest.
+ArtTexture g_blur;
+ArtTexture g_blurOld;
+float g_ambient = 0.0f;  // 0..1: the ambient on (there's music)
+
+ID3D11ShaderResourceView* MakeBlur(const std::vector<std::uint8_t>& rgba) {
+    constexpr int kSmall = 24;
+    const int n = media::kArtSize;
+    if (g_device == nullptr || rgba.size() < static_cast<std::size_t>(n) * n * 4) return nullptr;
+    std::vector<float> pix(kSmall * kSmall * 3, 0.0f);
+    const int block = n / kSmall;
+    for (int by = 0; by < kSmall; ++by) {
+        for (int bx = 0; bx < kSmall; ++bx) {
+            float sum[3] = {0, 0, 0};
+            for (int y = by * block; y < (by + 1) * block; y += 2) {
+                for (int x = bx * block; x < (bx + 1) * block; x += 2) {
+                    const std::uint8_t* px = &rgba[(static_cast<std::size_t>(y) * n + x) * 4];
+                    sum[0] += px[0];
+                    sum[1] += px[1];
+                    sum[2] += px[2];
+                }
+            }
+            const float count = static_cast<float>((block / 2) * (block / 2));
+            for (int c = 0; c < 3; ++c) pix[(by * kSmall + bx) * 3 + c] = sum[c] / count;
+        }
+    }
+    // Softer still: three passes of "each pixel = the average of its neighbors".
+    std::vector<float> tmp(pix.size());
+    for (int pass = 0; pass < 3; ++pass) {
+        for (int y = 0; y < kSmall; ++y) {
+            for (int x = 0; x < kSmall; ++x) {
+                for (int c = 0; c < 3; ++c) {
+                    float s = 0.0f;
+                    int k = 0;
+                    for (int dy = -1; dy <= 1; ++dy) {
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            const int xx = std::clamp(x + dx, 0, kSmall - 1), yy = std::clamp(y + dy, 0, kSmall - 1);
+                            s += pix[(yy * kSmall + xx) * 3 + c];
+                            ++k;
+                        }
+                    }
+                    tmp[(y * kSmall + x) * 3 + c] = s / static_cast<float>(k);
+                }
+            }
+        }
+        pix.swap(tmp);
+    }
+    // A little more color (the blur grays it), as a picture for the GPU.
+    std::vector<std::uint8_t> out(kSmall * kSmall * 4, 255);
+    for (int i = 0; i < kSmall * kSmall; ++i) {
+        const float r = pix[i * 3], g = pix[i * 3 + 1], b = pix[i * 3 + 2];
+        const float gray = (r + g + b) / 3.0f;
+        const float sat = 1.35f;
+        out[i * 4 + 0] = static_cast<std::uint8_t>(std::clamp(gray + (r - gray) * sat, 0.0f, 255.0f));
+        out[i * 4 + 1] = static_cast<std::uint8_t>(std::clamp(gray + (g - gray) * sat, 0.0f, 255.0f));
+        out[i * 4 + 2] = static_cast<std::uint8_t>(std::clamp(gray + (b - gray) * sat, 0.0f, 255.0f));
+    }
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = kSmall;
+    desc.Height = kSmall;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA init{out.data(), kSmall * 4, 0};
+    ID3D11Texture2D* texture = nullptr;
+    ID3D11ShaderResourceView* view = nullptr;
+    if (SUCCEEDED(g_device->CreateTexture2D(&desc, &init, &texture))) {
+        g_device->CreateShaderResourceView(texture, nullptr, &view);
+        texture->Release();
+    }
+    return view;
+}
+
+void DrawAmbient(ImDrawList* d, ImVec2 display, const media::Track& t) {
+    const Palette& p = P();
+    g_ambient += ((t.present ? 1.0f : 0.0f) - g_ambient) * std::min(1.0f, Dt() * 2.0f);
+    g_glass = g_ambient;
+    if (g_ambient < 0.01f) return;
+    const float now = static_cast<float>(ImGui::GetTime());
+    const float big = std::max(display.x, display.y);
+    // 1. The blurred art, covering the window, slowly drifting and breathing.
+    {
+        const float half = big * 0.5f * 1.25f;
+        const ImVec2 c(display.x * 0.5f, display.y * 0.5f);
+        const ImVec2 a(c.x - half, c.y - half), b(c.x + half, c.y + half);
+        auto draw = [&](ID3D11ShaderResourceView* view, float alpha) {
+            if (view != nullptr && alpha > 0.0f) {
+                d->AddImage(reinterpret_cast<ImTextureID>(view), a, b, ImVec2(0, 0), ImVec2(1, 1), Col(ImVec4(1, 1, 1, 1), alpha));
+            }
+        };
+        if (g_blur.view == nullptr) {
+            d->AddRectFilled(ImVec2(0, 0), display, Col(p.accent, 0.35f * g_ambient));
+        }
+        draw(g_blurOld.view, g_ambient * (1.0f - g_artFade));
+        draw(g_blur.view, g_ambient * (g_blurOld.view != nullptr ? g_artFade : 1.0f));
+    }
+    // 2. Its colors, as big soft lights resting in the corners (they glow a
+    // little brighter with the bass; they don't move).
+    static const float kSpots[5][2] = {{0.12f, 0.18f}, {0.88f, 0.22f}, {0.20f, 0.88f}, {0.82f, 0.85f}, {0.50f, 0.50f}};
+    for (int i = 0; i < std::clamp(t.paletteCount, 0, 5); ++i) {
+        const ImVec2 c(display.x * kSpots[i][0], display.y * kSpots[i][1]);
+        const ImVec4 col(t.palette[i][0], t.palette[i][1], t.palette[i][2], 1.0f);
+        SoftLight(d, c, big * 0.55f, col, (0.6f + 0.25f * g_bassSmooth) * g_ambient);
+    }
+    (void)now;
+    // 3. Shade, so the words read: darker at the bottom and the edges.
+    const bool dark = CurrentTheme() == ThemeKind::Dark;
+    const ImVec4 shade = dark ? ImVec4(0.05f, 0.05f, 0.06f, 1.0f) : ImVec4(0.97f, 0.96f, 0.94f, 1.0f);
+    const float top = (dark ? 0.42f : 0.50f) * g_ambient, bottom = (dark ? 0.72f : 0.70f) * g_ambient;
+    d->AddRectFilledMultiColor(ImVec2(0, 0), display, Col(shade, top), Col(shade, top), Col(shade, bottom), Col(shade, bottom));
+    const float edge = big * 0.18f;
+    d->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(edge, display.y), Col(shade, 0.35f * g_ambient), Col(shade, 0.0f),
+                               Col(shade, 0.0f), Col(shade, 0.35f * g_ambient));
+    d->AddRectFilledMultiColor(ImVec2(display.x - edge, 0), display, Col(shade, 0.0f), Col(shade, 0.35f * g_ambient),
+                               Col(shade, 0.35f * g_ambient), Col(shade, 0.0f));
+}
+
+// Once per frame: the music, its art and the accent.
+void UpdateMusic(const media::Track& t, bool visible) {
+    media::Want(media::kMenu, visible);
+    audioviz::Want(visible && g_page == Page::Home && t.present && t.playing);
+    // A new album art: it fades in over the old one.
+    std::uint32_t version = g_artVersion;
+    if (media::TakeArt(g_artVersion, g_artPixels, version)) {
+        g_artVersion = version;
+        ID3D11ShaderResourceView* view = MakeArt(g_artPixels);
+        if (view != nullptr) {
+            ReleaseArt(g_artOld);
+            g_artOld = g_art;
+            g_art.view = view;
+            ReleaseArt(g_blurOld);
+            g_blurOld = g_blur;
+            g_blur.view = MakeBlur(g_artPixels);
+            g_artFade = 0.0f;
+        }
+    }
+    if (!t.present || t.artVersion == 0) {
+        if (g_art.view != nullptr && g_artFade >= 1.0f) {
+            ReleaseArt(g_artOld);
+            g_artOld = g_art;
+            g_art = ArtTexture{};
+            ReleaseArt(g_blurOld);
+            g_blurOld = g_blur;
+            g_blur = ArtTexture{};
+            g_artFade = 0.0f;
+            g_artVersion = 0;
+        }
+    }
+    g_artFade = std::min(1.0f, g_artFade + Dt() * 2.2f);
+    if (g_artFade >= 1.0f) {
+        ReleaseArt(g_artOld);
+        ReleaseArt(g_blurOld);
+    }
+    // A new song: its name comes in.
+    if (t.trackId != g_shownTrack) {
+        g_shownTrack = t.trackId;
+        g_trackIn = 0.0f;
+    }
+    g_trackIn = std::min(1.0f, g_trackIn + Dt() * 2.5f);
+    // The accent: toward the album's color (slowly), or the theme's own.
+    const ImVec4 target = t.present ? ImVec4(t.accent[0], t.accent[1], t.accent[2], 1.0f) : ImVec4(0, 0, 0, 0);
+    if (t.present) {
+        if (!g_accentReady) {
+            g_accentNow = target;
+            g_accentReady = true;
+        }
+        const float k = 1.0f - std::exp(-Dt() * 2.5f);
+        g_accentNow = Mix(g_accentNow, target, k);
+        SetAccent(&g_accentNow);
+    } else {
+        g_accentReady = false;
+        SetAccent(nullptr);
+    }
+    // The play / pause icon and the record.
+    const float dt = Dt();
+    g_playMorph += ((t.playing ? 0.0f : 1.0f) - g_playMorph) * std::min(1.0f, dt * 14.0f);
+    g_discOut += ((t.present && t.playing ? 1.0f : 0.0f) - g_discOut) * std::min(1.0f, dt * 4.0f);
+    if (t.playing) g_discAngle += dt * 1.6f;
+    // The sound (smoothed: the glow breathes, it doesn't flicker).
+    const audioviz::Levels lv = audioviz::Get();
+    const float bass = lv.live && t.playing ? std::max(lv.bass, lv.kick * 0.8f) : 0.0f;
+    const float level = lv.live && t.playing ? lv.level : 0.0f;
+    g_bassSmooth += (bass - g_bassSmooth) * std::min(1.0f, dt * (bass > g_bassSmooth ? 18.0f : 5.0f));
+    g_levelSmooth += (level - g_levelSmooth) * std::min(1.0f, dt * 6.0f);
+}
+
+void FormatTime(double seconds, char* out, std::size_t size) {
+    const int s = std::max(0, static_cast<int>(seconds));
+    std::snprintf(out, size, "%d:%02d", s / 60, s % 60);
+}
+
+// A round button with an icon; pressing it sinks it a little.
+bool RoundButton(ImDrawList* d, const char* id, ImVec2 center, float radius, const char* icon, float iconSize, bool primary,
+                 bool enabled = true) {
+    const Palette& p = P();
+    float hover = 0.0f;
+    const bool clicked = Hit(id, ImVec2(center.x - radius, center.y - radius), ImVec2(center.x + radius, center.y + radius), &hover,
+                             enabled);
+    const float press = Anim(ImGui::GetID(id) + 11, ImGui::IsItemActive() && enabled, 22.0f);
+    const float r = radius * (1.0f - 0.07f * press) * (1.0f + 0.04f * hover);
+    const float a = enabled ? 1.0f : 0.35f;
+    if (primary) {
+        d->AddCircleFilled(center, r + S(6.0f) * hover, C(p.text, 0.08f * hover), 48);
+        d->AddCircleFilled(center, r, C(p.text, a), 48);
+        icons::Draw(d, icon, center, iconSize, C(p.background, a));
+    } else {
+        d->AddCircleFilled(center, r, C(Mix(p.card, p.cardHover, hover * 1.5f), a), 48);
+        icons::Draw(d, icon, center, iconSize, C(Mix(p.textDim, p.text, hover), a));
+    }
+    return clicked;
+}
+
+// "Good morning/afternoon/evening", by the clock.
+const char* GreetingKey() {
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+    localtime_s(&local, &now);
+    if (local.tm_hour < 5) return "home.good_night";
+    if (local.tm_hour < 12) return "home.good_morning";
+    if (local.tm_hour < 20) return "home.good_afternoon";
+    return "home.good_evening";
+}
+
+// How far a block of the page came in (0..1): they come in one after another.
+float Stagger(int index) {
+    const float t = std::clamp(g_pageFade * 1.6f - static_cast<float>(index) * 0.18f, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+void DrawNowPlaying(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t) {
+    const Palette& p = P();
+    const float rounding = S(kRound + 6.0f);
+    Card(d, min, max);
+    d->PushClipRect(ImVec2(min.x + 1, min.y + 1), ImVec2(max.x - 1, max.y - 1), true);
+    const float h = max.y - min.y;
+    const float artSize = std::min(h - S(56.0f), S(300.0f));
+    const ImVec2 artMin(min.x + S(28.0f), min.y + (h - artSize) * 0.5f);
+    const ImVec2 artMax(artMin.x + artSize, artMin.y + artSize);
+    const ImVec2 artCenter((artMin.x + artMax.x) * 0.5f, (artMin.y + artMax.y) * 0.5f);
+
+    if (!t.present) {
+        // Nothing playing: a quiet invitation, breathing.
+        const float breathe = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 1.4f);
+        SoftLight(d, artCenter, artSize * 0.9f, p.text, 0.25f + 0.15f * breathe);
+        d->AddRectFilled(artMin, artMax, C(p.background), S(18.0f));
+        d->AddRect(artMin, artMax, C(p.border), S(18.0f));
+        icons::Draw(d, icons::kMusic, artCenter, artSize * 0.28f, C(p.textDim, 0.6f + 0.3f * breathe), S(1.6f));
+        const float x = artMax.x + S(36.0f);
+        const float w = max.x - x - S(28.0f);
+        float y = artCenter.y - S(40.0f);
+        TextFit(d, g_fonts.hero, ImVec2(x, y), C(p.text), T("music.nothing_title"), w);
+        y += g_fonts.hero->FontSize + S(8.0f);
+        TextWrap(d, g_fonts.regular, ImVec2(x, y), C(p.textDim), T("music.nothing_text"), w);
+        d->PopClipRect();
+        return;
+    }
+
+    // The light behind the art: the album's color, breathing with the bass.
+    SoftLight(d, artCenter, artSize * (0.95f + 0.22f * g_bassSmooth), p.accent, 0.55f + 0.9f * g_bassSmooth);
+
+    // The record: it slides out from behind the art while playing, and turns.
+    if (g_discOut > 0.01f) {
+        const float r = artSize * 0.46f;
+        const ImVec2 c(artCenter.x + artSize * 0.30f * g_discOut, artCenter.y);
+        d->AddCircleFilled(c, r, C(ImVec4(0.06f, 0.06f, 0.07f, 1.0f), g_discOut), 64);
+        for (int g = 1; g <= 5; ++g) {
+            d->AddCircle(c, r * (0.48f + 0.09f * static_cast<float>(g)), C(ImVec4(1, 1, 1, 1), 0.05f * g_discOut), 64, 1.0f);
+        }
+        // a light reflection that turns with it
+        d->PathArcTo(c, r * 0.82f, g_discAngle, g_discAngle + 0.9f, 20);
+        d->PathStroke(C(ImVec4(1, 1, 1, 1), 0.12f * g_discOut), ImDrawFlags_None, S(3.0f));
+        d->PathArcTo(c, r * 0.82f, g_discAngle + 3.14159f, g_discAngle + 4.04f, 20);
+        d->PathStroke(C(ImVec4(1, 1, 1, 1), 0.08f * g_discOut), ImDrawFlags_None, S(3.0f));
+        d->AddCircleFilled(c, r * 0.30f, C(p.accent, g_discOut), 48);
+        d->AddCircleFilled(c, r * 0.05f, C(ImVec4(0.06f, 0.06f, 0.07f, 1.0f), g_discOut), 16);
+    }
+
+    // The art (the new one fades in over the old, growing a little).
+    const float pop = 0.94f + 0.06f * (1.0f - (1.0f - g_artFade) * (1.0f - g_artFade));
+    auto drawArt = [&](ID3D11ShaderResourceView* view, float alpha, float scale) {
+        const float half = artSize * 0.5f * scale;
+        const ImVec2 a(artCenter.x - half, artCenter.y - half), b(artCenter.x + half, artCenter.y + half);
+        if (view == nullptr) {
+            d->AddRectFilled(a, b, C(p.accent, alpha), S(18.0f));
+            icons::Draw(d, icons::kMusic, artCenter, artSize * 0.26f, C(p.onAccent, alpha * 0.7f), S(1.6f));
+            return;
+        }
+        d->AddImageRounded(reinterpret_cast<ImTextureID>(view), a, b, ImVec2(0, 0), ImVec2(1, 1), C(ImVec4(1, 1, 1, 1), alpha),
+                           S(18.0f));
+    };
+    // (a soft shadow under it)
+    d->AddRectFilled(ImVec2(artMin.x + S(4.0f), artMin.y + S(10.0f)), ImVec2(artMax.x - S(4.0f), artMax.y + S(10.0f)),
+                     C(ImVec4(0, 0, 0, 1), 0.28f), S(20.0f));
+    if (g_artOld.view != nullptr && g_artFade < 1.0f) drawArt(g_artOld.view, 1.0f, 1.0f);
+    drawArt(g_art.view, g_artFade < 1.0f ? g_artFade : 1.0f, pop);
+    d->AddRect(artMin, artMax, C(ImVec4(1, 1, 1, 1), 0.06f), S(18.0f));
+
+    // --- The words -----------------------------------------------------------------------
+    const float x = artMax.x + S(44.0f) + artSize * 0.24f * g_discOut;
+    const float w = max.x - x - S(30.0f);
+    const float slide = (1.0f - (1.0f - (1.0f - g_trackIn) * (1.0f - g_trackIn))) * S(14.0f);
+    const float textA = g_trackIn;
+    float y = artMin.y + S(6.0f);
+    // "Now playing" + a little equalizer that dances with the sound.
+    {
+        const char* label = t.playing ? T("music.now_playing") : T("music.paused");
+        Text(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), label);
+        const float lx = x + TextSize(g_fonts.tiny, label).x + S(12.0f);
+        const audioviz::Levels lv = audioviz::Get();
+        const float now = static_cast<float>(ImGui::GetTime());
+        for (int b = 0; b < 4; ++b) {
+            float v = 0.15f;
+            if (t.playing) {
+                v = lv.live ? lv.fast[std::min(audioviz::kBands - 1, 2 + b * 9)]
+                            : 0.35f + 0.3f * std::sin(now * (5.0f + static_cast<float>(b)) + static_cast<float>(b));
+            }
+            const float bh = S(3.0f) + S(11.0f) * std::clamp(v, 0.0f, 1.0f);
+            const float bx = lx + static_cast<float>(b) * S(5.0f);
+            const float by = y + g_fonts.tiny->FontSize * 0.5f + S(7.0f);
+            d->AddRectFilled(ImVec2(bx, by - bh), ImVec2(bx + S(3.0f), by), C(p.accent), S(1.5f));
+        }
+        if (t.app[0] != '\0') {
+            const ImVec2 as = TextSize(g_fonts.tiny, t.app);
+            const ImVec2 cmin(max.x - S(30.0f) - as.x - S(20.0f), y - S(4.0f));
+            const ImVec2 cmax(max.x - S(30.0f), y + as.y + S(4.0f));
+            d->AddRectFilled(cmin, cmax, C(p.background, 0.7f), S(12.0f));
+            Text(d, g_fonts.tiny, ImVec2(cmin.x + S(10.0f), y), C(p.textDim), t.app);
+        }
+    }
+    y += g_fonts.tiny->FontSize + S(14.0f);
+    TextFit(d, g_fonts.hero, ImVec2(x + slide, y), C(p.text, textA), t.title, w);
+    y += g_fonts.hero->FontSize + S(6.0f);
+    {
+        char line[340];
+        if (t.album[0] != '\0' && std::strcmp(t.album, t.title) != 0) {
+            std::snprintf(line, sizeof(line), "%s  ·  %s", t.artist, t.album);
+        } else {
+            std::snprintf(line, sizeof(line), "%s", t.artist);
+        }
+        TextFit(d, g_fonts.semibold, ImVec2(x + slide * 1.6f, y), C(p.textDim, textA), line, w);
+    }
+
+    // --- The progress (click to jump) ------------------------------------------------------
+    const float barY = artMax.y - S(88.0f);
+    if (t.duration > 0.0) {
+        const float frac = static_cast<float>(std::clamp(t.position / t.duration, 0.0, 1.0));
+        const ImVec2 bmin(x, barY - S(10.0f));
+        const ImVec2 bmax(x + w, barY + S(10.0f));
+        float hover = 0.0f;
+        const bool clicked = Hit("##seek", bmin, bmax, &hover, t.canSeek);
+        if (clicked) {
+            const float to = std::clamp((ImGui::GetIO().MousePos.x - x) / std::max(1.0f, w), 0.0f, 1.0f);
+            media::Seek(t.duration * to);
+        }
+        const float th = S(5.0f) + S(3.0f) * hover;
+        d->AddRectFilled(ImVec2(x, barY - th * 0.5f), ImVec2(x + w, barY + th * 0.5f), C(p.text, 0.12f), th * 0.5f);
+        d->AddRectFilled(ImVec2(x, barY - th * 0.5f), ImVec2(x + w * frac, barY + th * 0.5f), C(p.accent), th * 0.5f);
+        if (hover > 0.01f) d->AddCircleFilled(ImVec2(x + w * frac, barY), S(7.0f) * hover, C(p.text), 20);
+        char a[16], b[16];
+        FormatTime(t.position, a, sizeof(a));
+        FormatTime(t.duration, b, sizeof(b));
+        Text(d, g_fonts.tiny, ImVec2(x, barY + S(10.0f)), C(p.textDim), a);
+        Text(d, g_fonts.tiny, ImVec2(x + w - TextSize(g_fonts.tiny, b).x, barY + S(10.0f)), C(p.textDim), b);
+    }
+
+    // --- The controls ---------------------------------------------------------------------
+    const float cy = artMax.y - S(30.0f);
+    if (RoundButton(d, "##prev", ImVec2(x + S(24.0f), cy), S(24.0f), icons::kSkipBackFilled, S(18.0f), false, t.canPrevious)) {
+        media::Previous();
+    }
+    {
+        const ImVec2 c(x + S(24.0f) + S(70.0f), cy);
+        // The play button's halo breathes with the music.
+        if (t.playing) d->AddCircleFilled(c, S(30.0f) + S(10.0f) * g_bassSmooth, C(p.accent, 0.18f + 0.25f * g_bassSmooth), 48);
+        if (RoundButton(d, "##playpause", c, S(30.0f), g_playMorph > 0.5f ? icons::kPlayFilled : icons::kPauseFilled, S(22.0f), true,
+                        t.canPlayPause)) {
+            media::PlayPause();
+        }
+    }
+    if (RoundButton(d, "##next", ImVec2(x + S(24.0f) + S(140.0f), cy), S(24.0f), icons::kSkipForwardFilled, S(18.0f), false, t.canNext)) {
+        media::Next();
+    }
+    d->PopClipRect();
+}
+
+// The bar at the bottom: PLAY, and how the game and Luma are.
+void DrawPlayBar(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
+    const Palette& p = P();
+    Card(d, min, max);
+    const PlaySnapshot snap = g_flow.Snapshot();
+    const bool busy = g_flow.Busy();
+    const float h = max.y - min.y;
+    const float buttonH = std::min(S(56.0f), h - S(24.0f));
+    const ImVec2 bmin(min.x + S(18.0f), min.y + (h - buttonH) * 0.5f);
+    const ImVec2 bmax(bmin.x + S(220.0f), bmin.y + buttonH);
+    float hover = 0.0f;
+    if (Hit("##play", bmin, bmax, &hover, !busy)) {
+        g_flow.Start(g_upd.supportedMinecraft);
+    }
+    const float press = Anim(ImGui::GetID("##play") + 5, ImGui::IsItemActive() && !busy, 22.0f);
+    // Waiting for you: a slow breathing halo around it.
+    const float now = static_cast<float>(ImGui::GetTime());
+    if (!busy && !data.game.lumaLoaded) {
+        const float breathe = 0.5f + 0.5f * std::sin(now * 2.2f);
+        const float g = S(3.0f) + S(5.0f) * breathe;
+        d->AddRectFilled(ImVec2(bmin.x - g, bmin.y - g), ImVec2(bmax.x + g, bmax.y + g), C(p.accent, 0.10f + 0.12f * breathe),
+                         S(14.0f) + g);
+    }
+    const float sink = S(2.0f) * press;
+    const ImVec2 lmin(bmin.x + sink, bmin.y + sink), lmax(bmax.x - sink, bmax.y - sink);
+    d->AddRectFilled(lmin, lmax, C(busy ? Mix(p.accent, p.card, 0.35f) : p.accent), S(14.0f));
+    d->AddRectFilled(lmin, lmax, C(p.onAccent, 0.07f * hover), S(14.0f));
+    const char* label = T("home.play");
+    const ImVec2 ls = TextSize(g_fonts.title, label);
+    const float contentW = S(22.0f) + S(14.0f) + ls.x;
+    const float cx = (lmin.x + lmax.x) * 0.5f - contentW * 0.5f;
+    const float cy = (lmin.y + lmax.y) * 0.5f;
+    if (busy) {
+        Spinner(d, ImVec2(cx + S(11.0f), cy), S(9.0f), C(p.onAccent));
+    } else {
+        icons::Draw(d, kIconPlay, ImVec2(cx + S(11.0f), cy), S(22.0f), C(p.onAccent));
+    }
+    Text(d, g_fonts.title, ImVec2(cx + S(36.0f), cy - ls.y * 0.5f), C(p.onAccent), label);
+
+    // The little menu (open the Luma folder, the logs).
+    const ImVec2 dmin(bmax.x + S(8.0f), bmin.y);
+    const ImVec2 dmax(dmin.x + buttonH, bmax.y);
+    float dropHover = 0.0f;
+    if (Hit("##play_menu", dmin, dmax, &dropHover)) {
+        g_playMenuOpen = !g_playMenuOpen;
+        g_playMenuAnchor = dmin;
+    }
+    d->AddRectFilled(dmin, dmax, C(Mix(p.background, p.cardHover, dropHover)), S(14.0f));
+    d->AddRect(dmin, dmax, C(p.border), S(14.0f));
+    icons::Draw(d, g_playMenuOpen ? icons::kChevronUp : icons::kChevronDown, ImVec2((dmin.x + dmax.x) * 0.5f, (dmin.y + dmax.y) * 0.5f),
+                S(18.0f), C(p.text), S(2.0f));
+
+    // How it is: the play steps while they run, else the game and Luma.
+    const float sx = dmax.x + S(24.0f);
+    const float sw = max.x - sx - S(18.0f);
+    if (snap.state != PlayState::Idle) {
+        DrawPlayStatus(d, ImVec2(sx, min.y + h * 0.5f - S(18.0f)), sw, snap);
+        if (snap.state == PlayState::Unsupported && !busy && sw > S(200.0f)) {
+            if (Button("##play_anyway", ImVec2(max.x - S(18.0f) - S(160.0f), min.y + (h - S(38.0f)) * 0.5f), T("play.anyway"), false)) {
+                g_flow.Start(g_upd.supportedMinecraft, true);
+            }
+        }
+        return;
+    }
+    char game[96];
+    if (data.game.gameVersion.empty()) {
+        std::snprintf(game, sizeof(game), "Minecraft  ·  %s", T("home.not_installed"));
+    } else {
+        std::snprintf(game, sizeof(game), "Minecraft  ·  %s", data.game.gameVersion.c_str());
+    }
+    const float ty = min.y + h * 0.5f - g_fonts.semibold->FontSize;
+    TextFit(d, g_fonts.semibold, ImVec2(sx, ty), C(p.text), game, sw);
+    const bool loaded = data.game.lumaLoaded;
+    const char* state = loaded ? T("home.luma_loaded") : T("home.ready_to_play");
+    Dot(d, ImVec2(sx + S(6.0f), ty + g_fonts.semibold->FontSize + S(12.0f)), loaded ? p.success : p.accent);
+    TextFit(d, g_fonts.tiny, ImVec2(sx + S(18.0f), ty + g_fonts.semibold->FontSize + S(4.0f)), C(p.textDim), state, sw - S(18.0f));
+}
+
+// =============================================================================
+//  THE STAGE ("Escenario"): the launcher IS the song
+// =============================================================================
+//  No sidebar, no cards. The whole window is the music (DrawAmbient: the
+//  album art blurred, its colors drifting); on it, floating:
+//    - the album art and the song, in the middle;
+//    - the dock: a glass pill at the bottom with the sections (the lit one
+//      slides to the one you pick);
+//    - the PLAY orb, bottom right: a glowing ball that breathes and beats
+//      with the music;
+//    - the game's state, a small pill at the top.
+//  The other sections rise as a glass sheet over the stage (the music keeps
+//  playing behind it, a little darker).
+// =============================================================================
+
+constexpr float kDockH = 54.0f;
+constexpr float kDockBottom = 26.0f;
+float g_sheet = 0.0f;           // 0..1: the section sheet up
+float g_dockLit = 0.0f;         // where the lit pill of the dock is (index, animated)
+Page g_sheetPage = Page::Settings;  // the page the sheet shows (kept while it goes down)
+
+float EaseOutCubic(float t) {
+    t = std::clamp(t, 0.0f, 1.0f);
+    return 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+}
+
+// The album art (or a placeholder) at "center", "size" wide, with its old
+// one fading out.
+void DrawArtAt(ImDrawList* d, ImVec2 center, float size, float alpha) {
+    const Palette& p = P();
+    const float pop = 0.94f + 0.06f * EaseOutCubic(g_artFade);
+    auto one = [&](ID3D11ShaderResourceView* view, float a, float scale) {
+        const float half = size * 0.5f * scale;
+        const ImVec2 mn(center.x - half, center.y - half), mx(center.x + half, center.y + half);
+        if (view == nullptr) {
+            d->AddRectFilled(mn, mx, C(p.accent, a * alpha), S(22.0f));
+            icons::Draw(d, icons::kMusic, center, size * 0.26f, C(p.onAccent, a * alpha * 0.7f), S(1.6f));
+            return;
+        }
+        d->AddImageRounded(reinterpret_cast<ImTextureID>(view), mn, mx, ImVec2(0, 0), ImVec2(1, 1), C(ImVec4(1, 1, 1, 1), a * alpha),
+                           S(22.0f));
+    };
+    if (g_artOld.view != nullptr && g_artFade < 1.0f) one(g_artOld.view, 1.0f, 1.0f);
+    one(g_art.view, g_artOld.view != nullptr ? g_artFade : 1.0f, pop);
+    const float half = size * 0.5f;
+    d->AddRect(ImVec2(center.x - half, center.y - half), ImVec2(center.x + half, center.y + half), C(ImVec4(1, 1, 1, 1), 0.08f * alpha),
+               S(22.0f));
+}
+
+// The song on the stage: art + record + words + progress + controls.
+void DrawStageSong(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t, float alpha) {
+    const Palette& p = P();
+    const float W = max.x - min.x, H = max.y - min.y;
+    const float now = static_cast<float>(ImGui::GetTime());
+    const float artSize = std::clamp(std::min(H * 0.86f, W * 0.30f), S(170.0f), S(330.0f));
+    const float infoW = std::clamp(W * 0.42f, S(300.0f), S(520.0f));
+    const float discReach = artSize * 0.26f;
+    const float groupW = artSize + discReach + S(54.0f) + infoW;
+    const float x0 = min.x + (W - groupW) * 0.5f;
+    const float floatY = 0.0f;  // (still: nothing sways)
+    const ImVec2 artC(x0 + artSize * 0.5f, min.y + H * 0.5f + floatY);
+
+    if (!t.present) {
+        // Nothing playing: the stage waits, breathing.
+        const float breathe = 0.5f + 0.5f * std::sin(now * 1.3f);
+        const ImVec2 c(min.x + W * 0.5f, min.y + H * 0.42f);
+        SoftLight(d, c, S(160.0f) + S(30.0f) * breathe, p.text, (0.25f + 0.15f * breathe) * alpha);
+        icons::Draw(d, icons::kMusic, c, S(54.0f), C(p.text, (0.55f + 0.35f * breathe) * alpha), S(1.4f));
+        const char* title = T("music.nothing_title");
+        const ImVec2 ts = TextSize(g_fonts.hero, title);
+        Text(d, g_fonts.hero, ImVec2(c.x - ts.x * 0.5f, c.y + S(56.0f)), C(p.text, alpha), title);
+        const float tw = std::min(W * 0.6f, S(560.0f));
+        const char* text = T("music.nothing_text");
+        const ImVec2 xs = g_fonts.regular->CalcTextSizeA(g_fonts.regular->FontSize, FLT_MAX, tw, text);
+        TextWrap(d, g_fonts.regular, ImVec2(c.x - std::min(xs.x, tw) * 0.5f, c.y + S(56.0f) + ts.y + S(10.0f)), C(p.textDim, alpha), text, tw);
+        return;
+    }
+
+    // The art's own light, breathing with the bass.
+    SoftLight(d, artC, artSize * 1.15f, p.accent, (0.75f + 0.45f * g_bassSmooth) * alpha);
+    // The record behind it.
+    if (g_discOut > 0.01f) {
+        const float r = artSize * 0.47f;
+        const ImVec2 c(artC.x + discReach * g_discOut, artC.y);
+        const float a = g_discOut * alpha;
+        d->AddCircleFilled(c, r, C(ImVec4(0.05f, 0.05f, 0.06f, 1.0f), a), 72);
+        for (int g = 1; g <= 6; ++g) d->AddCircle(c, r * (0.42f + 0.085f * static_cast<float>(g)), C(ImVec4(1, 1, 1, 1), 0.045f * a), 72, 1.0f);
+        d->PathArcTo(c, r * 0.80f, g_discAngle, g_discAngle + 0.9f, 20);
+        d->PathStroke(C(ImVec4(1, 1, 1, 1), 0.13f * a), ImDrawFlags_None, S(3.0f));
+        d->PathArcTo(c, r * 0.80f, g_discAngle + 3.14159f, g_discAngle + 4.04f, 20);
+        d->PathStroke(C(ImVec4(1, 1, 1, 1), 0.09f * a), ImDrawFlags_None, S(3.0f));
+        d->AddCircleFilled(c, r * 0.30f, C(p.accent, a), 48);
+        d->AddCircleFilled(c, r * 0.05f, C(ImVec4(0.05f, 0.05f, 0.06f, 1.0f), a), 16);
+    }
+    // (its shadow, then the art)
+    SoftLightOval(d, ImVec2(artC.x, artC.y + artSize * 0.10f), artSize * 0.78f, artSize * 0.70f, ImVec4(0, 0, 0, 1), 1.1f * alpha);
+    DrawArtAt(d, artC, artSize, alpha);
+
+    // --- The words, the progress, the controls -------------------------------------------
+    const float x = x0 + artSize + discReach * g_discOut + S(54.0f);
+    const float w = infoW;
+    const float slide = (1.0f - EaseOutCubic(g_trackIn)) * S(18.0f);
+    const float ta = g_trackIn * alpha;
+    float y = artC.y - S(112.0f);
+    {
+        const char* label = t.playing ? T("music.now_playing") : T("music.paused");
+        Text(d, g_fonts.tiny, ImVec2(x, y), C(p.text, 0.7f * alpha), label);
+        // a little equalizer dancing with the sound
+        const float lx = x + TextSize(g_fonts.tiny, label).x + S(12.0f);
+        const audioviz::Levels lv = audioviz::Get();
+        for (int b = 0; b < 4; ++b) {
+            float v = 0.15f;
+            if (t.playing) {
+                v = lv.live ? lv.fast[std::min(audioviz::kBands - 1, 2 + b * 9)]
+                            : 0.35f + 0.3f * std::sin(now * (5.0f + static_cast<float>(b)) + static_cast<float>(b));
+            }
+            const float bh = S(3.0f) + S(11.0f) * std::clamp(v, 0.0f, 1.0f);
+            const float bx = lx + static_cast<float>(b) * S(5.0f);
+            const float by = y + g_fonts.tiny->FontSize * 0.5f + S(7.0f);
+            d->AddRectFilled(ImVec2(bx, by - bh), ImVec2(bx + S(3.0f), by), C(p.accent, alpha), S(1.5f));
+        }
+        if (t.app[0] != '\0') {
+            const float ax = lx + S(32.0f);
+            const ImVec2 as = TextSize(g_fonts.tiny, t.app);
+            d->AddRectFilled(ImVec2(ax, y - S(3.0f)), ImVec2(ax + as.x + S(18.0f), y + as.y + S(3.0f)), C(ImVec4(1, 1, 1, 1), 0.10f * alpha),
+                             S(12.0f));
+            Text(d, g_fonts.tiny, ImVec2(ax + S(9.0f), y), C(p.text, 0.8f * alpha), t.app);
+        }
+    }
+    y += g_fonts.tiny->FontSize + S(12.0f);
+    TextFit(d, g_fonts.hero, ImVec2(x + slide, y), C(p.text, ta), t.title, w);
+    y += g_fonts.hero->FontSize + S(4.0f);
+    {
+        char line[340];
+        if (t.album[0] != '\0' && std::strcmp(t.album, t.title) != 0) {
+            std::snprintf(line, sizeof(line), "%s  ·  %s", t.artist, t.album);
+        } else {
+            std::snprintf(line, sizeof(line), "%s", t.artist);
+        }
+        TextFit(d, g_fonts.semibold, ImVec2(x + slide * 1.6f, y), C(p.text, 0.72f * ta), line, w);
+    }
+    y += g_fonts.semibold->FontSize + S(26.0f);
+    if (t.duration > 0.0) {
+        const float frac = static_cast<float>(std::clamp(t.position / t.duration, 0.0, 1.0));
+        float hover = 0.0f;
+        if (Hit("##seek", ImVec2(x, y - S(10.0f)), ImVec2(x + w, y + S(10.0f)), &hover, t.canSeek)) {
+            media::Seek(t.duration * std::clamp((ImGui::GetIO().MousePos.x - x) / std::max(1.0f, w), 0.0f, 1.0f));
+        }
+        const float th = S(5.0f) + S(3.0f) * hover;
+        d->AddRectFilled(ImVec2(x, y - th * 0.5f), ImVec2(x + w, y + th * 0.5f), C(ImVec4(1, 1, 1, 1), 0.16f * alpha), th * 0.5f);
+        // the filled part glows a little
+        d->AddRectFilled(ImVec2(x, y - th * 1.4f), ImVec2(x + w * frac, y + th * 1.4f), C(p.accent, 0.12f * alpha), th);
+        d->AddRectFilled(ImVec2(x, y - th * 0.5f), ImVec2(x + w * frac, y + th * 0.5f), C(p.accent, alpha), th * 0.5f);
+        d->AddCircleFilled(ImVec2(x + w * frac, y), S(4.0f) + S(4.0f) * hover, C(p.text, alpha), 20);
+        char a[16], b[16];
+        FormatTime(t.position, a, sizeof(a));
+        FormatTime(t.duration, b, sizeof(b));
+        Text(d, g_fonts.tiny, ImVec2(x, y + S(10.0f)), C(p.text, 0.6f * alpha), a);
+        Text(d, g_fonts.tiny, ImVec2(x + w - TextSize(g_fonts.tiny, b).x, y + S(10.0f)), C(p.text, 0.6f * alpha), b);
+    }
+    y += S(58.0f);
+    const float savedFade = g_fade;
+    g_fade *= alpha;
+    if (RoundButton(d, "##prev", ImVec2(x + S(24.0f), y), S(24.0f), icons::kSkipBackFilled, S(18.0f), false, t.canPrevious)) media::Previous();
+    {
+        const ImVec2 c(x + S(24.0f) + S(72.0f), y);
+        if (t.playing) d->AddCircleFilled(c, S(32.0f) + S(12.0f) * g_bassSmooth, C(p.accent, 0.20f + 0.25f * g_bassSmooth), 48);
+        if (RoundButton(d, "##playpause", c, S(32.0f), g_playMorph > 0.5f ? icons::kPlayFilled : icons::kPauseFilled, S(22.0f), true,
+                        t.canPlayPause)) {
+            media::PlayPause();
+        }
+    }
+    if (RoundButton(d, "##next", ImVec2(x + S(24.0f) + S(144.0f), y), S(24.0f), icons::kSkipForwardFilled, S(18.0f), false, t.canNext)) {
+        media::Next();
+    }
+    g_fade = savedFade;
+}
+
+// The dock: the sections, in a glass pill at the bottom.
+void DrawDock(ImDrawList* d, ImVec2 display) {
+    const Palette& p = P();
+    struct Item {
+        Page page;
+        const char* icon;
+        const char* key;
+    };
+    const Item items[] = {
+        {Page::Home, kIconHome, "nav.home"},
+        {Page::Lyrics, icons::kList, "nav.lyrics"},
+        {Page::Spotify, icons::kMusic2, "nav.spotify"},
+        {Page::Settings, kIconSliders, "nav.settings"},
+    };
+    constexpr int kCount = 4;
+    float widths[kCount];
+    float total = S(12.0f);
+    for (int i = 0; i < kCount; ++i) {
+        widths[i] = TextSize(g_fonts.semibold, T(items[i].key)).x + S(58.0f);
+        total += widths[i];
+    }
+    const float h = S(kDockH);
+    const ImVec2 min((display.x - total) * 0.5f, display.y - S(kDockBottom) - h);
+    const ImVec2 max(min.x + total, min.y + h);
+    // glass
+    d->AddRectFilled(ImVec2(min.x, min.y + S(8.0f)), ImVec2(max.x, max.y + S(10.0f)), Col(ImVec4(0, 0, 0, 1), 0.22f), h * 0.5f);
+    d->AddRectFilled(min, max, Col(Mix(p.card, ImVec4(1, 1, 1, 1), 0.06f), 0.55f + 0.30f * (1.0f - g_glass)), h * 0.5f);
+    d->AddRect(min, max, Col(ImVec4(1, 1, 1, 1), 0.14f), h * 0.5f, 0, 1.0f);
+    // which one is lit (it slides)
+    int active = 0;
+    for (int i = 0; i < kCount; ++i) {
+        if (items[i].page == g_page) active = i;
+    }
+    g_dockLit += (static_cast<float>(active) - g_dockLit) * std::min(1.0f, Dt() * 12.0f);
+    auto itemX = [&](float index) {
+        float xx = min.x + S(6.0f);
+        const int whole = static_cast<int>(std::floor(index));
+        for (int i = 0; i < whole && i < kCount; ++i) xx += widths[i];
+        const float frac = index - static_cast<float>(whole);
+        if (whole < kCount - 1) xx += widths[whole] * frac;
+        return xx;
+    };
+    {
+        const int lo = std::clamp(static_cast<int>(std::floor(g_dockLit)), 0, kCount - 1);
+        const int hi = std::min(lo + 1, kCount - 1);
+        const float f = g_dockLit - static_cast<float>(lo);
+        const float lw = widths[lo] + (widths[hi] - widths[lo]) * f;
+        const float lx = itemX(g_dockLit);
+        const ImVec2 lmin(lx, min.y + S(6.0f)), lmax(lx + lw, max.y - S(6.0f));
+        for (int g = 3; g >= 1; --g) {
+            const float e = S(3.0f) * static_cast<float>(g);
+            d->AddRectFilled(ImVec2(lmin.x - e, lmin.y - e), ImVec2(lmax.x + e, lmax.y + e), Col(p.accent, 0.07f), (lmax.y - lmin.y) * 0.5f + e);
+        }
+        d->AddRectFilled(lmin, lmax, Col(p.accent), (lmax.y - lmin.y) * 0.5f);
+    }
+    float xx = min.x + S(6.0f);
+    for (int i = 0; i < kCount; ++i) {
+        const ImVec2 imin(xx, min.y + S(6.0f)), imax(xx + widths[i], max.y - S(6.0f));
+        char id[24];
+        std::snprintf(id, sizeof(id), "##dock%d", i);
+        float hover = 0.0f;
+        if (Hit(id, imin, imax, &hover)) GoTo(items[i].page);
+        const float lit = std::clamp(1.0f - std::fabs(g_dockLit - static_cast<float>(i)), 0.0f, 1.0f);
+        if (hover > 0.0f && lit < 0.5f) d->AddRectFilled(imin, imax, Col(ImVec4(1, 1, 1, 1), 0.07f * hover), (imax.y - imin.y) * 0.5f);
+        const ImU32 col = Col(Mix(Mix(p.text, ImVec4(1, 1, 1, 1), 0.0f), p.onAccent, lit), 0.75f + 0.25f * std::max(hover, lit));
+        icons::Draw(d, items[i].icon, ImVec2(imin.x + S(24.0f), (imin.y + imax.y) * 0.5f), S(18.0f), col, S(1.7f));
+        Text(d, g_fonts.semibold, ImVec2(imin.x + S(42.0f), (imin.y + imax.y - g_fonts.semibold->FontSize) * 0.5f), col, T(items[i].key));
+        xx += widths[i];
+    }
+}
+
+// The PLAY orb: bottom right, breathing, beating with the music.
+void DrawOrb(ImDrawList* d, ImVec2 display, const LocalData& data) {
+    const Palette& p = P();
+    const PlaySnapshot snap = g_flow.Snapshot();
+    const bool busy = g_flow.Busy();
+    const float now = static_cast<float>(ImGui::GetTime());
+    const float r = S(36.0f);
+    const ImVec2 c(display.x - S(74.0f), display.y - S(kDockBottom) - S(kDockH) * 0.5f - S(6.0f));
+    float hover = 0.0f;
+    if (Hit("##play", ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), &hover, !busy)) {
+        g_flow.Start(g_upd.supportedMinecraft);
+    }
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {  // (right click: the Luma folder, the logs)
+        g_playMenuOpen = !g_playMenuOpen;
+        g_playMenuAnchor = ImVec2(c.x - S(230.0f), c.y - r);
+    }
+    const float press = Anim(ImGui::GetID("##play") + 5, ImGui::IsItemActive() && !busy, 22.0f);
+    const float breathe = 0.5f + 0.5f * std::sin(now * 2.0f);
+    const float beat = g_bassSmooth;
+    const bool loaded = data.game.lumaLoaded;
+    // its light
+    SoftLight(d, c, r * 3.0f, p.accent, 0.8f + 0.25f * breathe + 0.3f * beat + 0.4f * hover);
+    const float rr = r * (1.0f + 0.05f * beat + 0.04f * hover - 0.06f * press);
+    d->AddCircleFilled(c, rr, Col(busy ? Mix(p.accent, p.card, 0.35f) : p.accent), 64);
+    d->AddCircle(c, rr - S(1.0f), Col(ImVec4(1, 1, 1, 1), 0.35f), 64, 1.0f);
+    if (busy) {
+        d->PathArcTo(c, rr + S(7.0f), now * 5.0f, now * 5.0f + 4.0f, 36);
+        d->PathStroke(Col(p.accent), ImDrawFlags_None, S(3.0f));
+        Spinner(d, c, S(11.0f), Col(p.onAccent));
+    } else if (loaded) {
+        icons::Draw(d, kIconCheck, c, S(26.0f), Col(p.onAccent), S(2.4f));
+    } else {
+        icons::Draw(d, kIconPlay, ImVec2(c.x + S(2.0f), c.y), S(28.0f), Col(p.onAccent));
+    }
+    const char* label = loaded ? T("orb.in_game") : T("home.play");
+    const ImVec2 ls = TextSize(g_fonts.tiny, label);
+    Text(d, g_fonts.tiny, ImVec2(c.x - ls.x * 0.5f, c.y + r + S(8.0f)), Col(p.text, 0.85f), label);
+    // While PLAY works (or something went wrong): a glass bubble to its left.
+    if (snap.state != PlayState::Idle && snap.state != PlayState::Done && snap.state != PlayState::AlreadyLoaded) {
+        const float bw = S(320.0f);
+        const ImVec2 bmax(c.x + r, c.y - r - S(26.0f));
+        const ImVec2 bmin(bmax.x - bw, bmax.y - S(60.0f));
+        d->AddRectFilled(bmin, bmax, Col(p.card, 0.85f), S(16.0f));
+        d->AddRect(bmin, bmax, Col(ImVec4(1, 1, 1, 1), 0.12f), S(16.0f));
+        DrawPlayStatus(d, ImVec2(bmin.x + S(14.0f), bmin.y + S(10.0f)), bw - S(28.0f), snap);
+        if (snap.state == PlayState::Unsupported && !busy) {
+            if (Button("##play_anyway", ImVec2(bmin.x, bmin.y - S(46.0f)), T("play.anyway"), false)) {
+                g_flow.Start(g_upd.supportedMinecraft, true);
+            }
+        }
+    }
+}
+
+// The game's state, a small glass pill at the top center (and the brand at the left).
+void DrawStageTop(ImDrawList* d, ImVec2 display, const LocalData& data, const std::string& name, const account::Info& acc) {
+    const Palette& p = P();
+    // Luma, top left
+    icons::Draw(d, icons::kLumaLogo, ImVec2(S(34.0f), S(26.0f)), S(24.0f), Col(p.text));
+    Text(d, g_fonts.semibold, ImVec2(S(54.0f), S(26.0f) - g_fonts.semibold->FontSize * 0.5f), Col(p.text), "Luma");
+    // the game, top center
+    char text[128];
+    const bool loaded = data.game.lumaLoaded;
+    if (data.game.gameVersion.empty()) {
+        std::snprintf(text, sizeof(text), "Minecraft  ·  %s", T("home.not_installed"));
+    } else {
+        std::snprintf(text, sizeof(text), "Minecraft %s  ·  %s", data.game.gameVersion.c_str(),
+                      loaded ? T("home.luma_loaded") : T("home.ready_to_play"));
+    }
+    const ImVec2 ts = TextSize(g_fonts.tiny, text);
+    const ImVec2 pmin(display.x * 0.5f - ts.x * 0.5f - S(22.0f), S(12.0f));
+    const ImVec2 pmax(display.x * 0.5f + ts.x * 0.5f + S(14.0f), S(12.0f) + S(28.0f));
+    d->AddRectFilled(pmin, pmax, Col(p.card, 0.45f + 0.4f * (1.0f - g_glass)), S(14.0f));
+    d->AddRect(pmin, pmax, Col(ImVec4(1, 1, 1, 1), 0.10f), S(14.0f));
+    Dot(d, ImVec2(pmin.x + S(14.0f), (pmin.y + pmax.y) * 0.5f), loaded ? p.success : p.accent);
+    Text(d, g_fonts.tiny, ImVec2(pmin.x + S(26.0f), (pmin.y + pmax.y - ts.y) * 0.5f), Col(p.text, 0.85f), text);
+    // you, top right (before the window's buttons): click = Settings
+    const ImVec2 ac(display.x - S(232.0f), S(24.0f));
+    float hover = 0.0f;
+    const ImVec2 amin(ac.x - S(18.0f), ac.y - S(18.0f)), amax(ac.x + S(18.0f), ac.y + S(18.0f));
+    if (Hit("##me", amin, amax, &hover)) GoTo(Page::Settings);
+    if (g_noDragCount < 6) g_noDrag[g_noDragCount++] = {amin, amax};
+    if (hover > 0.0f) d->AddCircleFilled(ac, S(21.0f), Col(ImVec4(1, 1, 1, 1), 0.10f * hover), 32);
+    const float saved = g_fade;
+    g_fade = 1.0f;
+    Avatar(d, ac, S(15.0f), name);
+    g_fade = saved;
+    (void)acc;
+}
+
+void DrawComingSoon(ImDrawList* d, ImVec2 min, ImVec2 max, const char* icon, const char* titleKey, const char* textKey);  // (below)
+void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data);  // (below)
+
+// The other sections: a glass sheet that rises over the stage.
+void DrawSheet(ImDrawList* d, ImVec2 display, const account::Info& acc, const LocalData& data) {
+    const Palette& p = P();
+    if (g_page != Page::Home) g_sheetPage = g_page;
+    g_sheet += ((g_page != Page::Home ? 1.0f : 0.0f) - g_sheet) * std::min(1.0f, Dt() * 9.0f);
+    if (g_sheet < 0.01f) return;
+    const float s = EaseOutCubic(g_sheet);
+    // the stage dims a little behind it
+    d->AddRectFilled(ImVec2(0, 0), display, Col(ImVec4(0, 0, 0, 1), 0.38f * s));
+    const float top = S(56.0f) + (1.0f - s) * display.y * 0.35f;
+    const ImVec2 min(S(48.0f), top);
+    const ImVec2 max(display.x - S(48.0f), display.y - S(kDockBottom) - S(kDockH) - S(16.0f) + (1.0f - s) * display.y * 0.35f);
+    d->AddRectFilled(ImVec2(min.x, min.y + S(10.0f)), ImVec2(max.x, max.y + S(14.0f)), Col(ImVec4(0, 0, 0, 1), 0.25f * s), S(26.0f));
+    d->AddRectFilled(min, max, Col(p.background, (0.78f + 0.2f * (1.0f - g_glass)) * s), S(26.0f));
+    d->AddRect(min, max, Col(ImVec4(1, 1, 1, 1), 0.10f * s), S(26.0f));
+    d->AddLine(ImVec2(min.x + S(26.0f), min.y + 1.0f), ImVec2(max.x - S(26.0f), min.y + 1.0f), Col(ImVec4(1, 1, 1, 1), 0.14f * s));
+    const float saved = g_fade;
+    g_fade = s;
+    const ImVec2 cmin(min.x + S(24.0f), min.y + S(24.0f)), cmax(max.x - S(24.0f), max.y - S(24.0f));
+    d->PushClipRect(min, max, true);
+    switch (g_sheetPage) {
+        case Page::Lyrics: DrawComingSoon(d, cmin, cmax, icons::kList, "nav.lyrics", "lyrics.soon_text"); break;
+        case Page::Spotify: DrawComingSoon(d, cmin, cmax, icons::kMusic2, "nav.spotify", "spotify.soon_text"); break;
+        default: DrawSettings(d, cmin, cmax, acc, data); break;
+    }
+    d->PopClipRect();
+    g_fade = saved;
+}
+
+// The whole stage (Home, with the sheet over it for the other sections).
+void DrawStage(ImDrawList* d, ImVec2 display, const media::Track& t, const LocalData& data, const std::string& name, const account::Info& acc) {
+    const float stageAlpha = 1.0f - 0.35f * EaseOutCubic(g_sheet);
+    const ImVec2 smin(S(40.0f), S(70.0f));
+    const ImVec2 smax(display.x - S(40.0f), display.y - S(kDockBottom) - S(kDockH) - S(110.0f));
+    // (it comes in when the launcher opens)
+    static float openIn = 0.0f;
+    openIn = std::min(1.0f, openIn + Dt() * 1.4f);
+    const float in = EaseOutCubic(openIn);
+    const float savedFade = g_fade;
+    g_fade = in;
+    DrawStageSong(d, ImVec2(smin.x, smin.y + (1.0f - in) * S(20.0f)), ImVec2(smax.x, smax.y + (1.0f - in) * S(20.0f)), t, stageAlpha);
+    g_fade = savedFade;
+    DrawSheet(d, display, acc, data);
+    DrawDock(d, display);
+    DrawOrb(d, display, data);
+    (void)name;
+}
+
+void DrawMusicHome(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, const std::string& name, const media::Track& t) {
+    const Palette& p = P();
+    const float baseFade = g_fade;
+    // 1. Greeting.
+    {
+        const float a = Stagger(0);
+        g_fade = baseFade * a;
+        const float dy = (1.0f - a) * S(10.0f);
+        char hello[160];
+        std::snprintf(hello, sizeof(hello), "%s, %s", T(GreetingKey()), name.c_str());
+        TextFit(d, g_fonts.title, ImVec2(min.x + S(4.0f), min.y + S(6.0f) + dy), C(p.text), hello, max.x - min.x);
+        Text(d, g_fonts.regular, ImVec2(min.x + S(4.0f), min.y + S(6.0f) + g_fonts.title->FontSize + S(4.0f) + dy), C(p.textDim),
+             T("home.music_tagline"));
+    }
+    const float top = min.y + S(70.0f);
+    const float barH = S(88.0f);
+    // 2. What's playing.
+    {
+        const float a = Stagger(1);
+        g_fade = baseFade * a;
+        const float dy = (1.0f - a) * S(16.0f);
+        DrawNowPlaying(d, ImVec2(min.x, top + dy), ImVec2(max.x, max.y - barH - S(kGap) + dy), t);
+    }
+    // 3. Play.
+    {
+        const float a = Stagger(2);
+        g_fade = baseFade * a;
+        const float dy = (1.0f - a) * S(16.0f);
+        DrawPlayBar(d, ImVec2(min.x, max.y - barH + dy), ImVec2(max.x, max.y + dy), data);
+    }
+    g_fade = baseFade;
 }
 
 void DrawHome(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, const std::string& name) {
@@ -2291,6 +3317,7 @@ void StatusThread() {
 }  // namespace
 
 void AppInit(HWND hwnd, float scale) {
+    perf::Init();  // (the music's clock: core/media.cpp)
     g_hwnd = hwnd;
     g_scale = scale;
     LoadConfig();
@@ -2303,6 +3330,8 @@ void AppInit(HWND hwnd, float scale) {
     // "--page=skins" / "--page=settings": abrir directo en esa sección (para pruebas).
     if (std::wcsstr(GetCommandLineW(), L"--page=skins") != nullptr) g_page = Page::Skins;
     if (std::wcsstr(GetCommandLineW(), L"--page=settings") != nullptr) g_page = Page::Settings;
+    if (std::wcsstr(GetCommandLineW(), L"--page=lyrics") != nullptr) g_page = Page::Lyrics;
+    if (std::wcsstr(GetCommandLineW(), L"--page=spotify") != nullptr) g_page = Page::Spotify;
     g_statusThread = std::thread(StatusThread);
     account::Init();
     updater::Start(g_autoUpdate, GetCommandLineW());
@@ -2434,6 +3463,10 @@ void AppFrame() {
         PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
     }
     const std::string name = PlayerName(acc, data);
+    // The music (only listened to while the window is on screen).
+    const bool visible = IsIconic(g_hwnd) == FALSE && IsWindowVisible(g_hwnd) != FALSE;
+    const media::Track track = media::Current();
+    UpdateMusic(track, visible);
 
     // Al terminar JUGAR con éxito: minimizar (un instante después, para que
     // se alcance a ver "Luma está funcionando"), si así está en Ajustes.
@@ -2459,36 +3492,20 @@ void AppFrame() {
     ImGui::Begin("##luma_launcher", nullptr, kFlags);
     ImDrawList* d = ImGui::GetWindowDrawList();
     d->AddRectFilled(ImVec2(0, 0), display, Col(p.background));
+    DrawAmbient(d, display, track);
 
     g_fade = 1.0f;
-    DrawSidebar(d, display, acc, data);
-
-    // Contenido (con un fundido al cambiar de sección)
+    // THE STAGE: no sidebar; the song in the middle, the dock and the PLAY
+    // orb floating, the other sections as a sheet over it.
     g_pageFade = std::min(1.0f, g_pageFade + Dt() * 5.0f);
-    const float appear = g_pageFade * g_pageFade * (3.0f - 2.0f * g_pageFade);
-    g_fade = appear;
-    const float offset = (1.0f - appear) * S(10.0f);
-    const ImVec2 cmin(S(kSidebarWidth) + S(kPad), S(kTitleBarHeight) + offset);
-    const ImVec2 cmax(display.x - S(kPad), display.y - S(kPad) + offset);
-    switch (g_page) {
-        case Page::Home: DrawHome(d, cmin, cmax, data, name); break;
-        case Page::Addons: DrawAddonsPage(d, cmin, cmax); break;
-        case Page::Skins: DrawSkinsPage(d, cmin, cmax); break;
-        case Page::Settings: DrawSettings(d, cmin, cmax, acc, data); break;
-    }
-    g_fade = 1.0f;
-    if (g_page == Page::Home) {
-        DrawPlayMenu(d);
-        DrawSkinFullscreen(d, display, data);
-    } else {
-        g_playMenuOpen = false;
-        g_skinFullscreen = false;
-    }
+    DrawStage(d, display, track, data, name, acc);
+    DrawPlayMenu(d);
     if (g_upd.state == updater::State::Downloading || g_upd.state == updater::State::Installing ||
         g_upd.state == updater::State::Restarting) {
         DrawUpdateOverlay(d, display);
     }
     DrawTitleBar(d, display);
+    DrawStageTop(d, display, data, name, acc);
 
     ImGui::End();
     ImGui::PopStyleVar(2);
@@ -2496,6 +3513,16 @@ void AppFrame() {
 
 void AppShutdown() {
     g_quit.store(true);
+    audioviz::Shutdown();
+    media::Shutdown();
+    ReleaseArt(g_art);
+    ReleaseArt(g_artOld);
+    ReleaseArt(g_blur);
+    ReleaseArt(g_blurOld);
+    if (g_lightTex != nullptr) {
+        g_lightTex->Release();
+        g_lightTex = nullptr;
+    }
     icons::Shutdown();
     if (g_iconAtlas != nullptr) {
         g_iconAtlas->Release();

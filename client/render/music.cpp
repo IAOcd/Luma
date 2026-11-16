@@ -1096,7 +1096,7 @@ namespace {
 // The tabs of "More options", per page (English keys: Tr() translates them).
 constexpr const char* kTabsOnScreen[] = {"Look"};
 constexpr const char* kTabsLyrics[] = {"Sources", "On the HUD"};
-constexpr const char* kTabsFlow[] = {"Place", "Letters", "Effects", "Look"};
+constexpr const char* kTabsFlow[] = {"Place", "Letters", "Animation", "Look", "Effects"};
 constexpr const char* kTabsViz[] = {"Place", "Shape", "Reaction", "Look"};
 constexpr const char* kTabsHalo[] = {"Ring"};
 constexpr const char* kTabsColors[] = {"Album art"};
@@ -1171,6 +1171,10 @@ bool FlowBasic(Settings& s) {
     changed |= ui::Choice("Color", &s.flowColorMode, {"One color", "Album", "Album gradient", "Two colors", "Rainbow"});
     if (s.flowColorMode == 0 || s.flowColorMode == 3) changed |= ui::Color("Color 1", s.flowColor);
     if (s.flowColorMode == 3) changed |= ui::Color("Color 2", s.flowColor2);
+    // The three effects (their details: More options > Effects).
+    changed |= ui::Choice("Karaoke fill", &s.flowFill, {"Off", "Sweep", "Word at once", "Rise", "Bright edge"});
+    changed |= ui::Choice("Glow", &s.flowGlow, {"Off", "Soft", "Bloom", "Neon", "Flash", "Pulse"});
+    changed |= ui::Choice("Particles", &s.flowVfx, {"Off", "Sparks", "Stardust", "Confetti", "Embers", "Fireflies"});
     return changed;
 }
 bool FlowMore(Settings& s, int tab) {
@@ -1226,6 +1230,22 @@ bool FlowMore(Settings& s, int tab) {
         changed |= ui::Slider("Effect speed", &s.flowSpeed, 0.3f, 3.0f, "%.1fx");
         changed |= ui::Slider("Leave time (s)", &s.flowLeaveTime, 0.15f, 1.5f, "%.2f");
         changed |= ui::Slider("Hide when paused (s)", &s.flowPauseHide, 0.0f, 60.0f, "%.0f");
+    } else if (tab == 4) {
+        ui::Section("Karaoke fill");
+        if (s.flowFill == 0) ui::Hint("Choose a fill (Lyric Flow's first options) to light each word up as it's sung.");
+        changed |= ui::Toggle("Whole line at once", &s.flowFillWholeLine);
+        ui::Hint("On: the whole line is written when it starts and fills as it's sung. Off: each word appears when it's sung.");
+        changed |= ui::Choice("Still to sing", &s.flowUnsung, {"Dimmer", "Gray", "White", "My color"});
+        if (s.flowUnsung == 3) changed |= ui::Color("Its color", s.flowUnsungColor);
+        ui::Section("Glow");
+        changed |= ui::Choice("Glow color", &s.flowGlowColor, {"Like the letters", "Album", "My color", "Rainbow"});
+        if (s.flowGlowColor == 2) changed |= ui::Color("My glow color", s.flowGlowCustom);
+        changed |= ui::Slider("Glow strength", &s.flowGlowStrength, 0.2f, 2.5f, "%.1fx");
+        changed |= ui::Choice("Glow on", &s.flowGlowWhere, {"Every word", "Word being sung", "What was sung"});
+        ui::Section("Particles");
+        changed |= ui::Slider("Amount", &s.flowVfxAmount, 0.1f, 3.0f, "%.1fx");
+        changed |= ui::Choice("Particle color", &s.flowVfxColor, {"Like the letters", "Album", "Rainbow", "White"});
+        ui::Hint("Glow and particles are more pixels to draw: if your FPS drop, lower the amount or turn them off.");
     } else {
         changed |= ui::Toggle("Highlight the word being sung", &s.flowHighlight);
         if (s.flowHighlight) changed |= ui::Color("Highlight color", s.flowHighlightColor);
@@ -1236,6 +1256,7 @@ bool FlowMore(Settings& s, int tab) {
             changed |= ui::Slider("Outline opacity", &s.flowOutlineAlpha, 0.1f, 1.0f, "%.2f");
         }
         changed |= ui::Toggle("Shadow", &s.flowShadow);
+        if (s.flowShadow) changed |= ui::Choice("Shadow style", &s.flowShadowStyle, {"Dark", "Colored", "3D"});
         changed |= DrawWorldDrawChoice();
     }
     return changed;
@@ -1526,10 +1547,14 @@ void ResetPage(int page) {
             s.flowColorMode = d.flowColorMode; copy3(s.flowColor, d.flowColor); copy3(s.flowColor2, d.flowColor2);
             s.flowHighlight = d.flowHighlight; copy3(s.flowHighlightColor, d.flowHighlightColor);
             s.flowOutline = d.flowOutline; copy3(s.flowOutlineColor, d.flowOutlineColor);
-            s.flowOutlineAlpha = d.flowOutlineAlpha; s.flowShadow = d.flowShadow; s.flowFont = d.flowFont;
+            s.flowOutlineAlpha = d.flowOutlineAlpha; s.flowShadow = d.flowShadow; s.flowShadowStyle = d.flowShadowStyle; s.flowFont = d.flowFont;
             s.flowBold = d.flowBold; s.flowResolution = d.flowResolution; s.flowLetterSpacing = d.flowLetterSpacing;
             s.flowWordSpacing = d.flowWordSpacing; s.flowLeaveTime = d.flowLeaveTime; s.flowPauseHide = d.flowPauseHide;
             s.worldDraw = d.worldDraw;
+            s.flowFill = d.flowFill; s.flowFillWholeLine = d.flowFillWholeLine; s.flowUnsung = d.flowUnsung; copy3(s.flowUnsungColor, d.flowUnsungColor);
+            s.flowGlow = d.flowGlow; s.flowGlowColor = d.flowGlowColor; copy3(s.flowGlowCustom, d.flowGlowCustom);
+            s.flowGlowStrength = d.flowGlowStrength; s.flowGlowWhere = d.flowGlowWhere;
+            s.flowVfx = d.flowVfx; s.flowVfxAmount = d.flowVfxAmount; s.flowVfxColor = d.flowVfxColor;
             s.lyricFlow = on;
             s.flowPinKey = pinKey;
             break;

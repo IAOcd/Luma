@@ -522,11 +522,17 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
                         {"color2", {s.flowColor2[0], s.flowColor2[1], s.flowColor2[2]}}, {"highlight", s.flowHighlight},
                         {"highlightColor", {s.flowHighlightColor[0], s.flowHighlightColor[1], s.flowHighlightColor[2]}}, {"outline", s.flowOutline},
                         {"outlineColor", {s.flowOutlineColor[0], s.flowOutlineColor[1], s.flowOutlineColor[2]}}, {"outlineAlpha", s.flowOutlineAlpha},
-                        {"shadow", s.flowShadow}, {"font", s.flowFont}, {"bold", s.flowBold},
+                        {"shadow", s.flowShadow}, {"shadowStyle", s.flowShadowStyle}, {"font", s.flowFont}, {"bold", s.flowBold},
                         {"resolution", s.flowResolution}, {"letterSpacing", s.flowLetterSpacing},
                         {"wordSpacing", s.flowWordSpacing}, {"leaveTime", s.flowLeaveTime}, {"pauseHide", s.flowPauseHide},
                         {"angle", s.flowAngle}, {"spread", s.flowSpread}, {"turn", s.flowTurn}, {"roll", s.flowRoll},
-                        {"pinKey", s.flowPinKey}, {"pinTarget", s.flowPinTarget}};
+                        {"pinKey", s.flowPinKey}, {"pinTarget", s.flowPinTarget},
+                        {"fill", s.flowFill}, {"fillWholeLine", s.flowFillWholeLine}, {"unsung", s.flowUnsung},
+                        {"unsungColor", {s.flowUnsungColor[0], s.flowUnsungColor[1], s.flowUnsungColor[2]}},
+                        {"glow", s.flowGlow}, {"glowColor", s.flowGlowColor},
+                        {"glowCustom", {s.flowGlowCustom[0], s.flowGlowCustom[1], s.flowGlowCustom[2]}},
+                        {"glowStrength", s.flowGlowStrength}, {"glowWhere", s.flowGlowWhere}, {"vfx", s.flowVfx},
+                        {"vfxAmount", s.flowVfxAmount}, {"vfxColor", s.flowVfxColor}};
     out["efficiency"] = {{"on", s.efficiency}, {"lyricAnim", s.effLyricAnim}, {"uiAnim", s.effUiAnim}, {"spin", s.effSpin}, {"songFade", s.effSongFade},
                          {"marquee", s.effMarquee}, {"albumColors", s.effAlbumColors}, {"hdCovers", s.effHdCovers},
                          {"prefetch", s.effPrefetch}, {"visualizer", s.effVisualizer}};
@@ -632,10 +638,23 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
         readColor("color2", s.flowColor2, d.flowColor2);
         readColor("highlightColor", s.flowHighlightColor, d.flowHighlightColor);
         readColor("outlineColor", s.flowOutlineColor, d.flowOutlineColor);
+        readColor("unsungColor", s.flowUnsungColor, d.flowUnsungColor);
+        readColor("glowCustom", s.flowGlowCustom, d.flowGlowCustom);
+        s.flowFill = std::clamp(f.value("fill", d.flowFill), 0, 4);
+        s.flowFillWholeLine = f.value("fillWholeLine", d.flowFillWholeLine);
+        s.flowUnsung = std::clamp(f.value("unsung", d.flowUnsung), 0, 3);
+        s.flowGlow = std::clamp(f.value("glow", d.flowGlow), 0, 5);
+        s.flowGlowColor = std::clamp(f.value("glowColor", d.flowGlowColor), 0, 3);
+        s.flowGlowStrength = std::clamp(f.value("glowStrength", d.flowGlowStrength), 0.2f, 2.5f);
+        s.flowGlowWhere = std::clamp(f.value("glowWhere", d.flowGlowWhere), 0, 2);
+        s.flowVfx = std::clamp(f.value("vfx", d.flowVfx), 0, 5);
+        s.flowVfxAmount = std::clamp(f.value("vfxAmount", d.flowVfxAmount), 0.1f, 3.0f);
+        s.flowVfxColor = std::clamp(f.value("vfxColor", d.flowVfxColor), 0, 3);
         s.flowHighlight = f.value("highlight", d.flowHighlight);
         s.flowOutline = f.value("outline", d.flowOutline);
         s.flowOutlineAlpha = std::clamp(f.value("outlineAlpha", d.flowOutlineAlpha), 0.1f, 1.0f);
         s.flowShadow = f.value("shadow", d.flowShadow);
+        s.flowShadowStyle = std::clamp(f.value("shadowStyle", d.flowShadowStyle), 0, 2);
         s.flowFont = std::clamp(f.value("font", d.flowFont), 0, render::lyricflow::kFontCount - 1);
         s.flowBold = f.value("bold", d.flowBold);
         s.flowResolution = std::clamp(f.value("resolution", d.flowResolution), 9, 32);

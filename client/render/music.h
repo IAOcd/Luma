@@ -102,6 +102,7 @@ struct Settings {
     float flowOutlineColor[3] = {0.05f, 0.05f, 0.07f};
     float flowOutlineAlpha = 0.85f;
     bool flowShadow = false;      // a dark copy a little behind and below
+    int flowShadowStyle = 0;      // 0 dark, 1 colored (a deep version of the letter), 2 3D (colored, thick)
     int flowFont = 0;             // 0 = Minecraft's pixel font, others = Windows fonts (render/lyric_flow.h kFonts)
     bool flowBold = true;         // (Windows fonts) bold
     int flowResolution = 16;      // (Windows fonts) how many "pixels" tall a letter is: more = smoother, more lines
@@ -109,6 +110,19 @@ struct Settings {
     float flowWordSpacing = 0.4f;    // space between words, in word heights
     float flowLeaveTime = 0.45f;
     float flowPauseHide = 10.0f;  // paused this long (s): the lyrics leave the sky (0 = never)     // how long a line takes to leave (seconds)
+    // --- Lyric Flow effects (render/lyric_flow.cpp "layers") ---
+    int flowFill = 0;             // karaoke fill: 0 off, 1 sweep, 2 word at once, 3 rise, 4 bright edge
+    int flowUnsung = 0;           // the part still to sing: 0 dimmer, 1 gray, 2 white, 3 my color
+    float flowUnsungColor[3] = {0.42f, 0.44f, 0.52f};
+    bool flowFillWholeLine = false;  // with the fill: write the whole line at once (off: each word as it's sung)
+    int flowGlow = 0;             // 0 off, 1 soft, 2 bloom, 3 neon, 4 flash, 5 pulse
+    int flowGlowColor = 0;        // 0 like the letters, 1 album, 2 my color, 3 rainbow
+    float flowGlowCustom[3] = {1.0f, 0.78f, 0.35f};
+    float flowGlowStrength = 1.0f;
+    int flowGlowWhere = 1;        // 0 every word, 1 the word being sung, 2 only what was sung
+    int flowVfx = 0;              // particles: 0 off, 1 sparks, 2 stardust, 3 confetti, 4 embers, 5 fireflies
+    float flowVfxAmount = 1.0f;
+    int flowVfxColor = 0;         // 0 like the letters, 1 album, 2 rainbow, 3 white
     bool flowAlbumColor = false;  // (old setting: now flowColorMode = 1)
     int flowMaterial = 0;         // (unused: the letters are lines with the outline material)
     // --- Visualizer in the sky (render/visualizer.h) ---

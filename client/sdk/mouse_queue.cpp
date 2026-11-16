@@ -213,8 +213,14 @@ bool Init() {
     }
     const std::uintptr_t function = match.address - kPatternOffsetInFunction;
     if (std::memcmp(reinterpret_cast<const void*>(function), kExpectedPrologue, sizeof(kExpectedPrologue)) != 0) {
-        log::Warn("SDK: la cola del mouse no empieza donde se esperaba; no se usa.");
-        return false;
+        // Otro client (Flarial...) ya la enganchó: su comienzo es ahora un
+        // salto a su código. La firma (0x20 bytes más adentro) sigue igual,
+        // así que es la misma función: nos enganchamos encima.
+        if (!StartsWithHookJump(function)) {
+            log::Warn("SDK: la cola del mouse no empieza donde se esperaba; no se usa.");
+            return false;
+        }
+        log::Info("SDK: cola del mouse: otro client ya la enganchó (empieza con un salto); Luma se engancha encima.");
     }
 
     // Las variables globales, leídas de las instrucciones (ver la firma):

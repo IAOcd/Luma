@@ -42,6 +42,23 @@ ScanResult FindPattern(std::string_view pattern);
 // familias de funciones casi iguales (ver sdk/game_options.cpp).
 std::vector<std::uintptr_t> FindAllPatterns(std::string_view pattern, std::size_t max);
 
+// --- Funciones que OTRO client ya enganchó (Flarial...) ------------------------------
+// Para enganchar una función, un client reescribe sus primeros bytes con un
+// "salto" (jmp) a su propio código. Si nuestra firma empieza en el comienzo
+// de la función, ya no coincide. FindFunction busca la firma normal y, si no
+// aparece, la busca otra vez SIN comparar sus primeros bytes (los que un
+// salto puede tapar). Esa segunda búsqueda solo se acepta si:
+//   - aparece UNA sola vez, y
+//   - la función empieza con un salto (lo que deja otro client).
+// Así nunca se acepta una función cualquiera. "hookedByOther" (si no es
+// nullptr) dice si se encontró de la segunda forma.
+// Solo para firmas que empiezan EXACTAMENTE al comienzo de la función.
+ScanResult FindFunction(std::string_view pattern, bool* hookedByOther = nullptr);
+
+// ¿Empieza el código en "address" con un salto de los que dejan los
+// enganches (jmp rel32, jmp [rip], mov rax/r10/r11 + jmp, push + ret)?
+bool StartsWithHookJump(std::uintptr_t address);
+
 // Dirección del módulo del juego en memoria (para mostrar desplazamientos).
 std::uintptr_t GameBase();
 

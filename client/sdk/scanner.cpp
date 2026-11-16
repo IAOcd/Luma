@@ -117,6 +117,60 @@ ScanResult FindPattern(std::string_view pattern) {
     return result;
 }
 
+bool StartsWithHookJump(std::uintptr_t address) {
+    const auto* p = reinterpret_cast<const std::uint8_t*>(address);
+    if (p[0] == 0xE9) return true;                                    // jmp rel32 (MinHook y casi todos)
+    if (p[0] == 0xFF && p[1] == 0x25) return true;                    // jmp [rip+x] (salto de 14 bytes)
+    if (p[0] == 0x48 && p[1] == 0xB8 && p[10] == 0xFF && p[11] == 0xE0) return true;  // mov rax, X; jmp rax
+    if (p[0] == 0x49 && (p[1] == 0xBA || p[1] == 0xBB) && p[10] == 0x41 && p[11] == 0xFF) return true;  // r10/r11
+    if (p[0] == 0x68 && p[5] == 0xC3) return true;                    // push X; ret
+    return false;
+}
+
+ScanResult FindFunction(std::string_view pattern, bool* hookedByOther) {
+    if (hookedByOther != nullptr) *hookedByOther = false;
+    ScanResult normal = FindPattern(pattern);
+    if (normal.matches != 0) return normal;
+
+    // Segunda búsqueda: sin los primeros kCovered bytes (un salto ocupa de 5
+    // a 14; el que engancha puede además rellenar hasta terminar la
+    // instrucción que cortó).
+    constexpr std::size_t kCovered = 16;
+    std::vector<std::uint8_t> bytes;
+    std::vector<bool> mask;
+    const Section code = CodeSection();
+    if (!Parse(pattern, bytes, mask) || code.start == nullptr) return normal;
+    // La "cola": desde el primer byte que se compara después de kCovered.
+    std::size_t first = kCovered;
+    while (first < bytes.size() && !mask[first]) ++first;
+    std::size_t compared = 0;
+    for (std::size_t j = first; j < bytes.size(); ++j) compared += mask[j] ? 1 : 0;
+    if (compared < 12 || code.size < bytes.size()) return normal;  // (muy poco para estar seguros)
+
+    ScanResult hooked;
+    const std::uint8_t* const end = code.start + code.size - (bytes.size() - first) + 1;
+    const std::uint8_t* p = code.start + first;
+    while (p < end) {
+        p = static_cast<const std::uint8_t*>(std::memchr(p, bytes[first], static_cast<std::size_t>(end - p)));
+        if (p == nullptr) break;
+        bool ok = true;
+        for (std::size_t j = first + 1; j < bytes.size(); ++j) {
+            if (mask[j] && p[j - first] != bytes[j]) {
+                ok = false;
+                break;
+            }
+        }
+        const std::uintptr_t start = reinterpret_cast<std::uintptr_t>(p) - first;
+        if (ok && StartsWithHookJump(start)) {
+            if (hooked.matches == 0) hooked.address = start;
+            ++hooked.matches;
+        }
+        ++p;
+    }
+    if (hooked.matches == 1 && hookedByOther != nullptr) *hookedByOther = true;
+    return hooked.matches == 0 ? normal : hooked;
+}
+
 std::vector<std::uintptr_t> FindAllPatterns(std::string_view pattern, std::size_t max) {
     std::vector<std::uint8_t> bytes;
     std::vector<bool> mask;

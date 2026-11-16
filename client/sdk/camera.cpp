@@ -592,11 +592,13 @@ void __fastcall RenderLevelDetour(void* levelRenderer, void* screenContext, void
 // función es su destino.
 template <typename Fn>
 bool HookSignature(const char* pattern, void* detour, Fn& original, const char* name, bool resolveCall = false) {
-    const ScanResult match = FindPattern(pattern);
+    bool hookedByOther = false;
+    const ScanResult match = resolveCall ? FindPattern(pattern) : FindFunction(pattern, &hookedByOther);
     if (match.matches != 1) {
         log::Warn("SDK: firma de {} no encontrada ({} coincidencias).", name, match.matches);
         return false;
     }
+    if (hookedByOther) log::Info("SDK: {}: otro client ya la enganchó (empieza con un salto); Luma se engancha encima.", name);
     std::uintptr_t target = match.address;
     if (resolveCall) {
         target = ResolveRipRelative(match.address + 1, match.address + 5);

@@ -101,7 +101,9 @@ void __fastcall ApplyTurnDeltaDetour(void* self, const float* delta) {
 
 bool Init() {
     g_initialized.store(true);
-    const ScanResult match = FindPattern(kApplyTurnDelta);
+    bool hookedByOther = false;
+    const ScanResult match = FindFunction(kApplyTurnDelta, &hookedByOther);
+    if (hookedByOther) log::Info("SDK: jugador local: otro client ya lo enganchó (empieza con un salto); Luma se engancha encima.");
     if (match.matches != 1) {
         log::Warn("SDK: firma del jugador local no encontrada ({} coincidencias).", match.matches);
         notify::Push(notify::Kind::Warning, "Firma no encontrada: módulos del jugador desactivados");

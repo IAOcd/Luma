@@ -16,6 +16,7 @@
 #include "core/spotify.h"
 #include "render/lyric_flow.h"
 #include "render/visualizer.h"
+#include "sdk/draw3d.h"
 #include "core/media.h"
 #include "render/hud.h"
 #include "render/music.h"
@@ -525,10 +526,11 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
                         {"resolution", s.flowResolution}, {"letterSpacing", s.flowLetterSpacing},
                         {"wordSpacing", s.flowWordSpacing}, {"leaveTime", s.flowLeaveTime}, {"pauseHide", s.flowPauseHide},
                         {"angle", s.flowAngle}, {"spread", s.flowSpread}, {"turn", s.flowTurn}, {"roll", s.flowRoll},
-                        {"pinKey", s.flowPinKey}, {"pinTarget", s.flowPinTarget}};
+                        {"pinKey", s.flowPinKey}, {"pinTarget", s.flowPinTarget}, {"gameLetters", s.flowGameLetters}};
     out["efficiency"] = {{"on", s.efficiency}, {"lyricAnim", s.effLyricAnim}, {"uiAnim", s.effUiAnim}, {"spin", s.effSpin}, {"songFade", s.effSongFade},
                          {"marquee", s.effMarquee}, {"albumColors", s.effAlbumColors}, {"hdCovers", s.effHdCovers},
                          {"prefetch", s.effPrefetch}, {"visualizer", s.effVisualizer}};
+    out["worldDraw"] = s.worldDraw;
     out["lyricsOffset"] = s.lyricsOffset;
     out["lyricsNextLine"] = s.lyricsNextLine;
     out["hudFollowAlbum"] = s.hudFollowAlbum;
@@ -570,6 +572,7 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
     s.lyricsSweep = in.value("lyricsSweep", d.lyricsSweep);
     s.spotifyClientId = in.value("spotifyClientId", std::string());
     if (s.spotifyClientId.size() > 64) s.spotifyClientId.clear();
+    s.worldDraw = std::clamp(in.value("worldDraw", d.worldDraw), 0, 1);
     if (in.contains("visualizer") && in["visualizer"].is_object()) {
         const nlohmann::json& v = in["visualizer"];
         s.visualizer = v.value("on", d.visualizer);
@@ -603,9 +606,9 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
     if (in.contains("lyricFlow") && in["lyricFlow"].is_object()) {
         const nlohmann::json& f = in["lyricFlow"];
         s.lyricFlow = f.value("on", d.lyricFlow);
-        s.flowDistance = std::clamp(f.value("distance", d.flowDistance), 8.0f, 60.0f);
-        s.flowHeight = std::clamp(f.value("height", d.flowHeight), -4.0f, 40.0f);
-        s.flowSize = std::clamp(f.value("size", d.flowSize), 0.5f, 6.0f);
+        s.flowDistance = std::clamp(f.value("distance", d.flowDistance), 8.0f, 200.0f);
+        s.flowHeight = std::clamp(f.value("height", d.flowHeight), -4.0f, 120.0f);
+        s.flowSize = std::clamp(f.value("size", d.flowSize), 0.5f, 20.0f);
         s.flowTilt = std::clamp(f.value("tilt", d.flowTilt), 0.0f, 30.0f);
         s.flowOpacity = std::clamp(f.value("opacity", d.flowOpacity), 0.2f, 1.0f);
         s.flowUppercase = f.value("uppercase", d.flowUppercase);
@@ -633,6 +636,7 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
         s.flowOutline = f.value("outline", d.flowOutline);
         s.flowOutlineAlpha = std::clamp(f.value("outlineAlpha", d.flowOutlineAlpha), 0.1f, 1.0f);
         s.flowShadow = f.value("shadow", d.flowShadow);
+        s.flowGameLetters = std::clamp(f.value("gameLetters", d.flowGameLetters), 0, 1);
         s.flowFont = std::clamp(f.value("font", d.flowFont), 0, render::lyricflow::kFontCount - 1);
         s.flowBold = f.value("bold", d.flowBold);
         s.flowResolution = std::clamp(f.value("resolution", d.flowResolution), 9, 32);

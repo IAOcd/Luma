@@ -65,6 +65,16 @@ struct Settings {
     float lyricsOffset = 0.0f;    // seconds: + = lyrics later, - = earlier
     bool lyricsNextLine = true;   // HUD lyrics: show the next line too
     bool lyricsSweep = true;      // HUD lyrics: the light fills each word smoothly
+    // --- Who draws Lyric Flow and the visualizer (render/world_draw.h) ---
+    // 0 = Luma, on top of the game's picture: looks the same with any client
+    //     or texture pack, but the terrain in front never covers it.
+    // 1 = the game, as part of the world (the terrain covers it), with the
+    //     block outline's material: other clients or packs can change its look.
+    int worldDraw = 1;
+    // When the GAME draws the lyrics: 0 = filled letters (each pixel of a
+    // letter is two triangles), 1 = thin lines (the old way). Both with the
+    // block outline's material (sdk/draw3d.h).
+    int flowGameLetters = 0;
     // --- Lyric Flow: the lyrics floating in the world (render/lyric_flow.h) ---
     bool lyricFlow = false;
     float flowDistance = 22.0f;   // blocks in front of you
@@ -244,6 +254,8 @@ void DrawUpNext(ImVec2 min, ImVec2 max);
 bool DrawSpotifySettings();
 // The visualizer section (Music > Styles).
 bool DrawVisualizerSettings();
+// "Drawn by": Luma or the game (Lyric Flow and the visualizer; render/world_draw.h).
+bool DrawWorldDrawChoice();
 bool VisualizerOn();
 // Lyric Flow and the visualizer (things IN the world): the overlay calls it
 // every frame, also while the HUD is hidden (F1, a game menu), so they never

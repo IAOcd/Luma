@@ -35,6 +35,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/lyrics.h"
@@ -49,6 +50,7 @@
 #include "sdk/blocks.h"
 #include "sdk/camera.h"
 #include "sdk/draw3d.h"
+#include "render/world_draw.h"
 #include "sdk/mouse_grab.h"
 
 namespace luma::render::lyricflow {
@@ -662,6 +664,7 @@ void AddLine(std::vector<sdk::draw3d::WorldShapes>& out, const FlowLine& f, int 
             perCell = std::clamp(static_cast<int>(std::ceil(cellPx * 1.3f)), 1, 14);
         }
         const float scatterAmount = size * 3.0f;
+        const bool byLuma = worlddraw::ByLuma();
         auto place = [&](float px, float py, float push, float jx, float jy, float* outP) {
             const float lx = (px - w.width * 0.5f) * cellX + jx;
             const float ly = (w.cells * 0.5f - py) * cellY + jy;
@@ -675,6 +678,55 @@ void AddLine(std::vector<sdk::draw3d::WorldShapes>& out, const FlowLine& f, int 
         };
         auto addRects = [&](const std::vector<Rect>& rects, float push, float shiftX, float shiftY,
                             sdk::draw3d::WorldShapes& shape) {
+            if (byLuma) {
+                // Luma draws them (render/world_draw.h): each pixel of the
+                // letter is one filled square, its 4 corners. Sharp at any
+                // distance, with no lines needed.
+                shape.quads = true;
+                shape.triangles.reserve(shape.triangles.size() + rects.size() * 12);
+                for (std::size_t r = 0; r < rects.size(); ++r) {
+                    const Rect& rc = rects[r];
+                    if (rc.letter >= lettersShown) continue;
+                    float jx = 0.0f, jy = 0.0f;
+                    if (scatter > 0.0f) {
+                        const float ang =
+                            Hash01(static_cast<std::uint32_t>(i * 131 + r), static_cast<std::uint32_t>(f.index)) * 6.2831f;
+                        jx = std::cos(ang) * scatter * scatterAmount;
+                        jy = std::sin(ang) * scatter * scatterAmount;
+                    }
+                    const float x0 = rc.x0 + shiftX, x1 = rc.x1 + shiftX, y0 = rc.y0 + shiftY, y1 = rc.y1 + shiftY;
+                    float corner[3];
+                    for (const auto& [cx, cy] : {std::pair{x0, y0}, std::pair{x1, y0}, std::pair{x1, y1}, std::pair{x0, y1}}) {
+                        place(cx, cy, 0.0f, jx, jy, corner);
+                        shape.triangles.insert(shape.triangles.end(), corner, corner + 3);
+                    }
+                }
+                return;
+            }
+            if (s.flowGameLetters == 0) {
+                // The game, filled: two triangles per pixel of the letter
+                // (draw3d sends each one both ways, so it's seen from both sides).
+                shape.triangles.reserve(shape.triangles.size() + rects.size() * 18);
+                for (std::size_t r = 0; r < rects.size(); ++r) {
+                    const Rect& rc = rects[r];
+                    if (rc.letter >= lettersShown) continue;
+                    float jx = 0.0f, jy = 0.0f;
+                    if (scatter > 0.0f) {
+                        const float ang =
+                            Hash01(static_cast<std::uint32_t>(i * 131 + r), static_cast<std::uint32_t>(f.index)) * 6.2831f;
+                        jx = std::cos(ang) * scatter * scatterAmount;
+                        jy = std::sin(ang) * scatter * scatterAmount;
+                    }
+                    const float x0 = rc.x0 + shiftX, x1 = rc.x1 + shiftX, y0 = rc.y0 + shiftY, y1 = rc.y1 + shiftY;
+                    float a[3], b[3], c[3], d[3];
+                    place(x0, y0, push, jx, jy, a);
+                    place(x1, y0, push, jx, jy, b);
+                    place(x1, y1, push, jx, jy, c);
+                    place(x0, y1, push, jx, jy, d);
+                    for (const float* v : {a, b, c, a, c, d}) shape.triangles.insert(shape.triangles.end(), v, v + 3);
+                }
+                return;
+            }
             shape.lines = true;
             shape.triangles.reserve(shape.triangles.size() + rects.size() * static_cast<std::size_t>(perCell + 2) * 6);
             for (std::size_t r = 0; r < rects.size(); ++r) {
@@ -732,7 +784,7 @@ void Clear() {
     g_previous = FlowLine{};
     ReleaseGdiFont();
     if (g_sent) {
-        sdk::draw3d::SetWorldShapes({});
+        worlddraw::Submit({}, sdk::draw3d::kChannelLyrics);
         g_sent = false;
     }
 }
@@ -746,7 +798,7 @@ void Draw(ImDrawList* draw, ImVec2 display) {
     const lyrics::Result& ly = music::CurrentLyrics();
     const bool have = t.present && ly.trackId == t.trackId && ly.status == lyrics::Status::Found && ly.synced &&
                       !ly.lines.empty();
-    if (!have || !sdk::draw3d::Available()) {
+    if (!have || !worlddraw::Ready()) {
         Clear();
         return;
     }
@@ -769,7 +821,7 @@ void Draw(ImDrawList* draw, ImVec2 display) {
             if (pauseLeave <= 0.0f) {
                 if (!hiddenByPause) {
                     hiddenByPause = true;
-                    sdk::draw3d::SetWorldShapes({});
+                    worlddraw::Submit({}, sdk::draw3d::kChannelLyrics);
                 }
                 return;
             }
@@ -860,7 +912,7 @@ void Draw(ImDrawList* draw, ImVec2 display) {
         const float leave = std::min(leaveOf(g_current), pauseLeave);
         if (leave > 0.0f) AddLine(shapes, g_current, ms, leave, s, animate, view, display.y, now);
     }
-    sdk::draw3d::SetWorldShapes(std::move(shapes));
+    worlddraw::Submit(std::move(shapes), sdk::draw3d::kChannelLyrics);
     g_sent = true;
 }
 

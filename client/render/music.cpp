@@ -19,6 +19,8 @@
 #include "render/icons.h"
 #include "render/lyric_flow.h"
 #include "render/visualizer.h"
+#include "render/world_draw.h"
+#include "sdk/mouse_grab.h"
 #include "render/rainbow.h"
 #include "render/theme.h"
 #include "render/ui.h"
@@ -940,15 +942,24 @@ bool DrawLyricsSettings() {
     ui::Section("Lyric Flow");
     changed |= ui::Toggle("Lyrics in the sky", &s.lyricFlow, "(each word written in the world as it's sung)");
     if (s.lyricFlow) {
+        changed |= DrawWorldDrawChoice();
+        if (s.worldDraw == 1) {
+            changed |= ui::Choice("Letters", &s.flowGameLetters, {"Filled", "Lines"});
+        }
         changed |= ui::Choice("Where", &s.flowMode, {"In the world", "In the sky"});
         if (s.flowMode == 1) {
-            ui::Hint("In the sky: very far, like the sun or the clouds. It follows you when you walk (you never get "
-                     "closer), but stays put when you turn: it's part of the sky. Everything in front covers it.");
+            if (s.worldDraw == 1) {
+                ui::Hint("In the sky: very far, like the sun or the clouds. It follows you when you walk (you never get "
+                         "closer), but stays put when you turn: it's part of the sky. Everything in front covers it.");
+            } else {
+                ui::Hint("In the sky: very far, like the sun or the clouds. It follows you when you walk (you never get "
+                         "closer), but stays put when you turn: it's part of the sky.");
+            }
         }
         changed |= ui::Choice("Layout", &s.flowLayout, {"Scattered", "Centered", "Left", "Arc", "Stacked", "Staircase"});
-        changed |= ui::Slider("Distance (blocks)", &s.flowDistance, 8.0f, 60.0f, "%.0f");
-        changed |= ui::Slider("Height (blocks)", &s.flowHeight, -4.0f, 40.0f, "%.0f");
-        changed |= ui::Slider("Word size (blocks)", &s.flowSize, 0.5f, 6.0f, "%.1f");
+        changed |= ui::Slider("Distance (blocks)", &s.flowDistance, 8.0f, 200.0f, "%.0f");
+        changed |= ui::Slider("Height (blocks)", &s.flowHeight, -4.0f, 120.0f, "%.0f");
+        changed |= ui::Slider("Word size (blocks)", &s.flowSize, 0.5f, 20.0f, "%.1f");
         if (s.flowLayout == 0) changed |= ui::Slider("Tilt (degrees)", &s.flowTilt, 0.0f, 30.0f, "%.0f");
         ui::Section("Lyric Flow: place");
         changed |= ui::Slider("Direction (degrees)", &s.flowAngle, -180.0f, 180.0f, "%.0f");
@@ -1114,6 +1125,21 @@ void DrawUpNext(ImVec2 min, ImVec2 max) {
     }
 }
 
+// Who draws Lyric Flow and the visualizer (render/world_draw.h). One choice
+// for both, shown in both sections.
+bool DrawWorldDrawChoice() {
+    Settings& s = Get();
+    const bool changed = ui::Choice("Drawn by", &s.worldDraw, {"Luma (always visible)", "The game (the terrain covers it)"});
+    if (s.worldDraw == 0) {
+        ui::Hint("Luma draws it on top of the game: it looks the same with any client or texture pack, but mountains "
+                 "and walls in front don't cover it.");
+    } else {
+        ui::Hint("The game draws it as part of the world, with the block outline's look: other clients or texture "
+                 "packs that change the outline change it too.");
+    }
+    return changed;
+}
+
 void DrawWorldEffects() {
     const Settings& s = Get();
     const ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -1128,6 +1154,12 @@ void DrawWorldEffects() {
     } else {
         render::visualizer::Stop();
     }
+    // If Luma draws them (and not the game), now: behind the HUD and the menu.
+    // Not while a screen of the GAME is open (inventory, chat, pause...): the
+    // game draws those on top of the world, so the lyrics must not cover them.
+    // (With Luma's own menu open they stay: the menu is drawn above them.)
+    const bool gameScreen = sdk::mouse::GameMouseState() == 0 && !sdk::mouse::ReleasedByLuma();
+    if (!gameScreen) render::worlddraw::Draw(ImGui::GetBackgroundDrawList(), display);
 }
 
 bool VisualizerOn() {
@@ -1152,6 +1184,7 @@ bool DrawVisualizerSettings() {
             ui::Hint(lv.processOnly ? "Listening to everything except Minecraft (its own sounds don't move it)."
                                     : "Listening to all the sound of your PC (this Windows can't leave Minecraft out).");
         }
+        changed |= DrawWorldDrawChoice();
         changed |= ui::Choice("Style", &s.vizStyle, {"Bars", "Mirrored", "Wave", "Aurora", "Rings", "Pillars", "Layered wave"});
         changed |= ui::Toggle("Layers", &s.vizLayers, "(a soft glow behind and peaks on top)");
         changed |= ui::Slider("Reaction to hits", &s.vizHitReaction, 0.0f, 2.0f, "%.1fx");

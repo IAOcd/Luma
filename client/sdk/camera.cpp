@@ -3,6 +3,7 @@
 // =============================================================================
 #include "sdk/camera.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -19,6 +20,8 @@
 #include <windows.h>
 
 namespace luma::sdk::camera {
+
+void SnapshotRenderView(std::uintptr_t lr);  // (más abajo, junto a GetRenderView)
 
 namespace {
 
@@ -119,6 +122,7 @@ std::int64_t g_lastApply = 0;
 constexpr std::uintptr_t kLevelRendererPlayer = 0x480;
 constexpr std::uintptr_t kFovScaleX = 0xF50;
 constexpr std::uintptr_t kFovScaleY = 0xF64;
+constexpr std::uintptr_t kViewMatrix = 0xF10;  // la matriz de vista con la que se dibuja (camera.h GetRenderView)
 
 float g_lastWritten[2] = {0.0f, 0.0f};  // lo que escribimos (para no acumular)
 float g_base[2] = {0.0f, 0.0f};         // lo que calculó el juego
@@ -458,6 +462,98 @@ void __fastcall UpdatePlayerDetour(void* camera, void* a, void* b) {
     g_updatePlayer(camera, a, b);
 }
 
+// --- DIAGNÓSTICO (fase C): hacia dónde mira, sin _updatePlayer ----------------------
+// Otros clients (Flarial) modifican el comienzo de _updatePlayer, nuestra
+// firma no lo encuentra y sin él no sabemos hacia dónde mira la cámara (la
+// posición sí: sale del LevelRendererPlayer, que vemos en renderLevel).
+// Para encontrar OTRO lugar donde el juego guarde esa dirección: mientras
+// _updatePlayer sí funciona (sin Flarial), cada vez que giras la cámara
+// comparamos lo que sabemos (yaw, pitch y la dirección como vector) con
+// cada número de la memoria del LevelRendererPlayer y del LevelRenderer.
+// Los lugares que coinciden en TODAS las vueltas son candidatos, y se
+// anotan en el log. Solo lee memoria; después de 3 informes se apaga solo.
+// RESULT (1.26.63): the view matrix at LevelRendererPlayer+0xF10 (see
+// camera.h GetRenderView). Turned off; turn it on again after a game update
+// if GetRenderView stops working.
+constexpr bool kProbeLook = false;
+constexpr std::size_t kProbeFloats = 0x1800 / 4;
+constexpr int kProbeKinds = 10;
+const char* const kProbeKindNames[kProbeKinds] = {
+    "vector dirección", "vector dirección (al revés)", "dirección en columna (cada 16 bytes)",
+    "dirección en columna (al revés)", "yaw en grados", "pitch en grados", "yaw en radianes",
+    "pitch en radianes", "yaw en grados (negativo)", "pitch en grados (negativo)"};
+std::uint16_t g_probeHits[2][kProbeKinds][kProbeFloats];
+float g_probeBlock[kProbeFloats];
+int g_probeSamples = 0;
+int g_probeReports = 0;
+float g_probeYaw = 1000.0f, g_probePitch = 1000.0f;
+
+bool Near3(const float* a, std::size_t stride, const float* f, float sign) {
+    return std::fabs(a[0] - sign * f[0]) < 0.03f && std::fabs(a[stride] - sign * f[1]) < 0.03f &&
+           std::fabs(a[2 * stride] - sign * f[2]) < 0.03f;
+}
+float AngleGap(float a, float b, float turn) {
+    float d = std::fmod(std::fabs(a - b), turn);
+    return std::min(d, turn - d);
+}
+
+void ProbeRegion(int region, std::uintptr_t base, float yaw, float pitch, const float* fwd) {
+    if (!SafeCopy(base, g_probeBlock, sizeof(g_probeBlock))) return;
+    constexpr float kRad = 3.14159265358979f / 180.0f;
+    for (std::size_t i = 0; i < kProbeFloats; ++i) {
+        const float v = g_probeBlock[i];
+        if (!std::isfinite(v)) continue;
+        auto hit = [&](int kind) { ++g_probeHits[region][kind][i]; };
+        if (i + 2 < kProbeFloats && Near3(&g_probeBlock[i], 1, fwd, 1.0f)) hit(0);
+        if (i + 2 < kProbeFloats && Near3(&g_probeBlock[i], 1, fwd, -1.0f)) hit(1);
+        if (i + 8 < kProbeFloats && Near3(&g_probeBlock[i], 4, fwd, 1.0f)) hit(2);
+        if (i + 8 < kProbeFloats && Near3(&g_probeBlock[i], 4, fwd, -1.0f)) hit(3);
+        if (AngleGap(v, yaw, 360.0f) < 1.0f) hit(4);
+        if (std::fabs(v - pitch) < 1.0f) hit(5);
+        if (AngleGap(v, yaw * kRad, 6.2831853f) < 0.02f) hit(6);
+        if (std::fabs(v - pitch * kRad) < 0.02f) hit(7);
+        if (AngleGap(v, -yaw, 360.0f) < 1.0f) hit(8);
+        if (std::fabs(v + pitch) < 1.0f) hit(9);
+    }
+}
+
+void ProbeLook(std::uintptr_t lr) {
+    if (g_probeReports >= 3) return;
+    const std::uintptr_t cam = g_camera.load(std::memory_order_relaxed);
+    if (cam == 0 || CurrentPerspective() > 0) return;  // (solo en primera persona: ahí esa es la cámara que se ve)
+    std::uintptr_t lrp = 0;
+    float q[4]{};
+    if (!SafeRead(lr + kLevelRendererPlayer, lrp) || !LooksLikePointer(lrp) || !SafeRead(cam + kCameraLookAngles, q)) return;
+    float pitch = 0.0f, yaw = 0.0f;
+    QuaternionToRotation(q, pitch, yaw);
+    // Solo cuando la mirada cambió bastante desde la última vez (si no, un
+    // número que casualmente queda igual parecería un candidato).
+    if (AngleGap(yaw, g_probeYaw, 360.0f) < 15.0f && std::fabs(pitch - g_probePitch) < 15.0f) return;
+    g_probeYaw = yaw;
+    g_probePitch = pitch;
+    constexpr float kRad = 3.14159265358979f / 180.0f;
+    const float fwd[3] = {-std::sin(yaw * kRad) * std::cos(pitch * kRad), -std::sin(pitch * kRad),
+                          std::cos(yaw * kRad) * std::cos(pitch * kRad)};
+    ProbeRegion(0, lrp, yaw, pitch, fwd);
+    ProbeRegion(1, lr, yaw, pitch, fwd);
+    ++g_probeSamples;
+    if (g_probeSamples != 20 && g_probeSamples != 40 && g_probeSamples != 70) return;
+    ++g_probeReports;
+    int found = 0;
+    for (int region = 0; region < 2; ++region) {
+        for (int kind = 0; kind < kProbeKinds; ++kind) {
+            for (std::size_t i = 0; i < kProbeFloats; ++i) {
+                if (g_probeHits[region][kind][i] + 1 < g_probeSamples || found >= 40) continue;
+                ++found;
+                log::Info("Sonda de cámara: candidato en {}+0x{:X}: {} ({} de {} vueltas).",
+                          region == 0 ? "LevelRendererPlayer" : "LevelRenderer", i * 4, kProbeKindNames[kind],
+                          g_probeHits[region][kind][i], g_probeSamples);
+            }
+        }
+    }
+    log::Info("Sonda de cámara: informe {} de 3 tras {} vueltas, {} candidatos.", g_probeReports, g_probeSamples, found);
+}
+
 void __fastcall RenderLevelDetour(void* levelRenderer, void* screenContext, void* unk) {
     hooks::ActiveCallGuard guard;
     if (!g_loggedRender.exchange(true)) {
@@ -481,12 +577,14 @@ void __fastcall RenderLevelDetour(void* levelRenderer, void* screenContext, void
     draw3d::BeginLevel(lr);
     dynlight::EnterRenderLevel(lr);  // dynamic lights: rebuilds + light for entities (sdk/dynlight.h)
     g_renderLevel(levelRenderer, screenContext, unk);
+    SnapshotRenderView(lr);  // the view this frame was drawn with (camera.h GetRenderView)
     dynlight::LeaveRenderLevel();
     draw3d::EndLevel();
     if (active) {
         ApplyFov(lr);
         // Hitboxes y otros dibujos dentro del mundo (sdk/draw3d.h).
         draw3d::OnRenderLevel(lr, reinterpret_cast<std::uintptr_t>(screenContext));
+        if constexpr (kProbeLook) ProbeLook(lr);
     }
 }
 
@@ -513,10 +611,88 @@ bool HookSignature(const char* pattern, void* detour, Fn& original, const char* 
 
 }  // namespace
 
+namespace {
+// The view of the last frame the game drew, copied right when renderLevel
+// finished (see RenderLevelDetour). Reading it live at Present time could
+// already give the NEXT frame's numbers (the game prepares it meanwhile):
+// the lyrics would lag or jump a frame behind the world.
+SRWLOCK g_viewLock = SRWLOCK_INIT;
+RenderView g_viewSnapshot;
+ULONGLONG g_viewSnapshotAt = 0;  // GetTickCount64 (0 = none)
+}  // namespace
+
+bool ReadRenderView(std::uintptr_t lr, RenderView& out);
+
+void SnapshotRenderView(std::uintptr_t lr) {
+    RenderView view;
+    const bool ok = ReadRenderView(lr, view);
+    AcquireSRWLockExclusive(&g_viewLock);
+    if (ok) g_viewSnapshot = view;
+    g_viewSnapshotAt = ok ? GetTickCount64() : 0;
+    ReleaseSRWLockExclusive(&g_viewLock);
+}
+
+bool GetRenderView(RenderView& out) {
+    AcquireSRWLockShared(&g_viewLock);
+    // (Older than half a second = the game stopped drawing the world: a
+    // menu, a loading screen, no world.)
+    const bool ok = g_viewSnapshotAt != 0 && GetTickCount64() - g_viewSnapshotAt < 500;
+    if (ok) out = g_viewSnapshot;
+    ReleaseSRWLockShared(&g_viewLock);
+    return ok;
+}
+
+bool ReadRenderView(std::uintptr_t lr, RenderView& out) {
+    std::uintptr_t lrp = 0;
+    if (lr == 0 || !SafeRead(lr + kLevelRendererPlayer, lrp) || !LooksLikePointer(lrp) || !SafeRead(lrp + 0x658, out.pos) ||
+        !SafeRead(lrp + kViewMatrix, out.view) || !SafeRead(lrp + kFovScaleX, out.proj00) ||
+        !SafeRead(lrp + kFovScaleY, out.proj11)) {
+        return false;
+    }
+    for (float v : out.view) {
+        if (!std::isfinite(v)) return false;
+    }
+    for (float v : out.pos) {
+        if (!std::isfinite(v)) return false;
+    }
+    if (!(out.proj00 > 0.01f && out.proj00 < 50.0f && out.proj11 > 0.01f && out.proj11 < 50.0f)) return false;
+    // The three rows of directions must be of length 1 (if not, it isn't a
+    // view matrix: a game update moved it).
+    for (int row = 0; row < 3; ++row) {
+        const float x = out.view[row], y = out.view[4 + row], z = out.view[8 + row];
+        if (std::fabs(x * x + y * y + z * z - 1.0f) > 0.02f) return false;
+    }
+    static std::atomic<int> logged{0};
+    if (logged.load(std::memory_order_relaxed) < 3 && std::fabs(out.view[13]) > 0.001f) {
+        // (Diagnosis: how the matrix's shift compares with the two positions.)
+        logged.fetch_add(1);
+        float still[3]{};
+        SafeRead(lrp + kRenderCameraPos, still);
+        log::Info("SDK: matriz de vista: desplazamiento {:.3f} {:.3f} {:.3f}; posición {:.3f} {:.3f} {:.3f}, sin balanceo "
+                  "{:.3f} {:.3f} {:.3f}.",
+                  out.view[12], out.view[13], out.view[14], out.pos[0], out.pos[1], out.pos[2], still[0], still[1], still[2]);
+    }
+    return true;
+}
+
 bool GetView(View& out) {
     const std::uintptr_t lr = g_levelRenderer.load(std::memory_order_relaxed);
     const std::uintptr_t cam = g_camera.load(std::memory_order_relaxed);
-    if (lr == 0 || cam == 0) return false;
+    if (lr == 0) return false;
+    if (cam == 0) {
+        // Without _updatePlayer: where it looks, from the render matrix
+        // (row 2 = backward, so forward is its opposite).
+        RenderView rv;
+        if (!GetRenderView(rv)) return false;
+        std::memcpy(out.pos, rv.pos, sizeof(out.pos));
+        out.scaleX = rv.proj00;
+        out.scaleY = rv.proj11;
+        const float fx = -rv.view[2], fy = -rv.view[6], fz = -rv.view[10];
+        constexpr float kRadToDeg = 180.0f / 3.14159265358979f;
+        out.pitch = std::asin(std::clamp(-fy, -1.0f, 1.0f)) * kRadToDeg;
+        out.yaw = std::atan2(-fx, fz) * kRadToDeg;
+        return true;
+    }
     std::uintptr_t lrp = 0;
     float q[4]{};
     if (!SafeRead(lr + kLevelRendererPlayer, lrp) || !LooksLikePointer(lrp) || !SafeRead(lrp + 0x658, out.pos) ||
@@ -529,6 +705,15 @@ bool GetView(View& out) {
     }
     if (!(out.scaleX > 0.01f && out.scaleX < 50.0f && out.scaleY > 0.01f && out.scaleY < 50.0f)) return false;
     QuaternionToRotation(q, out.pitch, out.yaw);
+    // The position (and zoom) of the frame that was really drawn, the same
+    // one Luma draws on top with: if not, while walking or jumping the
+    // lyrics would be placed from one position and drawn from another.
+    RenderView drawn;
+    if (GetRenderView(drawn)) {
+        std::memcpy(out.pos, drawn.pos, sizeof(out.pos));
+        out.scaleX = drawn.proj00;
+        out.scaleY = drawn.proj11;
+    }
     return std::fabs(out.pitch) <= 90.5f;
 }
 

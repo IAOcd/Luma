@@ -22,6 +22,7 @@
 #include "render/rainbow.h"
 #include "sdk/camera.h"
 #include "sdk/draw3d.h"
+#include "render/world_draw.h"
 
 namespace luma::render::visualizer {
 
@@ -173,7 +174,7 @@ void Draw(ImVec2 display) {
     audioviz::Want(true);
     audioviz::SetTuning(s.vizSensitivity, s.vizSmoothing);
     sdk::camera::View view;
-    if (!sdk::draw3d::Available() || !sdk::camera::GetView(view)) {
+    if (!worlddraw::Ready() || !sdk::camera::GetView(view)) {
         Stop();
         audioviz::Want(true);
         return;
@@ -376,14 +377,14 @@ void Draw(ImVec2 display) {
     glow.TakeInto(shapes);
     body.TakeInto(shapes);
     caps.TakeInto(shapes);
-    sdk::draw3d::SetWorldShapes(std::move(shapes), sdk::draw3d::kChannelVisualizer);
+    worlddraw::Submit(std::move(shapes), sdk::draw3d::kChannelVisualizer);
     g_sent = true;
 }
 
 void Stop() {
     audioviz::Want(false);
     if (g_sent) {
-        sdk::draw3d::SetWorldShapes({}, sdk::draw3d::kChannelVisualizer);
+        worlddraw::Submit({}, sdk::draw3d::kChannelVisualizer);
         g_sent = false;
     }
 }

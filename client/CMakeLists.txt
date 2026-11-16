@@ -72,6 +72,7 @@ add_library(Luma SHARED
     render/lyric_flow.cpp
     render/font_fallback.cpp
     render/visualizer.cpp
+    render/world_draw.cpp
     render/nanosvg_impl.cpp
     render/input.cpp
     render/item_icons.cpp

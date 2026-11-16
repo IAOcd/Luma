@@ -79,7 +79,28 @@ struct View {
     float scaleX = 1.0f, scaleY = 1.0f;
 };
 // The last frame's camera. False if there's no world (or something looks wrong).
+// (Without _updatePlayer, for example when another client changed it, the
+// direction comes from the render matrix below.)
 bool GetView(View& out);
+
+// --- EXACTLY what the game used to draw this frame ---------------------------------
+// The LevelRendererPlayer keeps the "view matrix" the game draws the world
+// with (+0xF10), right before its projection matrix (+0xF50). Found with a
+// probe (2026-11, Minecraft 1.26.63): its third row was always the opposite
+// of where the camera looks, in every turn. It's 4x4 numbers stored by
+// columns (like the "glm" library): rows 0, 1, 2 = the camera's right, up
+// and backward directions; the last column = a small shift (view bobbing).
+// Points are measured from "pos" (the game draws everything relative to the
+// camera). Using it, what Luma draws on top lines up with the world even
+// while walking (bobbing) and in every perspective, and it doesn't need
+// _updatePlayer (which other clients change).
+struct RenderView {
+    float pos[3]{};
+    float view[16]{};    // by columns: view[col * 4 + row]
+    float proj00 = 1.0f; // projection: horizontal and vertical scale
+    float proj11 = 1.0f;
+};
+bool GetRenderView(RenderView& out);
 
 // --- Free cam (solo mundos locales: lo controla modules/world/freecam) -------------
 //  Cómo funciona (todo en este archivo, sin tocar al jugador):

@@ -117,7 +117,6 @@ OutlineSettings g_outline;
 HitboxSettings g_hitboxes;
 ChunkBorderSettings g_chunks;
 std::vector<WorldShapes> g_shapes[kChannelCount];  // other modules' shapes, by channel (SetWorldShapes)
-int g_shapesMaterial = 0;
 std::vector<WorldShapes> g_shapesFrame;  // the copy being drawn this frame (render thread only)
 
 // --- Dibujar CON TEXTURA (capas de Luma) -------------------------------------------------
@@ -774,10 +773,6 @@ void TakeShapesForFrame() {
     for (const auto& channel : g_shapes) g_shapesFrame.insert(g_shapesFrame.end(), channel.begin(), channel.end());
 }
 
-int ShapesMaterial() {
-    std::lock_guard lock(g_settingsMutex);
-    return g_shapesMaterial;
-}
 
 void Grow(float* lo, float* hi, const float* a, const float* b);  // (below)
 
@@ -931,7 +926,7 @@ void Submit(void* sc, void* tess, void* material, std::uint8_t* copy, void* a5, 
 // del juego, no se dibuja). Para eso, una línea transparente muy abajo.
 void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, void* a6, std::uintptr_t lrp,
                  const OutlineSettings& o, const HitboxSettings& h, const int* blockPos, bool hitboxes,
-                 void* fillMaterial, bool closeIfEmpty = false, void* shapesMaterial = nullptr,
+                 void* fillMaterial, bool closeIfEmpty = false,
                  void* texturedMaterial = nullptr) {
     std::uintptr_t colorPtr = 0;
     float saved[4]{};
@@ -1010,8 +1005,12 @@ void DrawOwnSafe(void* sc, void* tess, void* material, void* params, void* a5, v
             for (const WorldShapes& shape : g_shapesFrame) {
                 float lo[3] = {3.0e7f, 3.0e7f, 3.0e7f};
                 float hi[3] = {-3.0e7f, -3.0e7f, -3.0e7f};
-                void* useMaterial = shape.lines ? material : shapesMaterial;
-                if (useMaterial == nullptr) continue;
+                // Lines AND filled triangles use the game's own outline
+                // material: we tested that the materials Luma asks the game
+                // for (kFillMaterials) draw nothing in this version, while
+                // this one shows filled shapes, near and far, and the blocks
+                // and entities in front cover them.
+                void* useMaterial = material;
                 if (shape.lines) {
                     const float* p = shape.triangles.data();
                     for (std::size_t i = 0; i + 6 <= shape.triangles.size(); i += 6) {
@@ -1149,7 +1148,7 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
             g_levelPathDraws.fetch_add(1, std::memory_order_relaxed);
             TakeShapesForFrame();
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, OutlineSettings{}, CopyHitboxes(), nullptr,
-                        true, nullptr, /*closeIfEmpty=*/true, g_shapesFrame.empty() ? nullptr : FillMaterial(ShapesMaterial()),
+                        true, nullptr, /*closeIfEmpty=*/true,
                         g_texturedFrame.empty() ? nullptr : FillMaterial(kTexturedMaterial));
         } else if (g_ready.load(std::memory_order_relaxed) && LooksLikeParams(params)) {
             // (ya dibujamos este frame: solo cerrar el lote vacío)
@@ -1192,7 +1191,6 @@ void __fastcall RenderMeshDetour(void* screenContext, void* tess, void* material
             if (hitboxes) TakeShapesForFrame();
             DrawOwnSafe(screenContext, tess, material, params, a5, a6, t_lrp, o, h, o.enabled ? t_outlinePos : nullptr,
                         hitboxes, o.fill ? FillMaterial(o.fillMaterial) : nullptr, false,
-                        hitboxes && !g_shapesFrame.empty() ? FillMaterial(ShapesMaterial()) : nullptr,
                         hitboxes && !g_texturedFrame.empty() ? FillMaterial(kTexturedMaterial) : nullptr);
             if (hitboxes) {
                 t_levelDrawn = true;
@@ -1472,10 +1470,6 @@ void SetWorldShapes(std::vector<WorldShapes> shapes, int channel) {
     g_shapes[channel] = std::move(shapes);
 }
 
-void SetWorldShapesMaterial(int index) {
-    std::lock_guard lock(g_settingsMutex);
-    g_shapesMaterial = index < 0 ? 0 : (index >= kFillMaterialCount ? kFillMaterialCount - 1 : index);
-}
 
 void OnRenderLevel(std::uintptr_t levelRenderer, std::uintptr_t screenContext) {
     // Ya no dibujamos aquí: fuera de una llamada del juego no se ve (ver

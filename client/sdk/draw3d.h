@@ -84,16 +84,17 @@ void SetChunkBorders(const ChunkBorderSettings& settings);
 struct WorldShapes {
     Color color;
     std::vector<float> triangles;
-    // true = "triangles" holds LINES instead (2 points each, 6 floats), drawn
-    // with the game's own outline material: the one that is sure to show
-    // anywhere (filled triangles don't show far away with these materials).
+    // true = "triangles" holds LINES instead (2 points each, 6 floats).
+    // (Both are drawn with the game's own block outline material: the
+    // materials Luma asks the game for draw nothing in this version.)
     bool lines = false;
+    // true = 4 points each (12 floats), filled: only when LUMA draws them
+    // (render/world_draw.h); the game never receives these.
+    bool quads = false;
 };
 // Each module uses its own "channel", so they don't erase each other's shapes.
 enum ShapeChannel { kChannelLyrics = 0, kChannelVisualizer = 1, kChannelWaypoints = 2, kChannelCount = 3 };
 void SetWorldShapes(std::vector<WorldShapes> shapes, int channel = kChannelLyrics);
-// Which of the fill materials draws them (the same candidates as the outline fill).
-void SetWorldShapesMaterial(int index);
 
 // --- Con textura (las capas de Luma) ----------------------------------------------------
 // Triángulos con una imagen encima. "texture" = RUTA COMPLETA de un PNG en el

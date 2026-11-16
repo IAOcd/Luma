@@ -1,5 +1,5 @@
 // =============================================================================
-//  gpu.h - Recursos de GPU de Luma: texturas y desenfoque (DirectX 12)
+//  gpu.h - Recursos de GPU de Luma: texturas y desenfoque (DirectX 12 y 11)
 // =============================================================================
 //  Tres cosas:
 //
@@ -21,12 +21,19 @@
 //
 //  Solo trabaja con el menú abierto: con el menú cerrado no cuesta nada.
 //
+//  DIRECTX 11: el juego normalmente usa DirectX 12, pero otros clients (por
+//  ejemplo Flarial con "Better Frames") lo pasan a DirectX 11, a veces en
+//  plena partida. Por eso las texturas de Luma tienen un número propio que no
+//  depende de la versión (ver TranslateDrawData). En DirectX 11 no hay
+//  desenfoque ni post-procesado: el vidrio queda translúcido, sin esmerilar.
+//
 //  HILOS: todo desde el hilo de render, con luma::StateMutex() tomado.
 // =============================================================================
 #pragma once
 
 #include <string>
 
+#include <d3d11.h>
 #include <d3d12.h>
 #include <imgui.h>
 
@@ -41,20 +48,34 @@ constexpr UINT kFontSlot = 0;
 // desenfocar. "queue" es la cola de comandos del juego.
 bool Init(ID3D12Device* device, ID3D12CommandQueue* queue);
 
-// Libera todo. Llamar con la GPU ya sin trabajo pendiente nuestro.
+// Lo mismo para DirectX 11 (sin desenfoque ni post-procesado).
+bool InitDx11(ID3D11Device* device, ID3D11DeviceContext* context);
+
+// Suelta todo lo de la GPU actual, pero las texturas siguen existiendo (con
+// sus números): se vuelven a subir en el próximo Init / InitDx11. Para cuando
+// el juego cambia de DirectX o de dispositivo.
+void ReleaseDevice();
+
+// Libera todo, texturas incluidas. Llamar con la GPU ya sin trabajo pendiente nuestro.
 void Shutdown();
 
 ID3D12DescriptorHeap* SrvHeap();
 D3D12_CPU_DESCRIPTOR_HANDLE CpuSlot(UINT slot);
 D3D12_GPU_DESCRIPTOR_HANDLE GpuSlot(UINT slot);
 
-// Sube una imagen RGBA (4 bytes por píxel) a la GPU y devuelve el
-// identificador para ImGui::Image / AddImage. 0 si falló. Espera a que termine.
+// Sube una imagen RGBA (4 bytes por píxel) a la GPU y devuelve el número de
+// Luma para ImGui::Image / AddImage. 0 si falló. Espera a que termine. Si
+// todavía no hay GPU, queda anotada y se sube en cuanto la haya.
 ImTextureID CreateTexture(const std::uint8_t* rgba, UINT width, UINT height);
 
 // Replaces the picture of a texture made with CreateTexture (same size only).
 // For things that change, like the album art: no new slot each time.
 bool UpdateTexture(ImTextureID id, const std::uint8_t* rgba, UINT width, UINT height);
+
+// Justo antes de dibujar: cambia los números de Luma de la lista de dibujo de
+// ImGui por las texturas reales de la GPU actual. Cuesta unas pocas
+// comparaciones por cada "pedazo" de la lista.
+void TranslateDrawData(ImDrawData* data);
 
 // The name of the graphics card the game draws with, and its own memory
 // ("AMD Radeon(TM) Graphics (512 MB)"). Empty until the overlay starts.

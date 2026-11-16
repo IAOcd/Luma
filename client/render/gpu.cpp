@@ -3,6 +3,7 @@
 // =============================================================================
 #include "render/gpu.h"
 
+#include <d3d11.h>        // DirectX 11 (cuando el juego, u otro client, lo usa)
 #include <d3dcompiler.h>  // D3DCompile: compilar shaders en tiempo de ejecución
 #include <dxgi1_4.h>      // the graphics card's name (AdapterName)
 #include <wrl/client.h>
@@ -39,8 +40,39 @@ ComPtr<ID3D12GraphicsCommandList> g_uploadList;
 ComPtr<ID3D12Fence> g_uploadFence;
 UINT64 g_uploadValue = 0;
 HANDLE g_uploadEvent = nullptr;
-std::vector<ComPtr<ID3D12Resource>> g_textures;  // las mantenemos vivas
-std::vector<UINT> g_textureSlots;                 // the descriptor slot of each one (same order)
+
+// --- Texturas de Luma (comunes a DirectX 11 y 12) ---------------------------------
+// Cada textura tiene un NÚMERO PROPIO de Luma (el "handle"), que es lo que
+// reciben los módulos. También guardamos una copia de sus píxeles en la
+// memoria normal: si el juego cambia de DirectX en plena partida (por ejemplo,
+// Flarial con "Better Frames" lo pasa de 12 a 11), la subimos otra vez a la
+// GPU nueva con el MISMO número y nadie más se entera. Antes de dibujar,
+// TranslateDrawData cambia cada número por la textura real de la GPU actual.
+//
+// El número empieza en 0x4C554D41 ("LUMA" en hexadecimal) en la parte alta:
+// así nunca se confunde con una textura real (la fuente de ImGui, el vidrio).
+constexpr ImTextureID kHandleBase = 0x4C554D4100000000ull;
+constexpr std::size_t kMaxTextures = kSlotCount - kFirstFreeSlot;  // lo que entra en la tabla de DX12
+
+struct Texture {
+    std::vector<std::uint8_t> rgba;  // la copia de los píxeles
+    UINT width = 0;
+    UINT height = 0;
+    ImTextureID native = 0;  // la textura real en la GPU actual (0 = todavía no subida)
+    ComPtr<ID3D12Resource> dx12;
+    ComPtr<ID3D11Texture2D> dx11;
+    ComPtr<ID3D11ShaderResourceView> dx11View;
+};
+std::vector<Texture> g_textures;
+
+// DirectX 11: el dispositivo del juego y su "contexto" (por donde se le dan
+// órdenes a la GPU). Solo uno de los dos (g_device o g_device11) está puesto.
+ComPtr<ID3D11Device> g_device11;
+ComPtr<ID3D11DeviceContext> g_context11;
+
+// La tarjeta gráfica del dispositivo actual (para AdapterName).
+LUID g_adapterLuid{};
+bool g_haveAdapter = false;
 
 // --- Desenfoque ----------------------------------------------------------------------
 ComPtr<ID3D12RootSignature> g_rootSignature;
@@ -281,7 +313,13 @@ void CreateSrv(ID3D12Resource* resource, DXGI_FORMAT format, UINT slot) {
     g_device->CreateShaderResourceView(resource, &srv, CpuSlot(slot));
 }
 
+bool Upload(Texture& texture);
+void UploadAll();
+
 }  // namespace
+
+bool UploadInto(ID3D12Resource* texture, const std::uint8_t* rgba, UINT width, UINT height,
+                D3D12_RESOURCE_STATES before);
 
 bool Init(ID3D12Device* device, ID3D12CommandQueue* queue) {
     g_device = device;
@@ -319,18 +357,44 @@ bool Init(ID3D12Device* device, ID3D12CommandQueue* queue) {
     if (!CreatePipeline()) {
         log::Warn("Sin desenfoque: los paneles serán translúcidos pero sin vidrio esmerilado.");
     }
+    g_adapterLuid = device->GetAdapterLuid();
+    g_haveAdapter = true;
+    UploadAll();  // las texturas que ya existían (si venimos de otro DirectX)
     return true;
 }
 
-void Shutdown() {
+bool InitDx11(ID3D11Device* device, ID3D11DeviceContext* context) {
+    g_device11 = device;
+    g_context11 = context;
+    ComPtr<IDXGIDevice> dxgiDevice;
+    ComPtr<IDXGIAdapter> adapter;
+    DXGI_ADAPTER_DESC desc{};
+    if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&dxgiDevice))) && SUCCEEDED(dxgiDevice->GetAdapter(&adapter)) &&
+        SUCCEEDED(adapter->GetDesc(&desc))) {
+        g_adapterLuid = desc.AdapterLuid;
+        g_haveAdapter = true;
+    }
+    // (En DirectX 11 no hay desenfoque ni post-procesado: el vidrio queda
+    // translúcido. Ver gpu.h.)
+    UploadAll();
+    return true;
+}
+
+void ReleaseDevice() {
     DestroyBlurTargets();
     g_pipeline.Reset();
     g_downPipeline.Reset();
     g_postPipeline.Reset();
     g_rootSignature.Reset();
     g_blurRtvHeap.Reset();
-    g_textures.clear();
-    g_textureSlots.clear();
+    // Las texturas siguen existiendo (con sus píxeles): solo soltamos su copia
+    // en la GPU. Se vuelven a subir en el próximo Init / InitDx11.
+    for (Texture& texture : g_textures) {
+        texture.native = 0;
+        texture.dx12.Reset();
+        texture.dx11View.Reset();
+        texture.dx11.Reset();
+    }
     g_uploadList.Reset();
     g_uploadAllocator.Reset();
     g_uploadFence.Reset();
@@ -342,6 +406,15 @@ void Shutdown() {
     g_device.Reset();
     g_queue = nullptr;
     g_nextSlot = kFirstFreeSlot;
+    g_context11.Reset();
+    g_device11.Reset();
+    g_haveAdapter = false;
+}
+
+void Shutdown() {
+    ReleaseDevice();
+    g_textures.clear();
+    g_textures.shrink_to_fit();
 }
 
 ID3D12DescriptorHeap* SrvHeap() {
@@ -431,27 +504,87 @@ bool UploadInto(ID3D12Resource* texture, const std::uint8_t* rgba, UINT width, U
     return true;
 }
 
+namespace {
+
+// Sube la copia de píxeles de "texture" a la GPU actual (DirectX 12 u 11).
+bool Upload(Texture& texture) {
+    if (g_device) {
+        if (g_queue == nullptr || g_nextSlot >= kSlotCount) return false;
+        ComPtr<ID3D12Resource> resource = CreateTexture2D(texture.width, texture.height, DXGI_FORMAT_R8G8B8A8_UNORM,
+                                                          D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
+        if (!resource || !UploadInto(resource.Get(), texture.rgba.data(), texture.width, texture.height,
+                                     D3D12_RESOURCE_STATE_COPY_DEST)) {
+            return false;
+        }
+        const UINT slot = g_nextSlot++;
+        CreateSrv(resource.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, slot);
+        texture.dx12 = resource;
+        texture.native = static_cast<ImTextureID>(GpuSlot(slot).ptr);
+        return true;
+    }
+    if (g_device11) {
+        // En DirectX 11 es más simple: se crea la textura con los píxeles ya
+        // puestos y una "vista" para que el shader de ImGui la lea.
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = texture.width;
+        desc.Height = texture.height;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_DEFAULT;  // DEFAULT (no IMMUTABLE): UpdateTexture la puede cambiar
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA data{};
+        data.pSysMem = texture.rgba.data();
+        data.SysMemPitch = texture.width * 4;
+        if (FAILED(g_device11->CreateTexture2D(&desc, &data, &texture.dx11)) ||
+            FAILED(g_device11->CreateShaderResourceView(texture.dx11.Get(), nullptr, &texture.dx11View))) {
+            texture.dx11.Reset();
+            texture.dx11View.Reset();
+            return false;
+        }
+        texture.native = reinterpret_cast<ImTextureID>(texture.dx11View.Get());
+        return true;
+    }
+    return false;
+}
+
+// Sube todas las texturas que no están en la GPU actual (al iniciar en un
+// DirectX nuevo).
+void UploadAll() {
+    std::size_t failed = 0;
+    for (Texture& texture : g_textures) {
+        if (texture.native == 0 && !Upload(texture)) ++failed;
+    }
+    if (!g_textures.empty()) {
+        log::Info("Texturas de Luma subidas a la GPU: {} ({} fallaron).", g_textures.size() - failed, failed);
+    }
+}
+
+}  // namespace
+
 ImTextureID CreateTexture(const std::uint8_t* rgba, UINT width, UINT height) {
-    if (!g_device || g_queue == nullptr || g_nextSlot >= kSlotCount || rgba == nullptr) {
+    if (rgba == nullptr || width == 0 || height == 0 || g_textures.size() >= kMaxTextures) {
         return 0;
     }
-    ComPtr<ID3D12Resource> texture = CreateTexture2D(width, height, DXGI_FORMAT_R8G8B8A8_UNORM,
-                                                     D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
-    if (!texture || !UploadInto(texture.Get(), rgba, width, height, D3D12_RESOURCE_STATE_COPY_DEST)) {
+    Texture texture;
+    texture.rgba.assign(rgba, rgba + static_cast<std::size_t>(width) * height * 4);
+    texture.width = width;
+    texture.height = height;
+    // Sin dispositivo todavía (o en medio de un cambio de DirectX): queda
+    // anotada y se sube sola en cuanto haya GPU.
+    if ((g_device || g_device11) && !Upload(texture)) {
         return 0;
     }
-    const UINT slot = g_nextSlot++;
-    CreateSrv(texture.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, slot);
-    g_textures.push_back(texture);
-    g_textureSlots.push_back(slot);
-    return static_cast<ImTextureID>(GpuSlot(slot).ptr);
+    g_textures.push_back(std::move(texture));
+    return kHandleBase + (g_textures.size() - 1);
 }
 
 std::string AdapterName() {
-    if (!g_device) return {};
+    if (!g_haveAdapter) return {};
     // The card the game's device belongs to (by its LUID): on a laptop with two
     // cards, the one really drawing.
-    const LUID luid = g_device->GetAdapterLuid();
+    const LUID luid = g_adapterLuid;
     ComPtr<IDXGIFactory4> factory;
     ComPtr<IDXGIAdapter1> adapter;
     DXGI_ADAPTER_DESC1 desc{};
@@ -468,20 +601,45 @@ std::string AdapterName() {
 }
 
 bool UpdateTexture(ImTextureID id, const std::uint8_t* rgba, UINT width, UINT height) {
-    if (!g_device || g_queue == nullptr || rgba == nullptr) {
+    if (rgba == nullptr || id < kHandleBase || id - kHandleBase >= g_textures.size()) {
         return false;
     }
-    for (std::size_t i = 0; i < g_textureSlots.size(); ++i) {
-        if (static_cast<ImTextureID>(GpuSlot(g_textureSlots[i]).ptr) != id) {
-            continue;
-        }
-        const D3D12_RESOURCE_DESC desc = g_textures[i]->GetDesc();
-        if (desc.Width != width || desc.Height != height) {
-            return false;  // only the same size: the slot keeps its texture
-        }
-        return UploadInto(g_textures[i].Get(), rgba, width, height, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    Texture& texture = g_textures[static_cast<std::size_t>(id - kHandleBase)];
+    if (texture.width != width || texture.height != height) {
+        return false;  // only the same size: the handle keeps its texture
+    }
+    std::memcpy(texture.rgba.data(), rgba, texture.rgba.size());
+    if (texture.native == 0) {
+        return true;  // (no GPU right now: it goes up with the copy when there is one)
+    }
+    if (texture.dx12) {
+        return UploadInto(texture.dx12.Get(), rgba, width, height, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    }
+    if (texture.dx11 && g_context11) {
+        g_context11->UpdateSubresource(texture.dx11.Get(), 0, nullptr, rgba, width * 4, 0);
+        return true;
     }
     return false;
+}
+
+void TranslateDrawData(ImDrawData* data) {
+    if (data == nullptr) {
+        return;
+    }
+    const ImTextureID last = kHandleBase + g_textures.size();
+    for (int n = 0; n < data->CmdListsCount; ++n) {
+        for (ImDrawCmd& cmd : data->CmdLists[n]->CmdBuffer) {
+            if (cmd.UserCallback != nullptr || cmd.TextureId < kHandleBase || cmd.TextureId >= last) {
+                continue;  // una textura real (la fuente, el vidrio) o una orden especial
+            }
+            const ImTextureID native = g_textures[static_cast<std::size_t>(cmd.TextureId - kHandleBase)].native;
+            if (native == 0) {
+                cmd.ElemCount = 0;  // todavía sin subir: este pedacito no se dibuja (nunca una textura inválida)
+            } else {
+                cmd.TextureId = native;
+            }
+        }
+    }
 }
 
 // El pipeline del post-procesado escribe en el back buffer, así que se crea

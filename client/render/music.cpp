@@ -1102,6 +1102,139 @@ constexpr const char* kTabsHalo[] = {"Ring"};
 constexpr const char* kTabsColors[] = {"Album art"};
 constexpr const char* kTabsAccount[] = {"Spotify help", "Lighter mode"};
 
+// --- READY-MADE STYLES ("presets") ----------------------------------------------------
+//  A style changes only how it LOOKS (colors, effects, animations): never
+//  where the lyrics are, their size or their font. Once applied, everything
+//  can still be changed by hand; the style's button stays lit only while
+//  nothing of it was changed.
+struct FlowLook {
+    int colorMode;
+    float color[3], color2[3];
+    bool outline;
+    bool shadow;
+    int shadowStyle;
+    int appear, leave, motion;
+    float speed;
+    int fill, unsung, glow, glowColor;
+    float glowStrength;
+    int glowWhere, vfx;
+    float vfxAmount;
+    int vfxColor;
+};
+constexpr const char* kFlowStyleNames[] = {"Karaoke", "Neon", "Party", "Dream", "Fire", "Minimal"};
+constexpr FlowLook kFlowStyles[] = {
+    // Karaoke: the album's color, filled as it's sung, a soft glow on the word being sung.
+    {1, {1, 1, 1}, {0.70f, 0.56f, 1.0f}, true, false, 0, 1, 1, 0, 1.0f, 1, 0, 1, 0, 1.0f, 1, 0, 1.0f, 0},
+    // Neon: one strong color, a neon glow on every word, a bright edge and sparks.
+    {0, {0.30f, 0.95f, 1.0f}, {0.70f, 0.56f, 1.0f}, false, false, 0, 0, 1, 0, 1.0f, 4, 0, 3, 0, 1.2f, 0, 1, 1.0f, 0},
+    // Party: a rainbow, words that pop and wave, confetti, a glow that pulses.
+    {4, {1, 1, 1}, {0.70f, 0.56f, 1.0f}, true, true, 0, 0, 4, 2, 1.0f, 2, 0, 5, 3, 1.0f, 1, 3, 1.2f, 2},
+    // Dream: the album's gradient, a wide light, stardust, a colored shadow, floating.
+    {2, {1, 1, 1}, {0.70f, 0.56f, 1.0f}, false, true, 1, 3, 0, 1, 0.8f, 1, 0, 2, 1, 0.9f, 0, 2, 1.0f, 1},
+    // Fire: orange to yellow, a flash on each word, embers, thick 3D letters.
+    {3, {1.0f, 0.45f, 0.10f}, {1.0f, 0.85f, 0.30f}, true, true, 2, 2, 2, 0, 1.0f, 1, 0, 4, 0, 1.0f, 1, 4, 1.0f, 0},
+    // Minimal: white with a border, nothing else.
+    {0, {1, 1, 1}, {0.70f, 0.56f, 1.0f}, true, false, 0, 1, 1, 0, 1.0f, 0, 0, 0, 0, 1.0f, 1, 0, 1.0f, 0},
+};
+constexpr int kFlowStyleCount = static_cast<int>(sizeof(kFlowStyles) / sizeof(kFlowStyles[0]));
+
+bool Near(float a, float b) {
+    return std::fabs(a - b) < 0.001f;
+}
+bool Near3(const float* a, const float* b) {
+    return Near(a[0], b[0]) && Near(a[1], b[1]) && Near(a[2], b[2]);
+}
+
+void ApplyFlowStyle(Settings& s, int i) {
+    const FlowLook& k = kFlowStyles[i];
+    s.flowColorMode = k.colorMode;
+    std::memcpy(s.flowColor, k.color, sizeof(k.color));
+    std::memcpy(s.flowColor2, k.color2, sizeof(k.color2));
+    s.flowOutline = k.outline;
+    s.flowShadow = k.shadow;
+    s.flowShadowStyle = k.shadowStyle;
+    s.flowAppear = k.appear;
+    s.flowLeave = k.leave;
+    s.flowMotion = k.motion;
+    s.flowSpeed = k.speed;
+    s.flowFill = k.fill;
+    s.flowUnsung = k.unsung;
+    s.flowGlow = k.glow;
+    s.flowGlowColor = k.glowColor;
+    s.flowGlowStrength = k.glowStrength;
+    s.flowGlowWhere = k.glowWhere;
+    s.flowVfx = k.vfx;
+    s.flowVfxAmount = k.vfxAmount;
+    s.flowVfxColor = k.vfxColor;
+    // (and the defaults of what the styles don't choose)
+    const Settings d{};
+    s.flowHighlight = false;
+    s.flowOpacity = d.flowOpacity;
+    std::memcpy(s.flowOutlineColor, d.flowOutlineColor, sizeof(d.flowOutlineColor));
+    s.flowOutlineAlpha = d.flowOutlineAlpha;
+}
+
+int CurrentFlowStyle(const Settings& s) {
+    const Settings d{};
+    if (s.flowHighlight || !Near(s.flowOpacity, d.flowOpacity) || !Near(s.flowOutlineAlpha, d.flowOutlineAlpha) ||
+        !Near3(s.flowOutlineColor, d.flowOutlineColor)) {
+        return -1;
+    }
+    for (int i = 0; i < kFlowStyleCount; ++i) {
+        const FlowLook& k = kFlowStyles[i];
+        const bool colors = k.colorMode != 0 && k.colorMode != 3 ? true
+                            : (Near3(s.flowColor, k.color) && (k.colorMode != 3 || Near3(s.flowColor2, k.color2)));
+        if (s.flowColorMode == k.colorMode && colors && s.flowOutline == k.outline && s.flowShadow == k.shadow &&
+            (!k.shadow || s.flowShadowStyle == k.shadowStyle) && s.flowAppear == k.appear && s.flowLeave == k.leave &&
+            s.flowMotion == k.motion && Near(s.flowSpeed, k.speed) && s.flowFill == k.fill && s.flowUnsung == k.unsung &&
+            s.flowGlow == k.glow && (k.glow == 0 || (s.flowGlowColor == k.glowColor && Near(s.flowGlowStrength, k.glowStrength) &&
+                                                     s.flowGlowWhere == k.glowWhere)) &&
+            s.flowVfx == k.vfx && (k.vfx == 0 || (Near(s.flowVfxAmount, k.vfxAmount) && s.flowVfxColor == k.vfxColor))) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+struct VizLook {
+    int style, colorMode;
+    bool layers, reflection;
+    float thickness, opacity, hitReaction, smoothing, spin;
+};
+constexpr const char* kVizStyleNames[] = {"Bars", "Aurora", "Rings", "Soft wave"};
+constexpr VizLook kVizStyles[] = {
+    {0, 1, false, true, 0.6f, 0.85f, 0.6f, 0.5f, 0.0f},   // Bars: the album's color, a reflection below
+    {3, 5, true, false, 0.8f, 0.7f, 0.4f, 0.7f, 2.0f},    // Aurora: curtains of light in the album's palette
+    {4, 4, true, false, 0.5f, 0.85f, 1.0f, 0.4f, 6.0f},   // Rings: a turning rainbow that jumps with the hits
+    {6, 2, true, true, 0.5f, 0.8f, 0.5f, 0.75f, 0.0f},    // Soft wave: layered waves in the album's gradient
+};
+constexpr int kVizStyleCount = static_cast<int>(sizeof(kVizStyles) / sizeof(kVizStyles[0]));
+
+void ApplyVizStyle(Settings& s, int i) {
+    const VizLook& k = kVizStyles[i];
+    s.vizStyle = k.style;
+    s.vizColorMode = k.colorMode;
+    s.vizLayers = k.layers;
+    s.vizReflection = k.reflection;
+    s.vizThickness = k.thickness;
+    s.vizOpacity = k.opacity;
+    s.vizHitReaction = k.hitReaction;
+    s.vizSmoothing = k.smoothing;
+    s.vizSpin = k.spin;
+}
+
+int CurrentVizStyle(const Settings& s) {
+    for (int i = 0; i < kVizStyleCount; ++i) {
+        const VizLook& k = kVizStyles[i];
+        if (s.vizStyle == k.style && s.vizColorMode == k.colorMode && s.vizLayers == k.layers && s.vizReflection == k.reflection &&
+            Near(s.vizThickness, k.thickness) && Near(s.vizOpacity, k.opacity) && Near(s.vizHitReaction, k.hitReaction) &&
+            Near(s.vizSmoothing, k.smoothing) && Near(s.vizSpin, k.spin)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 // --- On screen ----------------------------------------------------------------------
 bool OnScreenBasic(Settings& s) {
     bool changed = false;
@@ -1164,6 +1297,15 @@ bool FlowBasic(Settings& s) {
         ui::Hint("Each line is written in the world as it's sung, with real pixel letters. Best with word-by-word lyrics.");
         return changed;
     }
+    {
+        const int picked = ui::Presets({kFlowStyleNames[0], kFlowStyleNames[1], kFlowStyleNames[2], kFlowStyleNames[3],
+                                        kFlowStyleNames[4], kFlowStyleNames[5]},
+                                       CurrentFlowStyle(s));
+        if (picked >= 0) {
+            ApplyFlowStyle(s, picked);
+            changed = true;
+        }
+    }
     changed |= ui::Choice("Where", &s.flowMode, {"In the world", "In the sky"});
     ui::Hint(s.flowMode == 1 ? "Very far, like the sun: it follows you when you walk."
                              : "At a place of the world: walk to it and it gets bigger.");
@@ -1201,6 +1343,7 @@ bool FlowMore(Settings& s, int tab) {
         }
     } else if (tab == 1) {
         // The font list (a combo with every font of render/lyric_flow.h).
+        if (ui::Matches("Font")) {  // (it follows the search too)
         const char* current = render::lyricflow::kFonts[std::clamp(s.flowFont, 0, render::lyricflow::kFontCount - 1)];
         ImGui::TextUnformatted(Tr("Font"));
         ImGui::SameLine(ImGui::GetFontSize() * 11.0f);
@@ -1213,6 +1356,7 @@ bool FlowMore(Settings& s, int tab) {
                 }
             }
             ImGui::EndCombo();
+        }
         }
         if (s.flowFont != 0) {
             changed |= ui::Toggle("Bold", &s.flowBold);
@@ -1270,6 +1414,13 @@ bool VizBasic(Settings& s) {
         ui::Hint("The sky dances with your music. Luma listens to the sound your PC plays (never the microphone), "
                  "only in memory: nothing is recorded.");
         return changed;
+    }
+    {
+        const int picked = ui::Presets({kVizStyleNames[0], kVizStyleNames[1], kVizStyleNames[2], kVizStyleNames[3]}, CurrentVizStyle(s));
+        if (picked >= 0) {
+            ApplyVizStyle(s, picked);
+            changed = true;
+        }
     }
     const audioviz::Levels lv = audioviz::Get();
     if (lv.live) {

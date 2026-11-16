@@ -2168,6 +2168,30 @@ bool DrawMusicSettings() {
     const int page = g_musicPage;
     if (page < 0 || page >= music::kPageCount) {
         g_musicPage = -1;
+        // THE SEARCH: type a word and the settings with it in their name show
+        // here, ready to change (the real controls of each page, filtered:
+        // ui::SetFilter), under the name of the page they're in.
+        static char search[64] = "";
+        ImGui::SetNextItemWidth(width);
+        ImGui::InputTextWithHint("##musicSearch", Tr("Search a setting"), search, sizeof(search));
+        ImGui::Dummy(ImVec2(0.0f, fs * 0.3f));
+        if (search[0] != '\0') {
+            bool changed = false, any = false;
+            for (int p = 0; p < music::kPageCount; ++p) {
+                ui::SetFilter(search, /*dryRun=*/true);
+                music::DrawWholePage(p);
+                const int found = ui::FilterCount();
+                ui::SetFilter(nullptr);
+                if (found == 0) continue;
+                any = true;
+                ui::Section(music::PageTitle(p));
+                ui::SetFilter(search);
+                changed |= music::DrawWholePage(p);
+                ui::SetFilter(nullptr);
+            }
+            if (!any) ui::Hint("Nothing found. Try another word.");
+            return changed;
+        }
         const int cols = width > fs * 30.0f ? 3 : 2;
         const float gap = fs * 0.6f;
         const ImVec2 card((width - gap * static_cast<float>(cols - 1)) / static_cast<float>(cols), fs * 4.8f);
@@ -3261,6 +3285,49 @@ namespace {
 
 float g_labelColumn = 15.0f;  // ancho de la columna de etiquetas (en tamaños de letra)
 
+// --- The search filter ---
+std::string g_filter;     // what's being searched (simplified, see Simplify); empty = off
+bool g_filterDry = false;
+int g_filterCount = 0;
+
+// Lowercase and without accents (so "animacion" finds "Animación").
+std::string Simplify(const char* text) {
+    std::string out;
+    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(text); *p != 0; ++p) {
+        unsigned char c = *p;
+        if (c == 0xC3 && p[1] != 0) {
+            const unsigned char d = p[1];
+            char r = 0;
+            switch (d) {
+                case 0xA1: case 0x81: case 0xA3: case 0xA2: case 0x83: case 0x82: r = 'a'; break;
+                case 0xA9: case 0x89: case 0xAA: case 0x8A: r = 'e'; break;
+                case 0xAD: case 0x8D: r = 'i'; break;
+                case 0xB3: case 0x93: case 0xB5: case 0xB4: case 0x95: case 0x94: r = 'o'; break;
+                case 0xBA: case 0x9A: case 0xBC: case 0x9C: r = 'u'; break;
+                case 0xB1: case 0x91: r = 'n'; break;
+                case 0xA7: case 0x87: r = 'c'; break;
+                default: break;
+            }
+            if (r != 0) {
+                out.push_back(r);
+                ++p;
+                continue;
+            }
+        }
+        out.push_back(static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c));
+    }
+    return out;
+}
+
+// Should this control show? (and count it)
+bool PassFilter(const char* label) {
+    if (g_filter.empty()) return true;
+    if (label == nullptr) return false;
+    const bool match = Simplify(Tr(label)).find(g_filter) != std::string::npos || Simplify(label).find(g_filter) != std::string::npos;
+    if (match) ++g_filterCount;
+    return match && !g_filterDry;
+}
+
 void Row(const char* label, const char* hint) {
     m::BeginRow(label, hint, g_labelColumn);  // (see BeginRow: long labels wrap, nothing gets covered)
 }
@@ -3276,7 +3343,55 @@ void SetLabelColumn(float fontSizes) {
     g_labelColumn = fontSizes;
 }
 
+void SetFilter(const char* text, bool dryRun) {
+    g_filter = text != nullptr ? Simplify(text) : std::string();
+    // (spaces at the ends don't count)
+    while (!g_filter.empty() && g_filter.back() == ' ') g_filter.pop_back();
+    while (!g_filter.empty() && g_filter.front() == ' ') g_filter.erase(g_filter.begin());
+    g_filterDry = dryRun;
+    g_filterCount = 0;
+}
+
+bool Filtering() {
+    return !g_filter.empty();
+}
+
+int FilterCount() {
+    return g_filterCount;
+}
+
+bool Matches(const char* label) {
+    return PassFilter(label);
+}
+
+int Presets(std::initializer_list<const char*> names, int selected) {
+    if (Filtering()) return -1;
+    m::FlushRow();
+    const float fs = ImGui::GetFontSize();
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float gap = fs * 0.4f;
+    int clicked = -1;
+    float x = 0.0f;
+    int i = 0;
+    for (const char* name : names) {
+        const float w = ImGui::CalcTextSize(Tr(name)).x + ImGui::GetStyle().FramePadding.x * 2.0f + fs * 0.6f;
+        if (i > 0 && x + w <= avail) {
+            ImGui::SameLine(0.0f, gap);
+        } else {
+            x = 0.0f;
+        }
+        ImGui::PushID(i);
+        if (m::GlassButton(name, nullptr, ImVec2(w, 0.0f), i == selected)) clicked = i;
+        ImGui::PopID();
+        x += w + gap;
+        ++i;
+    }
+    ImGui::Dummy(ImVec2(0.0f, fs * 0.2f));
+    return clicked;
+}
+
 void Section(const char* title) {
+    if (Filtering()) return;
     m::FlushRow();
     title = Tr(title);
     ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize() * 0.3f));
@@ -3294,6 +3409,7 @@ void Section(const char* title) {
 }
 
 void Hint(const char* text) {
+    if (Filtering()) return;
     m::FlushRow();
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("%s", Tr(text));
@@ -3301,6 +3417,7 @@ void Hint(const char* text) {
 }
 
 bool Toggle(const char* label, bool* value, const char* hint) {
+    if (!PassFilter(label)) return false;
     ImGui::PushID(label);
     Row(label, hint);
     const bool changed = m::Toggle("##t", value, ImGui::GetFrameHeight() * 0.95f);
@@ -3310,6 +3427,7 @@ bool Toggle(const char* label, bool* value, const char* hint) {
 }
 
 bool Choice(const char* label, int* index, std::initializer_list<const char*> options) {
+    if (!PassFilter(label)) return false;
     ImGui::PushID(label);
     Row(label, nullptr);
     const int count = std::min(static_cast<int>(options.size()), 16);
@@ -3345,6 +3463,7 @@ bool Choice(const char* label, int* index, std::initializer_list<const char*> op
 }
 
 bool Slider(const char* label, float* value, float min, float max, const char* format) {
+    if (!PassFilter(label)) return false;
     ImGui::PushID(label);
     Row(label, nullptr);
     FillWidth();
@@ -3355,6 +3474,7 @@ bool Slider(const char* label, float* value, float min, float max, const char* f
 }
 
 bool SliderInt(const char* label, int* value, int min, int max, const char* format) {
+    if (!PassFilter(label)) return false;
     ImGui::PushID(label);
     Row(label, nullptr);
     FillWidth();
@@ -3365,6 +3485,7 @@ bool SliderInt(const char* label, int* value, int min, int max, const char* form
 }
 
 bool Color(const char* label, float* rgb) {
+    if (!PassFilter(label)) return false;
     ImGui::PushID(label);
     Row(label, nullptr);
     const bool changed = ImGui::ColorEdit3("##c", rgb, ImGuiColorEditFlags_NoInputs);
@@ -3374,6 +3495,7 @@ bool Color(const char* label, float* rgb) {
 }
 
 bool ColorAlpha(const char* label, float* rgba) {
+    if (!PassFilter(label)) return false;
     ImGui::PushID(label);
     Row(label, nullptr);
     const bool changed =
@@ -3384,6 +3506,7 @@ bool ColorAlpha(const char* label, float* rgba) {
 }
 
 bool Text(const char* label, char* buffer, int size, const char* placeholder) {
+    if (!PassFilter(label)) return false;
     ImGui::PushID(label);
     Row(label, nullptr);
     FillWidth();
@@ -3394,6 +3517,7 @@ bool Text(const char* label, char* buffer, int size, const char* placeholder) {
 }
 
 bool Key(const char* label, int* key, const char* hint) {
+    if (!PassFilter(label)) return false;
     ImGui::PushID(label);
     Row(label, hint);
     const bool capturing = m::g_capture == m::CaptureTarget::Value && m::g_captureValue == key;
@@ -3404,6 +3528,7 @@ bool Key(const char* label, int* key, const char* hint) {
 }
 
 bool Button(const char* label, const char* rowLabel) {
+    if (!PassFilter(rowLabel != nullptr ? rowLabel : label)) return false;
     if (rowLabel != nullptr) {
         Row(rowLabel, nullptr);
     }

@@ -57,4 +57,18 @@ bool Key(const char* label, int* key, const char* hint = nullptr);
 // Botón (en su propia fila, a la derecha de la etiqueta si la hay).
 bool Button(const char* label, const char* rowLabel = nullptr);
 
+// A row of buttons for ready-made styles ("presets"): returns the one
+// clicked (-1 = none). "selected" is drawn lit (-1 = none of them).
+int Presets(std::initializer_list<const char*> names, int selected);
+
+// --- THE SEARCH (Music > Settings) ---------------------------------------------------
+// While a search is on, every control above only shows if its label (in the
+// chosen language, or in English) contains the text; titles and hints hide.
+// "dryRun": nothing is drawn, the matches are only counted (to know if a
+// page has any before drawing its name).
+void SetFilter(const char* text, bool dryRun = false);  // nullptr or "" = off
+bool Filtering();
+int FilterCount();            // matches since SetFilter
+bool Matches(const char* label);  // for a control drawn by hand (counts it too)
+
 }  // namespace luma::render::ui

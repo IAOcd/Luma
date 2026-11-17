@@ -43,6 +43,12 @@ add_executable(LumaLauncher WIN32
     ${PROJECT_SOURCE_DIR}/client/core/media.cpp
     ${PROJECT_SOURCE_DIR}/client/core/audio_viz.cpp
     ${PROJECT_SOURCE_DIR}/client/core/logger.cpp
+    # The lyrics too (looked up and timed like in the game), and the letters
+    # of other alphabets for them.
+    ${PROJECT_SOURCE_DIR}/client/core/lyrics.cpp
+    ${PROJECT_SOURCE_DIR}/client/core/text_bidi.cpp
+    ${PROJECT_SOURCE_DIR}/client/core/paths.cpp
+    ${PROJECT_SOURCE_DIR}/client/render/font_fallback.cpp
     ${PROJECT_SOURCE_DIR}/client/render/icons.cpp   # el mismo dibujador de íconos del menú
     ${PROJECT_SOURCE_DIR}/client/render/nanosvg_impl.cpp
     assets/launcher.rc

@@ -44,6 +44,13 @@ inline constexpr const char* kLumaLogo =
 inline constexpr const char* kWindowsLogo =
     "F M4 5.5l7-1v7H4z M13 4.2l7-1v8.3h-7z M4 13h7v7l-7-1z M13 13h7v8.3l-7-1z";
 
+// Lucide "mic-vocal" (the lyrics) and "ellipsis" (more options).
+inline constexpr const char* kMicVocal = LUMA_LUCIDE(
+    "<path d='m11 7.601-5.994 8.19a1 1 0 0 0 .1 1.298l.817.818a1 1 0 0 0 1.314.087L15.09 12'/>"
+    "<path d='M16.5 21.174C15.5 20.5 14.372 20 13 20c-2.058 0-3.928 2.356-6 2-2.072-.356-2.775-3.369-1.5-4.5'/>"
+    "<circle cx='16' cy='7' r='5'/>");
+inline constexpr const char* kEllipsis = LUMA_LUCIDE("<circle cx='12' cy='12' r='1'/><circle cx='19' cy='12' r='1'/><circle cx='5' cy='12' r='1'/>");
+
 // Dibuja un ícono centrado en "center", de lado "size" píxeles. "thickness" =
 // grosor de línea en píxeles (0 = el normal de Lucide, 2/24 del tamaño).
 void Draw(ImDrawList* draw, const char* svg, ImVec2 center, float size, ImU32 color, float thickness = 0.0f);

@@ -41,6 +41,10 @@ const std::string kDefaultProfile = "default";
 std::string g_activeProfile = kDefaultProfile;
 std::atomic<bool> g_dirty{false};
 std::atomic<ULONGLONG> g_dirtySince{0};
+// When the profile file was last written by Luma itself (or read): if the
+// file's date is different, someone else (the launcher) wrote it.
+std::filesystem::file_time_type g_knownWrite{};
+std::mutex g_knownWriteMutex;
 
 fs::path ConfigDir() {
     const fs::path data = paths::DataDir();
@@ -168,6 +172,10 @@ void LoadProfile(const std::string& name) {
         log::Info("Profile {} has no file: defaults.", name);
     }
     g_activeProfile = name;
+    std::error_code ec;
+    const auto when = fs::last_write_time(path, ec);
+    std::lock_guard known(g_knownWriteMutex);
+    g_knownWrite = ec ? fs::file_time_type{} : when;
 }
 
 bool WriteActiveProfileName() {
@@ -189,6 +197,12 @@ bool WriteActiveProfile() {
     if (!WriteJsonAtomic(ProfilePath(name), data)) {
         log::Error("Couldn't save profile {}.", name);
         return false;
+    }
+    std::error_code ec;
+    const auto when = fs::last_write_time(ProfilePath(name), ec);
+    if (!ec) {
+        std::lock_guard known(g_knownWriteMutex);
+        g_knownWrite = when;
     }
     return true;
 }
@@ -228,6 +242,31 @@ void SaveIfDirty() {
     }
     g_dirty.store(false);
     WriteActiveProfile();
+}
+
+void ReloadIfChangedOutside() {
+    static ULONGLONG lastCheck = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - lastCheck < 1000 || ConfigDir().empty()) return;
+    lastCheck = now;
+    std::string name;
+    {
+        std::lock_guard lock(StateMutex());
+        name = g_activeProfile;
+    }
+    std::error_code ec;
+    const auto when = fs::last_write_time(ProfilePath(name), ec);
+    if (ec) return;
+    {
+        std::lock_guard known(g_knownWriteMutex);
+        if (when == g_knownWrite) return;
+    }
+    // Someone else wrote it: load it again. (Anything Luma itself was about
+    // to save in these seconds is dropped: the newer file wins.)
+    std::lock_guard lock(StateMutex());
+    g_dirty.store(false);
+    LoadProfile(name);
+    log::Info("Config changed outside Luma (the launcher?): profile {} loaded again.", name);
 }
 
 void SaveNow() {

@@ -42,11 +42,17 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <type_traits>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "account.h"
 #include "core/audio_viz.h"
+#include "core/lyrics.h"
+#include "flow_presets.h"
+#include "flow_styles.h"
+#include "render/font_fallback.h"
 #include "core/media.h"
 #include "perf/timer.h"
 #include "core/version.h"
@@ -118,6 +124,8 @@ struct Fonts {
     ImFont* semibold = nullptr;  // títulos de tarjetas, botones
     ImFont* title = nullptr;     // "LUMA", "JUGAR"
     ImFont* hero = nullptr;      // el nombre grande del cartel
+    ImFont* lyric = nullptr;     // the lyrics view's big lines
+    ImFont* line = nullptr;      // the line being sung, under the song's name
     ImFont* pixel = nullptr;     // la letra pixelada de Minecraft (de TU juego instalado), para el nombre sobre la skin
 } g_fonts;
 std::string g_pixelFontDir;      // de qué carpeta del juego se cargó (si cambia, se recarga)
@@ -2232,27 +2240,1184 @@ float EaseOutCubic(float t) {
     return 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
 }
 
+// =============================================================================
+//  THE LYRICS (part L2)
+// =============================================================================
+//  1. Luma's settings, shared with the game. The launcher doesn't keep its own
+//     copy of Lyric Flow's style: it reads and writes the SAME file Luma.dll
+//     uses (%APPDATA%\Luma\config\profiles\<active profile>.json), and the DLL
+//     notices the file changed and loads it again (core/config.cpp). So what
+//     you choose here is what you see in the game, even while you're playing.
+//  2. The lyrics on the stage: the line being sung, big, filling word by word
+//     (karaoke), with the one before and the one after, scrolling softly.
+//  3. The Lyrics sheet: the six ready-made styles (shared/flow_styles.h, the
+//     same table the game uses), each one with a small animated preview.
+// =============================================================================
+namespace flowcfg {
+
+namespace fstyles = luma::flowstyles;
+
+struct State {
+    bool found = false;      // the settings file could be read (or doesn't exist yet: defaults)
+    bool broken = false;     // it exists but is damaged: never written over
+    bool on = false;         // "lyricFlow.on"
+    int mode = 0;            // "lyricFlow.mode": 0 in the world, 1 in the sky
+    int style = -1;          // which ready-made style it is (-1 = your own)
+    float offset = 0.0f;     // "lyricsOffset" (seconds)
+    nlohmann::json look = nlohmann::json::object();  // how it looks now (to save it as your style)
+    int user = -1;           // which of YOUR styles it is (-1 = none)
+    bool moduleOn = true;    // the "Now playing" module is on (it draws them)
+};
+State g_state;
+double g_checkedAt = -100.0;
+fs::file_time_type g_when{};
+fs::path g_file;
+
+// The active profile's file (as core/config.cpp names it).
+fs::path ProfileFile() {
+    const fs::path dir = DataDir();
+    if (dir.empty()) return {};
+    const nlohmann::json root = ReadJson(dir / L"config" / L"luma.json");
+    std::string name = "default";
+    const auto it = root.find("activeProfile");
+    if (it != root.end() && it->is_string()) name = it->get<std::string>();
+    if (name.empty() || name.find_first_of("/\\:*?\"<>|") != std::string::npos || name.find("..") != std::string::npos) {
+        name = "default";
+    }
+    name += ".json";
+    return dir / L"config" / L"profiles" / fs::path(std::u8string(reinterpret_cast<const char8_t*>(name.data()), name.size()));
+}
+
+// The file, parsed. "exists" = there is a file; false return = damaged.
+bool ReadProfile(const fs::path& path, nlohmann::json& out, bool& exists) {
+    std::error_code ec;
+    exists = fs::exists(path, ec);
+    out = nlohmann::json::object();
+    if (!exists) return true;
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    out = nlohmann::json::parse(file, nullptr, false);
+    if (out.is_discarded() || !out.is_object()) {
+        out = nlohmann::json::object();
+        return false;
+    }
+    return true;
+}
+
+// modules > now_playing (created if it isn't there).
+nlohmann::json& NowPlaying(nlohmann::json& profile) {
+    nlohmann::json& modules = profile["modules"];
+    if (!modules.is_object()) modules = nlohmann::json::object();
+    nlohmann::json& np = modules["now_playing"];
+    if (!np.is_object()) np = nlohmann::json::object();
+    return np;
+}
+nlohmann::json& FlowOf(nlohmann::json& profile) {
+    nlohmann::json& settings = NowPlaying(profile)["settings"];
+    if (!settings.is_object()) settings = nlohmann::json::object();
+    nlohmann::json& flow = settings["lyricFlow"];
+    if (!flow.is_object()) flow = nlohmann::json::object();
+    return flow;
+}
+
+// Reading a value without exceptions (a missing or wrong one = "fallback").
+template <class T>
+T Get(const nlohmann::json& j, const char* key, T fallback) {
+    const auto it = j.find(key);
+    if (it == j.end()) return fallback;
+    if constexpr (std::is_same_v<T, bool>) {
+        return it->is_boolean() ? it->get<bool>() : fallback;
+    } else {
+        return it->is_number() ? it->get<T>() : fallback;
+    }
+}
+bool Near(float a, float b) { return std::fabs(a - b) < 0.01f; }
+bool Near3(const nlohmann::json& j, const char* key, const float* c) {
+    const auto it = j.find(key);
+    if (it == j.end() || !it->is_array() || it->size() != 3) return false;
+    for (int i = 0; i < 3; ++i) {
+        if (!(*it)[i].is_number() || !Near((*it)[i].get<float>(), c[i])) return false;
+    }
+    return true;
+}
+
+// Which ready-made style the settings are (the same test as the game's
+// CurrentFlowStyle, in render/music.cpp).
+int MatchStyle(const nlohmann::json& f) {
+    if (Get(f, "highlight", false) || !Near(Get(f, "opacity", fstyles::kDefaultOpacity), fstyles::kDefaultOpacity) ||
+        !Near(Get(f, "outlineAlpha", fstyles::kDefaultOutlineAlpha), fstyles::kDefaultOutlineAlpha)) {
+        return -1;
+    }
+    if (f.contains("outlineColor") && !Near3(f, "outlineColor", fstyles::kDefaultOutlineColor)) return -1;
+    for (int i = 0; i < fstyles::kCount; ++i) {
+        const fstyles::FlowLook& k = fstyles::kStyles[i];
+        const bool colors = k.colorMode != 0 && k.colorMode != 3 ? true
+                            : (Near3(f, "color", k.color) && (k.colorMode != 3 || Near3(f, "color2", k.color2)));
+        const bool shadow = Get(f, "shadow", !k.shadow) == k.shadow;
+        if (Get(f, "colorMode", -1) == k.colorMode && colors && Get(f, "outline", !k.outline) == k.outline && shadow &&
+            (!k.shadow || Get(f, "shadowStyle", -1) == k.shadowStyle) && Get(f, "appear", -1) == k.appear &&
+            Get(f, "leave", -1) == k.leave && Get(f, "motion", -1) == k.motion && Near(Get(f, "speed", -1.0f), k.speed) &&
+            Get(f, "fill", -1) == k.fill && Get(f, "unsung", -1) == k.unsung && Get(f, "glow", -1) == k.glow &&
+            (k.glow == 0 || (Get(f, "glowColor", -1) == k.glowColor && Near(Get(f, "glowStrength", -1.0f), k.glowStrength) &&
+                             Get(f, "glowWhere", -1) == k.glowWhere)) &&
+            Get(f, "vfx", -1) == k.vfx && (k.vfx == 0 || (Near(Get(f, "vfxAmount", -1.0f), k.vfxAmount) && Get(f, "vfxColor", -1) == k.vfxColor))) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Reads the file again if it changed (about once a second: only its date is
+// looked at in between).
+// YOUR STYLES (shared/flow_presets.h): the file both the game and the
+// launcher read, loaded again when its date changes.
+std::vector<luma::flowpresets::Preset> g_presets;
+fs::file_time_type g_presetsWhen{};
+bool g_presetsRead = false;
+int g_picked = -1;  // the style of yours you're working on (the last one applied or saved)
+
+bool RefreshPresets(bool force) {
+    const fs::path file = luma::flowpresets::FileIn(DataDir());
+    std::error_code ec;
+    const fs::file_time_type when = fs::last_write_time(file, ec);
+    const fs::file_time_type stamp = ec ? fs::file_time_type{} : when;
+    if (!force && g_presetsRead && stamp == g_presetsWhen) return false;
+    g_presetsRead = true;
+    g_presetsWhen = stamp;
+    g_presets = luma::flowpresets::Load(file);
+    return true;
+}
+
+void Refresh(bool force = false) {
+    const double now = ImGui::GetTime();
+    if (!force && now - g_checkedAt < 1.0) return;
+    g_checkedAt = now;
+    const bool presetsChanged = RefreshPresets(force);
+    const fs::path path = ProfileFile();
+    std::error_code ec;
+    const fs::file_time_type when = fs::last_write_time(path, ec);
+    if (!force && path == g_file && !ec && when == g_when && g_state.found) {
+        if (presetsChanged) g_state.user = luma::flowpresets::Find(g_presets, g_state.look);
+        return;
+    }
+    g_file = path;
+    g_when = ec ? fs::file_time_type{} : when;
+    nlohmann::json profile;
+    bool exists = false;
+    State s;
+    if (!ReadProfile(path, profile, exists)) {
+        s.broken = true;
+        g_state = s;
+        return;
+    }
+    s.found = true;
+    const auto modules = profile.find("modules");
+    if (modules != profile.end() && modules->is_object()) {
+        const auto np = modules->find("now_playing");
+        if (np != modules->end() && np->is_object()) {
+            s.moduleOn = Get(*np, "enabled", true);
+            const auto settings = np->find("settings");
+            if (settings != np->end() && settings->is_object()) {
+                s.offset = Get(*settings, "lyricsOffset", 0.0f);
+                const auto flow = settings->find("lyricFlow");
+                if (flow != settings->end() && flow->is_object()) {
+                    s.on = Get(*flow, "on", false);
+                    s.mode = std::clamp(Get(*flow, "mode", 0), 0, 1);
+                    s.style = MatchStyle(*flow);
+                    s.look = luma::flowpresets::LookOf(*flow);
+                }
+            }
+        }
+    }
+    s.user = luma::flowpresets::Find(g_presets, s.look);
+    g_state = s;
+}
+
+// Changes the file: reads it fresh, lets "change" touch Lyric Flow's part,
+// and writes it safely (to a .tmp, then replacing the real one: a game that
+// reads it at that moment sees the old file or the new one, never half).
+nlohmann::json& SettingsOf(nlohmann::json& profile) {
+    nlohmann::json& settings = NowPlaying(profile)["settings"];
+    if (!settings.is_object()) settings = nlohmann::json::object();
+    return settings;
+}
+
+template <class F>
+bool ChangeProfile(F&& change) {
+    const fs::path path = ProfileFile();
+    if (path.empty()) return false;
+    nlohmann::json profile;
+    bool exists = false;
+    if (!ReadProfile(path, profile, exists)) return false;  // damaged: not touched
+    change(profile);
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    const fs::path temp = fs::path(path).concat(L".tmp");
+    {
+        std::ofstream file(temp, std::ios::binary | std::ios::trunc);
+        if (!file) return false;
+        file << profile.dump(2);
+        if (!file) return false;
+    }
+    if (MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0) {
+        fs::remove(temp, ec);
+        return false;
+    }
+    Refresh(true);
+    return true;
+}
+
+// Changes Lyric Flow's part.
+template <class F>
+bool Change(F&& change) {
+    return ChangeProfile([&](nlohmann::json& profile) { change(FlowOf(profile)); });
+}
+
+// The lyrics' timing (seconds; the same setting as the game's "Offset").
+void SetOffset(float seconds) {
+    ChangeProfile([&](nlohmann::json& profile) { SettingsOf(profile)["lyricsOffset"] = std::round(seconds * 10.0f) / 10.0f; });
+}
+
+// Before a style replaces what you have: if it isn't saved anywhere, it's
+// kept as "Your previous style" (so your config is never lost).
+void BackupBeforeApply() {
+    Refresh(true);
+    if (!g_state.found) return;
+    if (luma::flowpresets::BackupIfUnsaved(g_presets, g_state.look, g_state.style >= 0, T("lyrics.backup"))) {
+        luma::flowpresets::Save(luma::flowpresets::FileIn(DataDir()), g_presets);
+    }
+}
+
+// Saves what you have now as one of your styles ("My style 1"...).
+void SaveCurrentStyle() {
+    Refresh(true);
+    if (!g_state.found || g_state.look.empty()) return;
+    g_presets.push_back({luma::flowpresets::NextName(g_presets, T("lyrics.my_style")), g_state.look, false});
+    g_picked = static_cast<int>(g_presets.size()) - 1;
+    luma::flowpresets::Save(luma::flowpresets::FileIn(DataDir()), g_presets);
+    Refresh(true);
+}
+
+// Your style "i" becomes what you have now.
+void UpdateUserStyle(int i) {
+    Refresh(true);
+    if (i < 0 || i >= static_cast<int>(g_presets.size()) || !g_state.found || g_state.look.empty()) return;
+    g_presets[static_cast<std::size_t>(i)].look = g_state.look;
+    g_presets[static_cast<std::size_t>(i)].autoSaved = false;  // (yours now: the backup won't replace it)
+    luma::flowpresets::Save(luma::flowpresets::FileIn(DataDir()), g_presets);
+    Refresh(true);
+}
+
+void RenameUserStyle(int i, const char* name) {
+    std::string n = name;
+    while (!n.empty() && n.back() == ' ') n.pop_back();
+    while (!n.empty() && n.front() == ' ') n.erase(n.begin());
+    if (i < 0 || i >= static_cast<int>(g_presets.size()) || n.empty()) return;
+    g_presets[static_cast<std::size_t>(i)].name = n;
+    g_presets[static_cast<std::size_t>(i)].autoSaved = false;  // (named by you: kept)
+    luma::flowpresets::Save(luma::flowpresets::FileIn(DataDir()), g_presets);
+    Refresh(true);
+}
+
+void ApplyUserStyle(int i) {
+    if (i < 0 || i >= static_cast<int>(g_presets.size())) return;
+    BackupBeforeApply();
+    if (i >= static_cast<int>(g_presets.size())) return;
+    const nlohmann::json look = g_presets[static_cast<std::size_t>(i)].look;
+    Change([&](nlohmann::json& f) { luma::flowpresets::ApplyTo(f, look); });
+}
+
+void DeleteUserStyle(int i) {
+    if (i < 0 || i >= static_cast<int>(g_presets.size())) return;
+    g_presets.erase(g_presets.begin() + i);
+    if (g_picked == i) g_picked = -1;
+    else if (g_picked > i) --g_picked;
+    luma::flowpresets::Save(luma::flowpresets::FileIn(DataDir()), g_presets);
+    Refresh(true);
+}
+
+void ApplyStyle(int i) {
+    BackupBeforeApply();
+    const fstyles::FlowLook& k = fstyles::kStyles[i];
+    Change([&](nlohmann::json& f) {
+        f["colorMode"] = k.colorMode;
+        f["color"] = {k.color[0], k.color[1], k.color[2]};
+        f["color2"] = {k.color2[0], k.color2[1], k.color2[2]};
+        f["outline"] = k.outline;
+        f["shadow"] = k.shadow;
+        f["shadowStyle"] = k.shadowStyle;
+        f["appear"] = k.appear;
+        f["leave"] = k.leave;
+        f["motion"] = k.motion;
+        f["speed"] = k.speed;
+        f["fill"] = k.fill;
+        f["unsung"] = k.unsung;
+        f["glow"] = k.glow;
+        f["glowColor"] = k.glowColor;
+        f["glowStrength"] = k.glowStrength;
+        f["glowWhere"] = k.glowWhere;
+        f["vfx"] = k.vfx;
+        f["vfxAmount"] = k.vfxAmount;
+        f["vfxColor"] = k.vfxColor;
+        // (and the defaults of what the styles don't choose)
+        f["highlight"] = false;
+        f["opacity"] = fstyles::kDefaultOpacity;
+        f["outlineColor"] = {fstyles::kDefaultOutlineColor[0], fstyles::kDefaultOutlineColor[1], fstyles::kDefaultOutlineColor[2]};
+        f["outlineAlpha"] = fstyles::kDefaultOutlineAlpha;
+    });
+}
+
+}  // namespace flowcfg
+
+// --- 2. The lyrics on the stage --------------------------------------------------------
+//  Two places: a short one under the song's name (the line being sung and
+//  the next one), and the LYRICS VIEW (a button turns the stage into the
+//  lyrics: big lines in the middle, the song small in a corner).
+//  The karaoke fill has no hard edge: the sung part is bright, and the edge
+//  fades over a few letters, so it glides word by word.
+
+lyrics::Result g_lyrics;
+std::uint32_t g_lyricsVersion = 0;
+int g_lyricLine = -1;        // the line being sung
+float g_lyricScroll = 1.0f;  // 0..1: the move to the new line
+float g_lyricsShow = 0.0f;   // 0..1: there are lyrics to show (the short one opens)
+bool g_lyricsView = false;   // the lyrics view is open
+bool g_openViewWhenReady = false;
+float g_lyricsViewAnim = 0.0f;
+
+bool HasLyricLines(const media::Track& t) {
+    return t.present && g_lyrics.trackId == t.trackId && g_lyrics.status == lyrics::Status::Found && g_lyrics.synced &&
+           !g_lyrics.lines.empty();
+}
+
+int LyricsMs(const media::Track& t) {
+    return static_cast<int>((t.position - static_cast<double>(flowcfg::g_state.offset)) * 1000.0);
+}
+
+void UpdateLyrics(const media::Track& t, bool visible) {
+    lyrics::Want(lyrics::kMenu, visible && t.present);
+    std::uint32_t version = g_lyricsVersion;
+    if (lyrics::Snapshot(g_lyricsVersion, g_lyrics, version)) {
+        g_lyricsVersion = version;
+        g_lyricLine = -1;
+        g_lyricScroll = 1.0f;
+        // (letters of other alphabets: added to the fonts)
+        for (const lyrics::Line& line : g_lyrics.lines) render::fontfallback::Need(line.text.c_str());
+    }
+    static std::uint32_t needTrack = 0;
+    if (t.trackId != 0 && needTrack != t.trackId) {
+        needTrack = t.trackId;
+        render::fontfallback::Need(t.title);
+        render::fontfallback::Need(t.artist);
+        render::fontfallback::Need(t.album);
+    }
+    const bool mine = g_lyrics.trackId == t.trackId && t.present;
+    const bool has = mine && (HasLyricLines(t) || g_lyrics.status == lyrics::Status::Searching ||
+                              g_lyrics.status == lyrics::Status::Instrumental);
+    g_lyricsShow += ((has ? 1.0f : 0.0f) - g_lyricsShow) * std::min(1.0f, Dt() * 5.0f);
+    if (HasLyricLines(t)) {
+        const int line = lyrics::LineAt(g_lyrics, LyricsMs(t));
+        if (line != g_lyricLine) {
+            // (a jump of more than one line, by seeking: no long move)
+            g_lyricScroll = std::abs(line - g_lyricLine) == 1 ? 0.0f : 1.0f;
+            g_lyricLine = line;
+        }
+    }
+    g_lyricScroll = std::min(1.0f, g_lyricScroll + Dt() * 3.5f);
+    // (the music stopped for a while, not just between two songs: back to the song)
+    static double absentSince = -1.0;
+    if (t.present) {
+        absentSince = -1.0;
+    } else if (absentSince < 0.0) {
+        absentSince = ImGui::GetTime();
+    } else if (ImGui::GetTime() - absentSince > 2.0) {
+        g_lyricsView = false;
+    }
+    if (g_openViewWhenReady && HasLyricLines(t)) {  // ("--view=lyrics", for testing)
+        g_lyricsView = true;
+        g_openViewWhenReady = false;
+    }
+    if (g_lyricsView && ImGui::IsKeyPressed(ImGuiKey_Escape)) g_lyricsView = false;
+    g_lyricsViewAnim += ((g_lyricsView ? 1.0f : 0.0f) - g_lyricsViewAnim) * std::min(1.0f, Dt() * 7.0f);
+}
+
+// How many pixels of "line" are sung at "ms" (drawn at "size"): word by word,
+// each word filling while it's sung. Lines without word times: all of it.
+float LineSweep(const lyrics::Line& line, int lineEnd, int ms, ImFont* font, float size, float fullWidth) {
+    if (line.words.empty()) return fullWidth;
+    float sweep = 0.0f, x = 0.0f;
+    for (std::size_t w = 0; w < line.words.size(); ++w) {
+        const lyrics::Word& word = line.words[w];
+        const float ww = font->CalcTextSizeA(size, FLT_MAX, 0.0f, word.text.c_str()).x;
+        int end = w + 1 < line.words.size() ? line.words[w + 1].ms : std::min(lineEnd, word.ms + 1500);
+        end = std::max(end, word.ms + 1);
+        if (ms >= word.ms) {
+            const float f = std::clamp(static_cast<float>(ms - word.ms) / static_cast<float>(end - word.ms), 0.0f, 1.0f);
+            sweep = x + ww * f;
+        }
+        x += ww;
+    }
+    return sweep;
+}
+
+// A line with the karaoke fill: dim, and bright up to "sweep" with a soft
+// edge "feather" wide (each vertex of the bright letters fades by where it is).
+void FillText(ImDrawList* d, ImFont* font, float size, ImVec2 pos, float height, const char* text, const ImVec4& col, float alpha,
+              float dimAlpha, float sweep, float feather) {
+    d->AddText(font, size, pos, C(col, dimAlpha * alpha), text);
+    if (sweep <= 0.0f) return;
+    const float edge = pos.x + sweep;  // where it fades out completely
+    const float from = edge - feather;   // where it's still fully bright
+    const int start = d->VtxBuffer.Size;
+    d->PushClipRect(ImVec2(pos.x - size, pos.y - size), ImVec2(edge, pos.y + height + size), true);
+    d->AddText(font, size, pos, C(col, alpha), text);
+    d->PopClipRect();
+    for (int i = start; i < d->VtxBuffer.Size; ++i) {
+        ImDrawVert& v = d->VtxBuffer[i];
+        const float k = std::clamp((edge - v.pos.x) / std::max(1.0f, feather), 0.0f, 1.0f);
+        if (k >= 1.0f || v.pos.x < from) continue;
+        const unsigned a = static_cast<unsigned>(static_cast<float>((v.col >> IM_COL32_A_SHIFT) & 0xFF) * k);
+        v.col = (v.col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
+    }
+}
+
+// The line "k" (or nothing), with its end time.
+const lyrics::Line* LineOf(int k, int* end) {
+    const int count = static_cast<int>(g_lyrics.lines.size());
+    if (k < 0 || k >= count) return nullptr;
+    const lyrics::Line& line = g_lyrics.lines[static_cast<std::size_t>(k)];
+    if (end != nullptr) *end = k + 1 < count ? g_lyrics.lines[static_cast<std::size_t>(k + 1)].ms : line.ms + 6000;
+    return &line;
+}
+
+// The height the short lyrics take under the song's name.
+float CompactLyricsHeight() {
+    return (g_fonts.line->FontSize + S(4.0f) + g_fonts.regular->FontSize + S(18.0f)) * EaseOutCubic(g_lyricsShow);
+}
+
+// THE SHORT LYRICS: under the song's name, the line being sung (filling) and
+// the next one, dim. When the line changes, the next one rises into place.
+void DrawCompactLyrics(ImDrawList* d, float x, float y, float w, const media::Track& t, float alpha) {
+    const Palette& p = P();
+    alpha *= g_lyricsShow * (1.0f - g_lyricsViewAnim);
+    if (alpha < 0.01f || !t.present || g_lyrics.trackId != t.trackId) return;
+    ImFont* big = g_fonts.line;
+    ImFont* nextFont = g_fonts.regular;  // (the next line)
+    const float lineH = big->FontSize + S(4.0f);
+    if (g_lyrics.status == lyrics::Status::Searching) {
+        const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 3.0f);
+        Text(d, nextFont, ImVec2(x, y + S(4.0f)), C(p.text, (0.35f + 0.25f * pulse) * alpha), T("lyrics.searching"));
+        return;
+    }
+    if (g_lyrics.status == lyrics::Status::Instrumental) {
+        Text(d, nextFont, ImVec2(x, y + S(4.0f)), C(p.text, 0.55f * alpha), T("lyrics.instrumental"));
+        return;
+    }
+    if (!HasLyricLines(t)) return;
+    const int ms = LyricsMs(t);
+    const float move = 1.0f - EaseOutCubic(g_lyricScroll);  // 1 = just changed
+    d->PushClipRect(ImVec2(x - S(4.0f), y - S(2.0f)), ImVec2(x + w + S(4.0f), y + lineH + nextFont->FontSize + S(8.0f)), true);
+    // the line that just ended, going up and away
+    int end = 0;
+    if (move > 0.0f) {
+        if (const lyrics::Line* old = LineOf(g_lyricLine - 1, nullptr)) {
+            const float size = big->FontSize * std::min(1.0f, w / std::max(1.0f, TextSize(big, old->text.c_str()).x));
+            d->AddText(big, size, ImVec2(x, y - lineH * (1.0f - move)), C(p.text, alpha * move * 0.8f), old->text.c_str());
+        }
+    }
+    // the line being sung (before the first one: nothing yet, the next one waits below)
+    if (const lyrics::Line* line = LineOf(g_lyricLine, &end)) {
+        float size = big->FontSize;
+        ImVec2 ts = big->CalcTextSizeA(size, FLT_MAX, 0.0f, line->text.c_str());
+        if (ts.x > w) {  // too long: smaller, so it fits
+            size *= w / ts.x;
+            ts = big->CalcTextSizeA(size, FLT_MAX, 0.0f, line->text.c_str());
+        }
+        const float ly = y + (lineH * 0.7f) * move;
+        const float sweep = LineSweep(*line, end, ms, big, size, ts.x);
+        FillText(d, big, size, ImVec2(x, ly + (big->FontSize - size) * 0.5f), ts.y, line->text.c_str(), p.text,
+                 alpha * (1.0f - 0.6f * move), 0.40f, sweep, size * 1.6f);
+    }
+    // the next one
+    if (const lyrics::Line* next = LineOf(g_lyricLine + 1, nullptr)) {
+        TextFit(d, nextFont, ImVec2(x, y + lineH + S(2.0f) + S(10.0f) * move), C(p.text, 0.45f * alpha * (1.0f - 0.5f * move)),
+                next->text.c_str(), w);
+    }
+    d->PopClipRect();
+}
+
+// THE LYRICS VIEW: big lines in the middle, the one being sung filling, the
+// others dim and smaller, moving up softly when it changes.
+void DrawLyricsLines(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t, float alpha) {
+    const Palette& p = P();
+    if (alpha < 0.01f) return;
+    ImFont* font = g_fonts.lyric;
+    const float W = max.x - min.x;
+    const float cx = min.x + W * 0.5f;
+    const float cy = (min.y + max.y) * 0.5f;
+    auto centered = [&](const char* text, float a) {
+        const ImVec2 ts = TextSize(g_fonts.title, text);
+        Text(d, g_fonts.title, ImVec2(cx - ts.x * 0.5f, cy - ts.y * 0.5f), C(p.text, a), text);
+    };
+    if (g_lyrics.trackId != t.trackId || g_lyrics.status == lyrics::Status::Searching) {
+        centered(T("lyrics.searching"), 0.5f * alpha);
+        return;
+    }
+    if (g_lyrics.status == lyrics::Status::Instrumental) {
+        centered(T("lyrics.instrumental"), 0.6f * alpha);
+        return;
+    }
+    if (!HasLyricLines(t)) {
+        centered(g_lyrics.status == lyrics::Status::Found ? T("lyrics.unsynced") : T("lyrics.not_found"), 0.5f * alpha);
+        return;
+    }
+    const int ms = LyricsMs(t);
+    const float big = font->FontSize;
+    const float step = big * 1.55f;
+    const float scroll = 1.0f - EaseOutCubic(g_lyricScroll);  // 1 = still where the old line was
+    d->PushClipRect(min, max, true);
+    for (int k = g_lyricLine - 3; k <= g_lyricLine + 4; ++k) {
+        int end = 0;
+        const lyrics::Line* line = LineOf(k, &end);
+        if (line == nullptr || line->text.empty()) continue;
+        const float r = static_cast<float>(k - g_lyricLine) + scroll;  // 0 = the current one's place
+        const float near1 = std::clamp(1.0f - std::fabs(r), 0.0f, 1.0f);
+        float size = big * (0.72f + 0.28f * near1);
+        const float a = alpha * std::clamp(1.0f - (std::fabs(r) - 1.0f) * 0.35f, 0.0f, 1.0f);
+        if (a < 0.01f) continue;
+        ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, line->text.c_str());
+        if (ts.x > W) {
+            size *= W / ts.x;
+            ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, line->text.c_str());
+        }
+        const ImVec2 pos(cx - ts.x * 0.5f, cy + r * step - ts.y * 0.5f);
+        if (k == g_lyricLine) {
+            FillText(d, font, size, pos, ts.y, line->text.c_str(), p.text, a, 0.38f, LineSweep(*line, end, ms, font, size, ts.x),
+                     size * 1.6f);
+        } else {
+            d->AddText(font, size, pos, C(p.text, (k < g_lyricLine ? 0.30f : 0.42f) * a), line->text.c_str());
+        }
+    }
+    d->PopClipRect();
+}
+
+// --- The player's extras: favorites, small buttons, the volume, the options --------------
+
+// YOUR FAVORITES: the heart on the album art saves the song in Luma's own
+// list, on your PC (%APPDATA%\Luma\favorites.json). Windows doesn't let any
+// program "like" a song inside Spotify; that needs connecting your Spotify
+// account (a next part).
+struct Favorite {
+    std::string title, artist, album;
+    long long added = 0;  // when (seconds since 1970)
+};
+std::vector<Favorite> g_favorites;
+bool g_favoritesLoaded = false;
+
+void LoadFavorites() {
+    g_favoritesLoaded = true;
+    const nlohmann::json json = ReadJson(DataDir() / L"favorites.json");
+    const auto list = json.find("songs");
+    if (list == json.end() || !list->is_array()) return;
+    for (const auto& s : *list) {
+        if (!s.is_object()) continue;
+        Favorite f;
+        f.title = s.value("title", std::string());
+        f.artist = s.value("artist", std::string());
+        f.album = s.value("album", std::string());
+        f.added = s.value("added", 0LL);
+        if (!f.title.empty()) g_favorites.push_back(std::move(f));
+    }
+}
+
+void SaveFavorites() {
+    const fs::path dir = DataDir();
+    if (dir.empty()) return;
+    nlohmann::json songs = nlohmann::json::array();
+    for (const Favorite& f : g_favorites) {
+        songs.push_back({{"title", f.title}, {"artist", f.artist}, {"album", f.album}, {"added", f.added}});
+    }
+    nlohmann::json json;
+    json["songs"] = std::move(songs);
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const fs::path path = dir / L"favorites.json";
+    const fs::path temp = fs::path(path).concat(L".tmp");
+    {
+        std::ofstream file(temp, std::ios::binary | std::ios::trunc);
+        if (!file) return;
+        file << json.dump(2);
+    }
+    MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+
+int FindFavorite(const media::Track& t) {
+    if (!g_favoritesLoaded) LoadFavorites();
+    for (std::size_t i = 0; i < g_favorites.size(); ++i) {
+        if (g_favorites[i].title == t.title && g_favorites[i].artist == t.artist) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void ToggleFavorite(const media::Track& t) {
+    const int i = FindFavorite(t);
+    if (i >= 0) {
+        g_favorites.erase(g_favorites.begin() + i);
+    } else {
+        g_favorites.push_back(Favorite{t.title, t.artist, t.album, static_cast<long long>(std::time(nullptr))});
+    }
+    SaveFavorites();
+}
+
+// A small round icon button (shuffle, repeat...): lit in the accent when on.
+bool IconToggle(ImDrawList* d, const char* id, ImVec2 c, const char* icon, float size, bool on, bool enabled = true) {
+    const Palette& p = P();
+    const float r = size * 0.95f;
+    float hover = 0.0f;
+    const bool clicked = Hit(id, ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), &hover, enabled);
+    if (hover > 0.0f) d->AddCircleFilled(c, r, C(ImVec4(1, 1, 1, 1), 0.10f * hover), 32);
+    const float a = enabled ? 1.0f : 0.3f;
+    const ImVec4 col = on ? p.accent : Mix(p.text, p.text, 0.0f);
+    icons::Draw(d, icon, c, size, C(col, a * (on ? 1.0f : 0.70f + 0.30f * hover)), S(1.8f));
+    if (on) d->AddCircleFilled(ImVec2(c.x, c.y + size * 0.85f), S(2.0f), C(p.accent, a), 12);  // the little dot under it
+    return clicked && enabled;
+}
+
+// The app's volume: an icon and a thin bar you drag.
+void VolumeBar(ImDrawList* d, ImVec2 left, float width, const media::Track& t, float alpha) {
+    const Palette& p = P();
+    if (t.volume < 0.0f) return;  // (its audio wasn't found)
+    icons::Draw(d, icons::kVolume, left, S(17.0f), C(p.text, 0.75f * alpha), S(1.7f));
+    const float x0 = left.x + S(18.0f), x1 = x0 + width;
+    float hover = 0.0f;
+    Hit("##volume", ImVec2(x0 - S(6.0f), left.y - S(10.0f)), ImVec2(x1 + S(6.0f), left.y + S(10.0f)), &hover);
+    static float shown = -1.0f;
+    if (ImGui::IsItemActive()) {
+        const float v = std::clamp((ImGui::GetIO().MousePos.x - x0) / std::max(1.0f, width), 0.0f, 1.0f);
+        if (std::fabs(v - shown) > 0.005f) media::SetVolume(v);
+        shown = v;
+    } else {
+        shown = t.volume;
+    }
+    const float th = S(4.0f) + S(2.0f) * hover;
+    d->AddRectFilled(ImVec2(x0, left.y - th * 0.5f), ImVec2(x1, left.y + th * 0.5f), C(ImVec4(1, 1, 1, 1), 0.16f * alpha), th);
+    d->AddRectFilled(ImVec2(x0, left.y - th * 0.5f), ImVec2(x0 + width * shown, left.y + th * 0.5f), C(p.text, 0.85f * alpha), th);
+    if (hover > 0.0f) d->AddCircleFilled(ImVec2(x0 + width * shown, left.y), S(5.0f) * hover, C(p.text, alpha), 16);
+}
+
+// THE OPTIONS (the "..." button): the lyrics' timing (shared with the game),
+// copy the song's name, open Spotify.
+bool g_optionsOpen = false;
+ImVec2 g_optionsAnchor;  // the "..." button's center (it opens above it)
+float g_copiedAt = -10.0f;
+
+void DrawOptionsMenu(ImDrawList* d, const media::Track& t) {
+    if (!g_optionsOpen) return;
+    if (!t.present) {
+        g_optionsOpen = false;
+        return;
+    }
+    const Palette& p = P();
+    const bool spotify = std::strstr(t.app, "Spotify") != nullptr;
+    const float itemH = S(40.0f);
+    const int rows = 2 + (spotify ? 1 : 0);
+    const float width = S(270.0f);
+    const float height = itemH * static_cast<float>(rows) + S(12.0f);
+    const ImVec2 max(g_optionsAnchor.x + S(18.0f), g_optionsAnchor.y - S(24.0f));
+    const ImVec2 min(max.x - width, max.y - height);
+    d->AddRectFilled(ImVec2(min.x, min.y + S(6.0f)), ImVec2(max.x, max.y + S(8.0f)), Col(ImVec4(0, 0, 0, 1), 0.25f), S(14.0f));
+    d->AddRectFilled(min, max, Col(Mix(p.card, ImVec4(1, 1, 1, 1), 0.04f), 0.97f), S(14.0f));
+    d->AddRect(min, max, Col(ImVec4(1, 1, 1, 1), 0.12f), S(14.0f));
+    float y = min.y + S(6.0f);
+    bool done = false;
+    // 1. The lyrics' timing: - value +
+    {
+        const ImVec2 imin(min.x + S(6.0f), y), imax(max.x - S(6.0f), y + itemH);
+        const float cy = (imin.y + imax.y) * 0.5f;
+        icons::Draw(d, icons::kClock, ImVec2(imin.x + S(18.0f), cy), S(17.0f), Col(p.textDim), S(1.6f));
+        Text(d, g_fonts.semibold, ImVec2(imin.x + S(38.0f), cy - g_fonts.semibold->FontSize * 0.5f), Col(p.text), T("opt.offset"));
+        const float off = flowcfg::g_state.offset;
+        char value[16];
+        std::snprintf(value, sizeof(value), "%+.1f s", off);
+        const ImVec2 vs = TextSize(g_fonts.tiny, value);
+        const float plusX = imax.x - S(16.0f), minusX = plusX - S(36.0f) - vs.x - S(10.0f);
+        Text(d, g_fonts.tiny, ImVec2((minusX + plusX) * 0.5f - vs.x * 0.5f, cy - vs.y * 0.5f), Col(p.text, 0.85f), value);
+        const float savedFade = g_fade;
+        g_fade = 1.0f;
+        // (+ = the lyrics come later, - = earlier: the same as the game's "Offset")
+        if (IconToggle(d, "##off_minus", ImVec2(minusX, cy), icons::kMinus, S(14.0f), false)) flowcfg::SetOffset(std::clamp(off - 0.1f, -5.0f, 5.0f));
+        if (IconToggle(d, "##off_plus", ImVec2(plusX, cy), icons::kPlus, S(14.0f), false)) flowcfg::SetOffset(std::clamp(off + 0.1f, -5.0f, 5.0f));
+        g_fade = savedFade;
+        y += itemH;
+    }
+    auto item = [&](const char* id, const char* icon, const char* label) {
+        const ImVec2 imin(min.x + S(6.0f), y), imax(max.x - S(6.0f), y + itemH);
+        float hover = 0.0f;
+        const bool clicked = Hit(id, imin, imax, &hover);
+        d->AddRectFilled(imin, imax, Col(p.text, 0.07f * hover), S(9.0f));
+        icons::Draw(d, icon, ImVec2(imin.x + S(18.0f), (imin.y + imax.y) * 0.5f), S(17.0f), Col(p.textDim), S(1.6f));
+        Text(d, g_fonts.semibold, ImVec2(imin.x + S(38.0f), (imin.y + imax.y - g_fonts.semibold->FontSize) * 0.5f), Col(p.text), label);
+        y += itemH;
+        return clicked;
+    };
+    const bool copied = ImGui::GetTime() - g_copiedAt < 1.5;
+    if (item("##opt_copy", copied ? icons::kCheck : icons::kCopy, copied ? T("opt.copied") : T("opt.copy"))) {
+        char text[340];
+        std::snprintf(text, sizeof(text), "%s - %s", t.title, t.artist);
+        ImGui::SetClipboardText(text);
+        g_copiedAt = static_cast<float>(ImGui::GetTime());
+    }
+    if (spotify && item("##opt_spotify", icons::kAppWindow, T("opt.open_spotify"))) {
+        ShellExecuteW(nullptr, L"open", L"spotify:", nullptr, nullptr, SW_SHOWNORMAL);
+        done = true;
+    }
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const bool inside = mouse.x >= min.x && mouse.x < max.x && mouse.y >= min.y && mouse.y < max.y;
+    if (done || (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !inside && !ImGui::IsAnyItemHovered()) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        g_optionsOpen = false;
+    }
+}
+
+// The heart, in the album art's corner (glass, filled when it's a favorite;
+// it pops when you press it).
+void DrawArtHeart(ImDrawList* d, ImVec2 artC, float artSize, const media::Track& t, float alpha) {
+    const Palette& p = P();
+    const float half = artSize * 0.5f;
+    const float r = S(19.0f);
+    const ImVec2 c(artC.x + half - r - S(10.0f), artC.y + half - r - S(10.0f));
+    float hover = 0.0f;
+    const bool fav = FindFavorite(t) >= 0;
+    static float pop = 0.0f;
+    if (Hit("##heart", ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), &hover)) {
+        ToggleFavorite(t);
+        pop = 1.0f;
+    }
+    pop = std::max(0.0f, pop - Dt() * 4.0f);
+    const float grow = 1.0f + 0.25f * std::sin(pop * 3.14159f);
+    d->AddCircleFilled(c, r * (1.0f + 0.06f * hover), C(ImVec4(0.05f, 0.05f, 0.06f, 1.0f), (0.45f + 0.2f * hover) * alpha), 32);
+    d->AddCircle(c, r * (1.0f + 0.06f * hover), C(ImVec4(1, 1, 1, 1), 0.15f * alpha), 32, 1.0f);
+    const ImVec4 red(1.0f, 0.36f, 0.42f, 1.0f);
+    icons::Draw(d, fav ? icons::kHeartFilled : icons::kHeart, c, S(18.0f) * grow, C(fav ? red : ImVec4(1, 1, 1, 1), alpha), S(1.8f));
+}
+
+// --- 3. The Lyrics sheet ------------------------------------------------------------------
+
+constexpr const char* kStyleKeys[6][2] = {
+    {"style.karaoke", "style.karaoke_d"}, {"style.neon", "style.neon_d"},   {"style.party", "style.party_d"},
+    {"style.dream", "style.dream_d"},     {"style.fire", "style.fire_d"},   {"style.minimal", "style.minimal_d"},
+};
+
+// A hue (0..1) as a color.
+ImVec4 Hue(float h) {
+    float r, g, b;
+    ImGui::ColorConvertHSVtoRGB(h - std::floor(h), 0.75f, 1.0f, r, g, b);
+    return ImVec4(r, g, b, 1.0f);
+}
+
+// A small random number from two integers (the same every time: particles
+// that don't need to be stored).
+float Hash(int a, int b) {
+    unsigned int h = static_cast<unsigned int>(a) * 374761393u + static_cast<unsigned int>(b) * 668265263u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return static_cast<float>((h ^ (h >> 16)) & 0xFFFF) / 65535.0f;
+}
+
+// THE PREVIEW of a style: "LUMA" drawn the way the style draws lyrics in the
+// game (its colors, its fill, its light, its shadow and border, its
+// particles), animated. An approximation drawn here, not the game's own code
+// (that one draws in the 3D world), but with the same choices.
+void DrawFlowPreview(ImDrawList* d, ImVec2 center, float height, int styleIndex, float alpha, float seed) {
+    const Palette& p = P();
+    const luma::flowstyles::FlowLook& k = luma::flowstyles::kStyles[styleIndex];
+    const float now = static_cast<float>(ImGui::GetTime()) + seed;
+    ImFont* font = g_fonts.pixel;
+    // (a whole multiple of the pixel font's size: its pixels stay square and sharp)
+    const float size = std::max(1.0f, std::floor(height * 0.42f / std::max(1.0f, font->FontSize))) * font->FontSize;
+    const char* letters[4] = {"L", "U", "M", "A"};
+    float widths[4], total = 0.0f;
+    const float gap = size * 0.08f;
+    for (int i = 0; i < 4; ++i) {
+        widths[i] = font->CalcTextSizeA(size, FLT_MAX, 0.0f, letters[i]).x;
+        total += widths[i] + (i < 3 ? gap : 0.0f);
+    }
+    const float x0 = center.x - total * 0.5f;
+    const float y0 = center.y - size * 0.5f;
+    // The fill: a loop of 2.6 s (it fills, stays a moment, starts again).
+    const float cycle = std::fmod(now * k.speed, 2.6f) / 2.0f;
+    const float sweep = std::clamp(cycle, 0.0f, 1.0f) * total;
+    // each letter's color
+    const ImVec4 albumA = p.accent;
+    const ImVec4 albumB = Mix(p.accent, ImVec4(1, 1, 1, 1), 0.45f);
+    auto letterColor = [&](int i) {
+        const float f = static_cast<float>(i) / 3.0f;
+        switch (k.colorMode) {
+            case 1: return albumA;
+            case 2: return Mix(albumA, albumB, f);
+            case 3: return Mix(ImVec4(k.color[0], k.color[1], k.color[2], 1), ImVec4(k.color2[0], k.color2[1], k.color2[2], 1), f);
+            case 4: return Hue(f * 0.75f + now * 0.15f);
+            default: return ImVec4(k.color[0], k.color[1], k.color[2], 1);
+        }
+    };
+    const ImVec4 mainColor = letterColor(1);
+    // its light (soft, behind the letters)
+    if (k.glow != 0) {
+        float strength = 0.75f * k.glowStrength;
+        if (k.glow == 5) strength *= 0.6f + 0.4f * (0.5f + 0.5f * std::sin(now * 4.0f));  // pulse
+        const ImVec4 gc = k.glowColor == 0 ? mainColor : (k.glowColor == 1 ? p.accent : mainColor);
+        const float wide = k.glow == 2 ? 1.5f : 1.0f;
+        if (k.glowWhere == 0 && k.fill != 0) {
+            // only on the part being sung
+            const float gx = x0 + std::min(sweep, total);
+            SoftLightOval(d, ImVec2(gx - size * 0.4f, center.y), size * 1.1f * wide, size * 0.9f * wide, gc, strength * alpha);
+        } else {
+            SoftLightOval(d, center, total * 0.62f * wide + size * 0.4f, size * 0.95f * wide, gc, strength * alpha);
+        }
+    }
+    // the letters
+    float x = x0;
+    for (int i = 0; i < 4; ++i) {
+        float dy = 0.0f;
+        if (k.motion != 0) dy = std::sin(now * 3.0f * k.speed + static_cast<float>(i) * 0.9f) * size * 0.06f;
+        if (k.appear == 3) dy += std::sin(now * 1.4f) * size * 0.05f;  // floating
+        const ImVec2 pos(std::round(x), std::round(y0 + dy));
+        const ImVec4 col = letterColor(i);
+        const float px = std::max(1.0f, std::round(size / std::max(1.0f, font->FontSize) * 1.5f));
+        // shadow: dark, colored or 3D
+        if (k.shadow) {
+            if (k.shadowStyle == 2) {
+                for (int s = 4; s >= 1; --s) {
+                    d->AddText(font, size, ImVec2(pos.x + px * s * 0.5f, pos.y + px * s * 0.5f), C(Mix(col, ImVec4(0, 0, 0, 1), 0.65f), alpha), letters[i]);
+                }
+            } else {
+                const ImVec4 sc = k.shadowStyle == 1 ? col : ImVec4(0, 0, 0, 1);
+                d->AddText(font, size, ImVec2(pos.x + px * 1.5f, pos.y + px * 1.5f), C(sc, (k.shadowStyle == 1 ? 0.45f : 0.6f) * alpha), letters[i]);
+            }
+        }
+        // border
+        if (k.outline) {
+            const ImU32 oc = C(ImVec4(luma::flowstyles::kDefaultOutlineColor[0], luma::flowstyles::kDefaultOutlineColor[1],
+                                      luma::flowstyles::kDefaultOutlineColor[2], 1), luma::flowstyles::kDefaultOutlineAlpha * alpha);
+            for (int o = 0; o < 4; ++o) {
+                const float ox = (o == 0 ? -px : o == 1 ? px : 0.0f), oy = (o == 2 ? -px : o == 3 ? px : 0.0f);
+                d->AddText(font, size, ImVec2(pos.x + ox, pos.y + oy), oc, letters[i]);
+            }
+        }
+        // the letter: not yet sung (dim), and the sung part on top
+        if (k.fill == 0) {
+            d->AddText(font, size, pos, C(col, alpha), letters[i]);
+        } else {
+            const float unsungA = k.unsung == 0 ? 0.35f : 0.2f;
+            d->AddText(font, size, pos, C(Mix(col, ImVec4(1, 1, 1, 1), 0.4f), unsungA * alpha), letters[i]);
+            const float lit = std::clamp(sweep - (x - x0), 0.0f, widths[i]);
+            if (lit > 0.0f) {
+                d->PushClipRect(ImVec2(pos.x - px * 3, pos.y - size), ImVec2(pos.x + lit, pos.y + size * 2.0f), true);
+                d->AddText(font, size, pos, C(col, alpha), letters[i]);
+                d->PopClipRect();
+            }
+        }
+        x += widths[i] + gap;
+    }
+    // a bright edge where it's filling (Neon's "edge")
+    if (k.fill == 4 && sweep > 0.0f && sweep < total) {
+        const float ex = x0 + sweep;
+        d->AddRectFilled(ImVec2(ex - S(1.0f), y0), ImVec2(ex + S(1.0f), y0 + size), C(ImVec4(1, 1, 1, 1), 0.85f * alpha));
+        SoftLight(d, ImVec2(ex, center.y), size * 0.6f, mainColor, 0.9f * alpha);
+    }
+    // the particles: each one is born, flies and fades (from its number alone)
+    if (k.vfx != 0) {
+        const int n = static_cast<int>(10 * k.vfxAmount);
+        for (int i = 0; i < n; ++i) {
+            const float life = 1.4f + Hash(i, 7) * 0.8f;
+            const float tt = now / life + Hash(i, 3);
+            const int gen = static_cast<int>(std::floor(tt));
+            const float f = tt - static_cast<float>(gen);
+            const float sx = x0 + Hash(i, gen * 31 + 1) * total;
+            float px = sx, py = center.y;
+            ImVec4 pc = k.vfxColor == 2 ? Hue(Hash(i, gen)) : (k.vfxColor == 1 ? p.accent : mainColor);
+            float r = S(1.6f);
+            switch (k.vfx) {
+                case 1:  // sparks: out and down, fast
+                    px += (Hash(i, gen * 5) - 0.5f) * size * 1.6f * f;
+                    py += -size * 0.6f * f + size * 1.4f * f * f;
+                    pc = Mix(pc, ImVec4(1, 1, 1, 1), 0.5f);
+                    break;
+                case 2:  // stardust: slowly up, twinkling
+                    px += std::sin(f * 6.0f + static_cast<float>(i)) * size * 0.15f;
+                    py += size * 0.5f - size * 1.3f * f;
+                    r = S(1.2f) + S(1.0f) * (0.5f + 0.5f * std::sin(now * 9.0f + static_cast<float>(i)));
+                    break;
+                case 3:  // confetti: falls, turning
+                    py = center.y - size * 1.0f + size * 2.2f * f;
+                    px += std::sin(f * 9.0f + static_cast<float>(i)) * size * 0.25f;
+                    r = S(2.0f);
+                    break;
+                default:  // embers: rise, from orange to dark
+                    px += std::sin(f * 4.0f + static_cast<float>(i) * 2.0f) * size * 0.2f;
+                    py += size * 0.4f - size * 1.5f * f;
+                    pc = Mix(ImVec4(1.0f, 0.75f, 0.25f, 1), ImVec4(0.9f, 0.25f, 0.05f, 1), f);
+                    break;
+            }
+            const float a = std::sin(f * 3.14159f) * alpha;
+            if (k.vfx == 3) {
+                d->AddRectFilled(ImVec2(px - r, py - r * 0.6f), ImVec2(px + r, py + r * 0.6f), C(pc, a));
+            } else {
+                d->AddRectFilled(ImVec2(px - r, py - r), ImVec2(px + r, py + r), C(pc, a));
+            }
+        }
+    }
+}
+
+void DrawLyricsPage(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
+    const Palette& p = P();
+    flowcfg::Refresh();
+    const flowcfg::State& s = flowcfg::g_state;
+    const float W = max.x - min.x;
+    // Title and what it is
+    Text(d, g_fonts.title, ImVec2(min.x + S(4.0f), min.y + S(2.0f)), C(p.text), T("lyrics.title"));
+    const float sub = std::min(W * 0.55f, S(560.0f));
+    TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(4.0f), min.y + S(8.0f) + g_fonts.title->FontSize), C(p.textDim), T("lyrics.subtitle"), sub);
+    // On / off and where, at the right
+    {
+        bool on = s.on;
+        const ImVec2 tp(max.x - S(50.0f), min.y + S(4.0f));
+        Text(d, g_fonts.semibold, ImVec2(tp.x - S(12.0f) - TextSize(g_fonts.semibold, T("lyrics.on")).x, tp.y + S(3.0f)), C(p.text), T("lyrics.on"));
+        if (Toggle("##flow_on", tp, &on)) flowcfg::Change([&](nlohmann::json& f) { f["on"] = on; });
+        const char* labels[2] = {T("lyrics.where_world"), T("lyrics.where_sky")};
+        int mode = s.mode;
+        const float w = SegmentedWidth(labels, 2);
+        if (Segmented("##flow_mode", ImVec2(max.x - w, min.y + S(42.0f)), labels, 2, &mode)) {
+            flowcfg::Change([&](nlohmann::json& f) { f["mode"] = mode; });
+        }
+    }
+    float y = min.y + S(98.0f);
+    // A line of state: live in the game / problems
+    {
+        const char* text = nullptr;
+        ImVec4 dot = p.success;
+        if (s.broken) {
+            text = T("lyrics.no_config");
+            dot = p.danger;
+        } else if (!s.moduleOn) {
+            text = T("lyrics.module_off");
+            dot = p.accent;
+        } else if (data.game.lumaLoaded) {
+            text = T("lyrics.live");
+        }
+        if (text != nullptr) {
+            Dot(d, ImVec2(min.x + S(10.0f), y + g_fonts.tiny->FontSize * 0.5f), dot);
+            Text(d, g_fonts.tiny, ImVec2(min.x + S(22.0f), y), C(p.text, 0.85f), text);
+        }
+        y += g_fonts.tiny->FontSize + S(14.0f);
+    }
+    // YOUR STYLES: pills. Click = apply. Double click = rename (Enter keeps it,
+    // Esc cancels). The x on hover = delete (click it twice). Then "Update"
+    // (when you changed the style you were using) and "+ Save as new".
+    {
+        Text(d, g_fonts.semibold, ImVec2(min.x + S(4.0f), y), C(p.text), T("lyrics.your_styles"));
+        y += g_fonts.semibold->FontSize + S(10.0f);
+        const float h = S(34.0f);
+        float x = min.x;
+        static int armed = -1;          // the pill whose x was pressed once (press again = delete)
+        static double armedAt = 0.0;
+        static int renaming = -1;       // the pill being renamed
+        static char nameBuf[64] = "";
+        static bool focusName = false;
+        if (armed >= 0 && ImGui::GetTime() - armedAt > 3.0) armed = -1;
+        auto& list = flowcfg::g_presets;
+        if (s.user >= 0) flowcfg::g_picked = s.user;
+        if (flowcfg::g_picked >= static_cast<int>(list.size())) flowcfg::g_picked = -1;
+        if (renaming >= static_cast<int>(list.size())) renaming = -1;
+        auto wrap = [&](float pw) {
+            if (x + pw > max.x && x > min.x) {
+                x = min.x;
+                y += h + S(8.0f);
+            }
+        };
+        for (int i = 0; i < static_cast<int>(list.size()); ++i) {
+            const auto& pr = list[static_cast<std::size_t>(i)];
+            const bool chosen = s.user == i;
+            const bool arming = armed == i;
+            const float iconW = pr.autoSaved ? S(22.0f) : 0.0f;
+            if (renaming == i) {
+                // the name, editable in place
+                const float pw = std::max(S(200.0f), TextSize(g_fonts.semibold, nameBuf).x + S(40.0f));
+                wrap(pw);
+                const ImVec2 a(x, y), b(x + pw, y + h);
+                d->AddRectFilled(a, b, C(p.card), h * 0.5f);
+                d->AddRect(a, b, C(p.accent), h * 0.5f, 0, S(1.5f));
+                ImGui::SetCursorScreenPos(ImVec2(a.x + S(14.0f), (a.y + b.y - g_fonts.semibold->FontSize) * 0.5f - S(3.0f)));
+                ImGui::PushFont(g_fonts.semibold);
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_Text, p.text);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, S(3.0f)));
+                ImGui::SetNextItemWidth(pw - S(28.0f));
+                if (focusName) {
+                    ImGui::SetKeyboardFocusHere();
+                    focusName = false;
+                }
+                const bool enter = ImGui::InputText("##rename", nameBuf, sizeof(nameBuf), ImGuiInputTextFlags_EnterReturnsTrue |
+                                                                                               ImGuiInputTextFlags_AutoSelectAll);
+                const bool cancel = ImGui::IsKeyPressed(ImGuiKey_Escape);
+                const bool left = ImGui::IsItemDeactivated();
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor(2);
+                ImGui::PopFont();
+                if (cancel) {
+                    renaming = -1;
+                } else if (enter || left) {
+                    flowcfg::RenameUserStyle(i, nameBuf);
+                    renaming = -1;
+                }
+                x += pw + S(8.0f);
+                continue;
+            }
+            const char* label = arming ? T("lyrics.delete_confirm") : pr.name.c_str();
+            const float lw = TextSize(g_fonts.semibold, label).x;
+            const float pw = lw + iconW + S(58.0f);
+            wrap(pw);
+            const ImVec2 a(x, y), b(x + pw, y + h);
+            char id[32];
+            std::snprintf(id, sizeof(id), "##mystyle%d", i);
+            float hover = 0.0f;
+            const ImVec2 xc(b.x - S(18.0f), (a.y + b.y) * 0.5f);
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            const bool overX = std::fabs(mouse.x - xc.x) < S(12.0f) && std::fabs(mouse.y - xc.y) < S(12.0f);
+            const bool clicked = Hit(id, a, b, &hover);
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !overX) {
+                renaming = i;
+                std::snprintf(nameBuf, sizeof(nameBuf), "%s", pr.name.c_str());
+                focusName = true;
+                armed = -1;
+            } else if (clicked) {
+                if (overX) {
+                    if (arming) {
+                        flowcfg::DeleteUserStyle(i);
+                        armed = -1;
+                        break;
+                    }
+                    armed = i;
+                    armedAt = ImGui::GetTime();
+                } else if (!arming) {
+                    flowcfg::ApplyUserStyle(i);
+                    flowcfg::g_picked = i;
+                } else {
+                    armed = -1;
+                }
+            }
+            const ImVec4 fill = arming ? p.danger : (chosen ? p.accent : Mix(p.card, p.cardHover, hover));
+            d->AddRectFilled(a, b, C(fill, arming || chosen ? 1.0f : 0.85f), h * 0.5f);
+            if (!chosen && !arming) d->AddRect(a, b, C(ImVec4(1, 1, 1, 1), flowcfg::g_picked == i ? 0.45f : 0.10f), h * 0.5f);
+            const ImVec4 tc = arming || chosen ? p.onAccent : p.text;
+            float tx = a.x + S(16.0f);
+            if (pr.autoSaved) {
+                icons::Draw(d, icons::kClock, ImVec2(tx + S(8.0f), (a.y + b.y) * 0.5f), S(15.0f), C(tc, 0.85f), S(1.6f));
+                tx += iconW;
+            }
+            Text(d, g_fonts.semibold, ImVec2(tx, (a.y + b.y - g_fonts.semibold->FontSize) * 0.5f), C(tc), label);
+            const float xa = (hover > 0.0f || arming) ? (overX ? 1.0f : 0.55f) : 0.25f;
+            icons::Draw(d, arming ? icons::kTrash : icons::kClose, xc, S(13.0f), C(tc, xa), S(1.8f));
+            x += pw + S(8.0f);
+        }
+        // Update the style you were using (you changed it since)
+        auto actionPill = [&](const char* id, const char* icon, const char* label, bool strong) {
+            const float pw = TextSize(g_fonts.semibold, label).x + S(46.0f);
+            wrap(pw);
+            const ImVec2 a(x, y), b(x + pw, y + h);
+            float hover = 0.0f;
+            const bool clicked = Hit(id, a, b, &hover);
+            d->AddRectFilled(a, b, C(strong ? p.accent : p.text, strong ? 0.9f + 0.1f * hover : 0.06f + 0.08f * hover), h * 0.5f);
+            if (!strong) d->AddRect(a, b, C(p.accent, 0.8f), h * 0.5f, 0, S(1.5f));
+            const ImVec4 tc = strong ? p.onAccent : p.text;
+            icons::Draw(d, icon, ImVec2(a.x + S(18.0f), (a.y + b.y) * 0.5f), S(15.0f), C(strong ? p.onAccent : p.accent), S(2.0f));
+            Text(d, g_fonts.semibold, ImVec2(a.x + S(32.0f), (a.y + b.y - g_fonts.semibold->FontSize) * 0.5f), C(tc), label);
+            x += pw + S(8.0f);
+            return clicked;
+        };
+        if (s.found && flowcfg::g_picked >= 0 && s.user != flowcfg::g_picked) {
+            char label[120];
+            std::snprintf(label, sizeof(label), T("lyrics.update_style"), list[static_cast<std::size_t>(flowcfg::g_picked)].name.c_str());
+            if (actionPill("##updatestyle", icons::kCheck, label, true)) flowcfg::UpdateUserStyle(flowcfg::g_picked);
+        }
+        if (s.found && actionPill("##savestyle", icons::kPlus, T("lyrics.save_new"), false)) flowcfg::SaveCurrentStyle();
+        y += h + S(6.0f);
+        Text(d, g_fonts.tiny, ImVec2(min.x + S(4.0f), y), C(p.textDim), list.empty() ? T("lyrics.no_styles") : T("lyrics.styles_hint"));
+        y += g_fonts.tiny->FontSize + S(16.0f);
+        Text(d, g_fonts.semibold, ImVec2(min.x + S(4.0f), y), C(p.text), T("lyrics.ready_styles"));
+        y += g_fonts.semibold->FontSize + S(10.0f);
+    }
+    // The six styles: a 3 x 2 grid of cards (each one, its preview)
+    const float footer = g_fonts.tiny->FontSize + S(16.0f);
+    const float gap = S(14.0f);
+    const float cw = (W - gap * 2.0f) / 3.0f;
+    const float ch = std::max(S(120.0f), (max.y - y - footer - gap) * 0.5f);
+    const float dim = s.on ? 1.0f : 0.55f;  // (off: they're still chosen, just dimmer)
+    for (int i = 0; i < luma::flowstyles::kCount; ++i) {
+        const int col = i % 3, row = i / 3;
+        const ImVec2 cmin(min.x + col * (cw + gap), y + row * (ch + gap));
+        const ImVec2 cmax(cmin.x + cw, cmin.y + ch);
+        char id[24];
+        std::snprintf(id, sizeof(id), "##flowstyle%d", i);
+        float hover = 0.0f;
+        const bool chosen = s.style == i;
+        if (Hit(id, cmin, cmax, &hover)) flowcfg::ApplyStyle(i);
+        const float lit = Anim(ImGui::GetID(id) + 3, chosen, 8.0f);
+        const float lift = S(3.0f) * hover;
+        const ImVec2 a(cmin.x, cmin.y - lift), b(cmax.x, cmax.y - lift);
+        if (lit > 0.01f) SoftLightOval(d, ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f), cw * 0.62f, ch * 0.70f, p.accent, 0.45f * lit);
+        Card(d, a, b, hover * 0.6f);
+        // the preview's stage: a dark window inside the card
+        const float nameH = g_fonts.semibold->FontSize + g_fonts.tiny->FontSize + S(26.0f);
+        const ImVec2 vmin(a.x + S(10.0f), a.y + S(10.0f)), vmax(b.x - S(10.0f), b.y - nameH);
+        d->AddRectFilled(vmin, vmax, C(ImVec4(0.03f, 0.03f, 0.05f, 1.0f), 0.55f), S(kRound) - S(4.0f));
+        d->PushClipRect(vmin, vmax, true);
+        DrawFlowPreview(d, ImVec2((vmin.x + vmax.x) * 0.5f, (vmin.y + vmax.y) * 0.5f), vmax.y - vmin.y, i, g_fade * dim,
+                        static_cast<float>(i) * 0.37f);
+        d->PopClipRect();
+        // its name and what it does
+        const float tx = a.x + S(14.0f);
+        float ty = vmax.y + S(9.0f);
+        Text(d, g_fonts.semibold, ImVec2(tx, ty), C(p.text), T(kStyleKeys[i][0]));
+        if (chosen) {
+            const ImVec2 c(b.x - S(22.0f), ty + g_fonts.semibold->FontSize * 0.5f);
+            d->AddCircleFilled(c, S(9.0f), C(p.accent), 24);
+            icons::Draw(d, kIconCheck, c, S(11.0f), C(p.onAccent), S(2.2f));
+        }
+        ty += g_fonts.semibold->FontSize + S(3.0f);
+        TextFit(d, g_fonts.tiny, ImVec2(tx, ty), C(p.textDim), T(kStyleKeys[i][1]), b.x - tx - S(10.0f));
+        // the chosen one: the accent around it
+        if (lit > 0.01f) d->AddRect(a, b, C(p.accent, lit), S(kRound), 0, S(2.0f));
+    }
+    // At the bottom: your own style / where the rest is
+    {
+        const char* text = s.style < 0 && s.user < 0 && s.found ? T("lyrics.custom") : T("lyrics.more");
+        Text(d, g_fonts.tiny, ImVec2(min.x + S(4.0f), max.y - g_fonts.tiny->FontSize), C(p.textDim), text);
+    }
+}
+
+
 // The album art (or a placeholder) at "center", "size" wide, with its old
 // one fading out.
-void DrawArtAt(ImDrawList* d, ImVec2 center, float size, float alpha) {
+void DrawArtAt(ImDrawList* d, ImVec2 center, float size, float alpha, float rounding = -1.0f) {
     const Palette& p = P();
+    if (rounding < 0.0f) rounding = S(22.0f);
     const float pop = 0.94f + 0.06f * EaseOutCubic(g_artFade);
     auto one = [&](ID3D11ShaderResourceView* view, float a, float scale) {
         const float half = size * 0.5f * scale;
         const ImVec2 mn(center.x - half, center.y - half), mx(center.x + half, center.y + half);
         if (view == nullptr) {
-            d->AddRectFilled(mn, mx, C(p.accent, a * alpha), S(22.0f));
+            d->AddRectFilled(mn, mx, C(p.accent, a * alpha), rounding);
             icons::Draw(d, icons::kMusic, center, size * 0.26f, C(p.onAccent, a * alpha * 0.7f), S(1.6f));
             return;
         }
         d->AddImageRounded(reinterpret_cast<ImTextureID>(view), mn, mx, ImVec2(0, 0), ImVec2(1, 1), C(ImVec4(1, 1, 1, 1), a * alpha),
-                           S(22.0f));
+                           rounding);
     };
     if (g_artOld.view != nullptr && g_artFade < 1.0f) one(g_artOld.view, 1.0f, 1.0f);
     one(g_art.view, g_artOld.view != nullptr ? g_artFade : 1.0f, pop);
     const float half = size * 0.5f;
     d->AddRect(ImVec2(center.x - half, center.y - half), ImVec2(center.x + half, center.y + half), C(ImVec4(1, 1, 1, 1), 0.08f * alpha),
-               S(22.0f));
+               rounding);
 }
 
 // The song on the stage: art + record + words + progress + controls.
@@ -2304,12 +3469,16 @@ void DrawStageSong(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t,
     SoftLightOval(d, ImVec2(artC.x, artC.y + artSize * 0.10f), artSize * 0.78f, artSize * 0.70f, ImVec4(0, 0, 0, 1), 1.1f * alpha);
     DrawArtAt(d, artC, artSize, alpha);
 
-    // --- The words, the progress, the controls -------------------------------------------
+    // (the heart, in the art's corner: your favorites)
+    DrawArtHeart(d, artC, artSize, t, alpha);
+
+    // --- The words, the lyrics, the progress, the controls ---------------------------------
     const float x = x0 + artSize + discReach * g_discOut + S(54.0f);
     const float w = infoW;
     const float slide = (1.0f - EaseOutCubic(g_trackIn)) * S(18.0f);
     const float ta = g_trackIn * alpha;
-    float y = artC.y - S(112.0f);
+    const float lyricsH = CompactLyricsHeight();
+    float y = artC.y - S(108.0f) - lyricsH * 0.5f;
     {
         const char* label = t.playing ? T("music.now_playing") : T("music.paused");
         Text(d, g_fonts.tiny, ImVec2(x, y), C(p.text, 0.7f * alpha), label);
@@ -2347,7 +3516,10 @@ void DrawStageSong(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t,
         }
         TextFit(d, g_fonts.semibold, ImVec2(x + slide * 1.6f, y), C(p.text, 0.72f * ta), line, w);
     }
-    y += g_fonts.semibold->FontSize + S(26.0f);
+    y += g_fonts.semibold->FontSize + S(16.0f);
+    // the lyrics: the line being sung and the next one
+    DrawCompactLyrics(d, x, y, w, t, alpha);
+    y += lyricsH + S(10.0f);
     if (t.duration > 0.0) {
         const float frac = static_cast<float>(std::clamp(t.position / t.duration, 0.0, 1.0));
         float hover = 0.0f;
@@ -2369,17 +3541,38 @@ void DrawStageSong(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t,
     y += S(58.0f);
     const float savedFade = g_fade;
     g_fade *= alpha;
-    if (RoundButton(d, "##prev", ImVec2(x + S(24.0f), y), S(24.0f), icons::kSkipBackFilled, S(18.0f), false, t.canPrevious)) media::Previous();
+    // shuffle, previous, play, next, repeat
+    if (IconToggle(d, "##shuffle", ImVec2(x + S(14.0f), y), icons::kShuffle, S(18.0f), t.shuffle, t.canShuffle)) media::SetShuffle(!t.shuffle);
+    if (RoundButton(d, "##prev", ImVec2(x + S(66.0f), y), S(24.0f), icons::kSkipBackFilled, S(18.0f), false, t.canPrevious)) media::Previous();
     {
-        const ImVec2 c(x + S(24.0f) + S(72.0f), y);
+        const ImVec2 c(x + S(138.0f), y);
         if (t.playing) d->AddCircleFilled(c, S(32.0f) + S(12.0f) * g_bassSmooth, C(p.accent, 0.20f + 0.25f * g_bassSmooth), 48);
         if (RoundButton(d, "##playpause", c, S(32.0f), g_playMorph > 0.5f ? icons::kPlayFilled : icons::kPauseFilled, S(22.0f), true,
                         t.canPlayPause)) {
             media::PlayPause();
         }
     }
-    if (RoundButton(d, "##next", ImVec2(x + S(24.0f) + S(144.0f), y), S(24.0f), icons::kSkipForwardFilled, S(18.0f), false, t.canNext)) {
-        media::Next();
+    if (RoundButton(d, "##next", ImVec2(x + S(210.0f), y), S(24.0f), icons::kSkipForwardFilled, S(18.0f), false, t.canNext)) media::Next();
+    {
+        // off -> the whole list -> this song -> off
+        const int nextMode = t.repeat == 0 ? 2 : (t.repeat == 2 ? 1 : 0);
+        if (IconToggle(d, "##repeat", ImVec2(x + S(262.0f), y), t.repeat == 1 ? icons::kRepeat1 : icons::kRepeat, S(18.0f), t.repeat != 0,
+                       t.canRepeat)) {
+            media::SetRepeat(nextMode);
+        }
+    }
+    // at the right: the volume, the lyrics view, the options
+    {
+        const ImVec2 opt(x + w - S(14.0f), y);
+        if (IconToggle(d, "##options", opt, icons::kEllipsis, S(18.0f), g_optionsOpen)) {
+            g_optionsOpen = !g_optionsOpen;
+            g_optionsAnchor = opt;
+        }
+        const bool canView = g_lyricsShow > 0.5f;
+        if (IconToggle(d, "##lyricsview", ImVec2(x + w - S(54.0f), y), icons::kMicVocal, S(18.0f), g_lyricsView, canView)) {
+            g_lyricsView = !g_lyricsView;
+        }
+        if (w >= S(480.0f)) VolumeBar(d, ImVec2(x + w - S(190.0f), y), S(86.0f), t, alpha);
     }
     g_fade = savedFade;
 }
@@ -2568,7 +3761,7 @@ void DrawSheet(ImDrawList* d, ImVec2 display, const account::Info& acc, const Lo
     const ImVec2 cmin(min.x + S(24.0f), min.y + S(24.0f)), cmax(max.x - S(24.0f), max.y - S(24.0f));
     d->PushClipRect(min, max, true);
     switch (g_sheetPage) {
-        case Page::Lyrics: DrawComingSoon(d, cmin, cmax, icons::kList, "nav.lyrics", "lyrics.soon_text"); break;
+        case Page::Lyrics: DrawLyricsPage(d, cmin, cmax, data); break;
         case Page::Spotify: DrawComingSoon(d, cmin, cmax, icons::kMusic2, "nav.spotify", "spotify.soon_text"); break;
         default: DrawSettings(d, cmin, cmax, acc, data); break;
     }
@@ -2576,22 +3769,66 @@ void DrawSheet(ImDrawList* d, ImVec2 display, const account::Info& acc, const Lo
     g_fade = saved;
 }
 
+// THE LYRICS VIEW: the song small at the top left, the lyrics big in the
+// middle, a few controls at the bottom (the lyrics button closes it; Esc too).
+void DrawLyricsView(ImDrawList* d, ImVec2 display, const media::Track& t, float alpha) {
+    const Palette& p = P();
+    const float rise = (1.0f - alpha) * S(24.0f);
+    // the song, small
+    const float art = S(58.0f);
+    const ImVec2 artC(S(48.0f) + art * 0.5f, S(76.0f) + art * 0.5f + rise);
+    DrawArtAt(d, artC, art, alpha, S(10.0f));
+    const float tx = artC.x + art * 0.5f + S(14.0f);
+    const float tw = std::min(S(420.0f), display.x * 0.4f);
+    TextFit(d, g_fonts.semibold, ImVec2(tx, artC.y - g_fonts.semibold->FontSize - S(1.0f)), C(p.text, alpha), t.title, tw);
+    TextFit(d, g_fonts.tiny, ImVec2(tx, artC.y + S(3.0f)), C(p.text, 0.65f * alpha), t.artist, tw);
+    // the lyrics
+    const float bottomCtl = display.y - S(kDockBottom) - S(kDockH) - S(72.0f);
+    DrawLyricsLines(d, ImVec2(S(110.0f), S(150.0f) + rise), ImVec2(display.x - S(110.0f), bottomCtl - S(46.0f) + rise), t, alpha);
+    // the controls
+    const float savedFade = g_fade;
+    g_fade *= alpha;
+    const float cx = display.x * 0.5f, cy = bottomCtl + rise;
+    if (RoundButton(d, "##lv_prev", ImVec2(cx - S(64.0f), cy), S(20.0f), icons::kSkipBackFilled, S(15.0f), false, t.canPrevious)) media::Previous();
+    if (RoundButton(d, "##lv_play", ImVec2(cx, cy), S(26.0f), g_playMorph > 0.5f ? icons::kPlayFilled : icons::kPauseFilled, S(18.0f), true,
+                    t.canPlayPause)) {
+        media::PlayPause();
+    }
+    if (RoundButton(d, "##lv_next", ImVec2(cx + S(64.0f), cy), S(20.0f), icons::kSkipForwardFilled, S(15.0f), false, t.canNext)) media::Next();
+    if (IconToggle(d, "##lv_close", ImVec2(cx + S(124.0f), cy), icons::kMicVocal, S(18.0f), true)) g_lyricsView = false;
+    if (t.duration > 0.0) {  // a thin progress line under them
+        const float frac = static_cast<float>(std::clamp(t.position / t.duration, 0.0, 1.0));
+        const float bw = S(260.0f), by = cy + S(38.0f);
+        d->AddRectFilled(ImVec2(cx - bw * 0.5f, by - S(1.5f)), ImVec2(cx + bw * 0.5f, by + S(1.5f)), C(ImVec4(1, 1, 1, 1), 0.15f), S(1.5f));
+        d->AddRectFilled(ImVec2(cx - bw * 0.5f, by - S(1.5f)), ImVec2(cx - bw * 0.5f + bw * frac, by + S(1.5f)), C(p.accent), S(1.5f));
+    }
+    g_fade = savedFade;
+}
+
 // The whole stage (Home, with the sheet over it for the other sections).
 void DrawStage(ImDrawList* d, ImVec2 display, const media::Track& t, const LocalData& data, const std::string& name, const account::Info& acc) {
     const float stageAlpha = 1.0f - 0.35f * EaseOutCubic(g_sheet);
     const ImVec2 smin(S(40.0f), S(70.0f));
-    const ImVec2 smax(display.x - S(40.0f), display.y - S(kDockBottom) - S(kDockH) - S(110.0f));
+    const ImVec2 smax(display.x - S(40.0f), display.y - S(kDockBottom) - S(kDockH) - S(70.0f));
     // (it comes in when the launcher opens)
     static float openIn = 0.0f;
     openIn = std::min(1.0f, openIn + Dt() * 1.4f);
     const float in = EaseOutCubic(openIn);
     const float savedFade = g_fade;
     g_fade = in;
-    DrawStageSong(d, ImVec2(smin.x, smin.y + (1.0f - in) * S(20.0f)), ImVec2(smax.x, smax.y + (1.0f - in) * S(20.0f)), t, stageAlpha);
+    // The song, or (with the lyrics view open) the lyrics: one fades into the other.
+    const float lv = EaseOutCubic(g_lyricsViewAnim);
+    if (lv < 0.98f) {
+        const float drop = lv * S(30.0f);
+        DrawStageSong(d, ImVec2(smin.x, smin.y + (1.0f - in) * S(20.0f) + drop), ImVec2(smax.x, smax.y + (1.0f - in) * S(20.0f) + drop), t,
+                      stageAlpha * (1.0f - lv));
+    }
+    if (lv > 0.02f) DrawLyricsView(d, display, t, stageAlpha * lv);
     g_fade = savedFade;
     DrawSheet(d, display, acc, data);
     DrawDock(d, display);
     DrawOrb(d, display, data);
+    DrawOptionsMenu(d, t);  // (over everything)
     (void)name;
 }
 
@@ -3332,6 +4569,7 @@ void AppInit(HWND hwnd, float scale) {
     if (std::wcsstr(GetCommandLineW(), L"--page=settings") != nullptr) g_page = Page::Settings;
     if (std::wcsstr(GetCommandLineW(), L"--page=lyrics") != nullptr) g_page = Page::Lyrics;
     if (std::wcsstr(GetCommandLineW(), L"--page=spotify") != nullptr) g_page = Page::Spotify;
+    if (std::wcsstr(GetCommandLineW(), L"--view=lyrics") != nullptr) g_openViewWhenReady = true;
     g_statusThread = std::thread(StatusThread);
     account::Init();
     updater::Start(g_autoUpdate, GetCommandLineW());
@@ -3384,6 +4622,10 @@ void AppSetScale(float scale) {
     g_fontsDirty = true;
 }
 
+void RequestFontsRebuild() {
+    g_fontsDirty = true;
+}
+
 bool AppFontsDirty() {
     return g_fontsDirty;
 }
@@ -3405,14 +4647,27 @@ void AppRebuildFonts() {
         config.OversampleH = 2;
         return io.Fonts->AddFontFromFileTTF(path.string().c_str(), size * g_scale, &config);
     };
+    // (song titles and lyrics in other alphabets: their letters are merged
+    // into the fonts that show them: render/font_fallback.h)
+    render::fontfallback::BeginBuild();
+    auto merge = [&](ImFont* font, float size) {
+        if (font != nullptr) render::fontfallback::MergeInto(io, size * g_scale);
+    };
     g_fonts.regular = load(L"segoeui.ttf", 15.0f);
     if (g_fonts.regular == nullptr) {
         g_fonts.regular = io.Fonts->AddFontDefault();
     }
+    merge(g_fonts.regular, 15.0f);
     g_fonts.tiny = load(L"segoeui.ttf", 13.0f);
     g_fonts.semibold = load(L"seguisb.ttf", 16.0f);
+    merge(g_fonts.semibold, 16.0f);
     g_fonts.title = load(L"segoeuib.ttf", 22.0f);
     g_fonts.hero = load(L"segoeuib.ttf", 42.0f);
+    merge(g_fonts.hero, 42.0f);
+    g_fonts.lyric = load(L"segoeuib.ttf", 34.0f);
+    merge(g_fonts.lyric, 34.0f);
+    g_fonts.line = load(L"seguisb.ttf", 21.0f);
+    merge(g_fonts.line, 21.0f);
     // La letra pixelada: no la distribuimos; se lee de la carpeta de TU juego
     // (Luma.dll anota cuál es en profile.json).
     g_fonts.pixel = nullptr;
@@ -3436,6 +4691,8 @@ void AppRebuildFonts() {
     if (g_fonts.semibold == nullptr) g_fonts.semibold = fallback;
     if (g_fonts.title == nullptr) g_fonts.title = g_fonts.semibold;
     if (g_fonts.hero == nullptr) g_fonts.hero = g_fonts.title;
+    if (g_fonts.lyric == nullptr) g_fonts.lyric = g_fonts.hero;
+    if (g_fonts.line == nullptr) g_fonts.line = g_fonts.title;
     if (g_fonts.pixel == nullptr) g_fonts.pixel = g_fonts.semibold;
     io.Fonts->Build();
 }
@@ -3467,6 +4724,8 @@ void AppFrame() {
     const bool visible = IsIconic(g_hwnd) == FALSE && IsWindowVisible(g_hwnd) != FALSE;
     const media::Track track = media::Current();
     UpdateMusic(track, visible);
+    flowcfg::Refresh();  // (the lyrics' offset, the style chosen in the game)
+    UpdateLyrics(track, visible);
 
     // Al terminar JUGAR con éxito: minimizar (un instante después, para que
     // se alcance a ver "Luma está funcionando"), si así está en Ajustes.
@@ -3513,6 +4772,7 @@ void AppFrame() {
 
 void AppShutdown() {
     g_quit.store(true);
+    lyrics::Shutdown();
     audioviz::Shutdown();
     media::Shutdown();
     ReleaseArt(g_art);
@@ -3555,3 +4815,11 @@ bool AppIsCaption(int x, int y) {
 }
 
 }  // namespace luma::launcher::gui
+
+// The fonts are rebuilt when a song brings letters of another alphabet
+// (render/font_fallback.cpp asks for it with this, like in the game).
+namespace luma::theme {
+void RequestFontRebuild() {
+    luma::launcher::gui::RequestFontsRebuild();
+}
+}  // namespace luma::theme

@@ -23,6 +23,95 @@
 #include "render/rainbow.h"
 #include "render/ui.h"
 
+// Lyric Flow's settings <-> its JSON (the profile's "lyricFlow"). Also used by
+// YOUR styles (shared/flow_presets.h), which save and bring back this object.
+namespace luma::render::music {
+
+nlohmann::json FlowToJson(const Settings& s) {
+    nlohmann::json f = {{"on", s.lyricFlow}, {"distance", s.flowDistance}, {"height", s.flowHeight}, {"size", s.flowSize},
+                        {"tilt", s.flowTilt}, {"opacity", s.flowOpacity}, {"uppercase", s.flowUppercase},
+                        {"mode", s.flowMode}, {"layout", s.flowLayout}, {"appear", s.flowAppear}, {"leave", s.flowLeave}, {"motion", s.flowMotion},
+                        {"speed", s.flowSpeed}, {"colorMode", s.flowColorMode}, {"color", {s.flowColor[0], s.flowColor[1], s.flowColor[2]}},
+                        {"color2", {s.flowColor2[0], s.flowColor2[1], s.flowColor2[2]}}, {"highlight", s.flowHighlight},
+                        {"highlightColor", {s.flowHighlightColor[0], s.flowHighlightColor[1], s.flowHighlightColor[2]}}, {"outline", s.flowOutline},
+                        {"outlineColor", {s.flowOutlineColor[0], s.flowOutlineColor[1], s.flowOutlineColor[2]}}, {"outlineAlpha", s.flowOutlineAlpha},
+                        {"shadow", s.flowShadow}, {"shadowStyle", s.flowShadowStyle}, {"font", s.flowFont}, {"bold", s.flowBold},
+                        {"resolution", s.flowResolution}, {"letterSpacing", s.flowLetterSpacing},
+                        {"wordSpacing", s.flowWordSpacing}, {"leaveTime", s.flowLeaveTime}, {"pauseHide", s.flowPauseHide},
+                        {"angle", s.flowAngle}, {"spread", s.flowSpread}, {"turn", s.flowTurn}, {"roll", s.flowRoll},
+                        {"pinKey", s.flowPinKey}, {"pinTarget", s.flowPinTarget},
+                        {"fill", s.flowFill}, {"fillWholeLine", s.flowFillWholeLine}, {"unsung", s.flowUnsung},
+                        {"unsungColor", {s.flowUnsungColor[0], s.flowUnsungColor[1], s.flowUnsungColor[2]}},
+                        {"glow", s.flowGlow}, {"glowColor", s.flowGlowColor},
+                        {"glowCustom", {s.flowGlowCustom[0], s.flowGlowCustom[1], s.flowGlowCustom[2]}},
+                        {"glowStrength", s.flowGlowStrength}, {"glowWhere", s.flowGlowWhere}, {"vfx", s.flowVfx},
+                        {"vfxAmount", s.flowVfxAmount}, {"vfxColor", s.flowVfxColor}};
+    return f;
+}
+
+void FlowFromJson(Settings& s, const nlohmann::json& f) {
+    const Settings d;
+    s.lyricFlow = f.value("on", d.lyricFlow);
+    s.flowDistance = std::clamp(f.value("distance", d.flowDistance), 8.0f, 200.0f);
+    s.flowHeight = std::clamp(f.value("height", d.flowHeight), -4.0f, 120.0f);
+    s.flowSize = std::clamp(f.value("size", d.flowSize), 0.5f, 20.0f);
+    s.flowTilt = std::clamp(f.value("tilt", d.flowTilt), 0.0f, 30.0f);
+    s.flowOpacity = std::clamp(f.value("opacity", d.flowOpacity), 0.2f, 1.0f);
+    s.flowUppercase = f.value("uppercase", d.flowUppercase);
+    s.flowMode = std::clamp(f.value("mode", d.flowMode), 0, 1);
+    s.flowLayout = std::clamp(f.value("layout", d.flowLayout), 0, 5);
+    s.flowAppear = std::clamp(f.value("appear", d.flowAppear), 0, 8);
+    s.flowLeave = std::clamp(f.value("leave", d.flowLeave), 0, 4);
+    s.flowMotion = std::clamp(f.value("motion", d.flowMotion), 0, 4);
+    s.flowSpeed = std::clamp(f.value("speed", d.flowSpeed), 0.3f, 3.0f);
+    // (older versions had only "album color": it becomes color mode 1)
+    s.flowColorMode = std::clamp(f.value("colorMode", f.value("albumColor", false) ? 1 : d.flowColorMode), 0, 4);
+    auto readColor = [&](const char* key, float* out, const float* def) {
+        for (int i = 0; i < 3; ++i) out[i] = def[i];
+        if (f.contains(key) && f[key].is_array() && f[key].size() == 3) {
+            for (int i = 0; i < 3; ++i) {
+                if (f[key][i].is_number()) out[i] = std::clamp(f[key][i].get<float>(), 0.0f, 1.0f);
+            }
+        }
+    };
+    readColor("color", s.flowColor, d.flowColor);
+    readColor("color2", s.flowColor2, d.flowColor2);
+    readColor("highlightColor", s.flowHighlightColor, d.flowHighlightColor);
+    readColor("outlineColor", s.flowOutlineColor, d.flowOutlineColor);
+    readColor("unsungColor", s.flowUnsungColor, d.flowUnsungColor);
+    readColor("glowCustom", s.flowGlowCustom, d.flowGlowCustom);
+    s.flowFill = std::clamp(f.value("fill", d.flowFill), 0, 4);
+    s.flowFillWholeLine = f.value("fillWholeLine", d.flowFillWholeLine);
+    s.flowUnsung = std::clamp(f.value("unsung", d.flowUnsung), 0, 3);
+    s.flowGlow = std::clamp(f.value("glow", d.flowGlow), 0, 5);
+    s.flowGlowColor = std::clamp(f.value("glowColor", d.flowGlowColor), 0, 3);
+    s.flowGlowStrength = std::clamp(f.value("glowStrength", d.flowGlowStrength), 0.2f, 2.5f);
+    s.flowGlowWhere = std::clamp(f.value("glowWhere", d.flowGlowWhere), 0, 2);
+    s.flowVfx = std::clamp(f.value("vfx", d.flowVfx), 0, 5);
+    s.flowVfxAmount = std::clamp(f.value("vfxAmount", d.flowVfxAmount), 0.1f, 3.0f);
+    s.flowVfxColor = std::clamp(f.value("vfxColor", d.flowVfxColor), 0, 3);
+    s.flowHighlight = f.value("highlight", d.flowHighlight);
+    s.flowOutline = f.value("outline", d.flowOutline);
+    s.flowOutlineAlpha = std::clamp(f.value("outlineAlpha", d.flowOutlineAlpha), 0.1f, 1.0f);
+    s.flowShadow = f.value("shadow", d.flowShadow);
+    s.flowShadowStyle = std::clamp(f.value("shadowStyle", d.flowShadowStyle), 0, 2);
+    s.flowFont = std::clamp(f.value("font", d.flowFont), 0, render::lyricflow::kFontCount - 1);
+    s.flowBold = f.value("bold", d.flowBold);
+    s.flowResolution = std::clamp(f.value("resolution", d.flowResolution), 9, 32);
+    s.flowLetterSpacing = std::clamp(f.value("letterSpacing", d.flowLetterSpacing), -1.0f, 4.0f);
+    s.flowWordSpacing = std::clamp(f.value("wordSpacing", d.flowWordSpacing), 0.1f, 1.5f);
+    s.flowLeaveTime = std::clamp(f.value("leaveTime", d.flowLeaveTime), 0.15f, 1.5f);
+    s.flowPauseHide = std::clamp(f.value("pauseHide", d.flowPauseHide), 0.0f, 120.0f);
+    s.flowAngle = std::clamp(f.value("angle", d.flowAngle), -180.0f, 180.0f);
+    s.flowSpread = std::clamp(f.value("spread", d.flowSpread), 0.0f, 0.5f);
+    s.flowTurn = std::clamp(f.value("turn", d.flowTurn), -90.0f, 90.0f);
+    s.flowRoll = std::clamp(f.value("roll", d.flowRoll), -45.0f, 45.0f);
+    s.flowPinKey = f.value("pinKey", d.flowPinKey);
+    s.flowPinTarget = std::clamp(f.value("pinTarget", d.flowPinTarget), 0, 1);
+}
+
+}  // namespace luma::render::music
+
 namespace luma::modules::hud {
 
 namespace rh = render::hud;
@@ -515,24 +604,7 @@ void NowPlaying::SaveSettings(nlohmann::json& out) const {
                          {"colorMode", s.vizColorMode}, {"color", {s.vizColor[0], s.vizColor[1], s.vizColor[2]}}, {"color2", {s.vizColor2[0], s.vizColor2[1], s.vizColor2[2]}},
                          {"opacity", s.vizOpacity}, {"followHeight", s.vizFollowHeight}, {"worldY", s.vizWorldY},
                          {"reflection", s.vizReflection}, {"layersOn", s.vizLayers}, {"hitReaction2", s.vizHitReaction}};
-    out["lyricFlow"] = {{"on", s.lyricFlow}, {"distance", s.flowDistance}, {"height", s.flowHeight}, {"size", s.flowSize},
-                        {"tilt", s.flowTilt}, {"opacity", s.flowOpacity}, {"uppercase", s.flowUppercase},
-                        {"mode", s.flowMode}, {"layout", s.flowLayout}, {"appear", s.flowAppear}, {"leave", s.flowLeave}, {"motion", s.flowMotion},
-                        {"speed", s.flowSpeed}, {"colorMode", s.flowColorMode}, {"color", {s.flowColor[0], s.flowColor[1], s.flowColor[2]}},
-                        {"color2", {s.flowColor2[0], s.flowColor2[1], s.flowColor2[2]}}, {"highlight", s.flowHighlight},
-                        {"highlightColor", {s.flowHighlightColor[0], s.flowHighlightColor[1], s.flowHighlightColor[2]}}, {"outline", s.flowOutline},
-                        {"outlineColor", {s.flowOutlineColor[0], s.flowOutlineColor[1], s.flowOutlineColor[2]}}, {"outlineAlpha", s.flowOutlineAlpha},
-                        {"shadow", s.flowShadow}, {"shadowStyle", s.flowShadowStyle}, {"font", s.flowFont}, {"bold", s.flowBold},
-                        {"resolution", s.flowResolution}, {"letterSpacing", s.flowLetterSpacing},
-                        {"wordSpacing", s.flowWordSpacing}, {"leaveTime", s.flowLeaveTime}, {"pauseHide", s.flowPauseHide},
-                        {"angle", s.flowAngle}, {"spread", s.flowSpread}, {"turn", s.flowTurn}, {"roll", s.flowRoll},
-                        {"pinKey", s.flowPinKey}, {"pinTarget", s.flowPinTarget},
-                        {"fill", s.flowFill}, {"fillWholeLine", s.flowFillWholeLine}, {"unsung", s.flowUnsung},
-                        {"unsungColor", {s.flowUnsungColor[0], s.flowUnsungColor[1], s.flowUnsungColor[2]}},
-                        {"glow", s.flowGlow}, {"glowColor", s.flowGlowColor},
-                        {"glowCustom", {s.flowGlowCustom[0], s.flowGlowCustom[1], s.flowGlowCustom[2]}},
-                        {"glowStrength", s.flowGlowStrength}, {"glowWhere", s.flowGlowWhere}, {"vfx", s.flowVfx},
-                        {"vfxAmount", s.flowVfxAmount}, {"vfxColor", s.flowVfxColor}};
+    out["lyricFlow"] = mu::FlowToJson(s);
     out["efficiency"] = {{"on", s.efficiency}, {"lyricAnim", s.effLyricAnim}, {"uiAnim", s.effUiAnim}, {"spin", s.effSpin}, {"songFade", s.effSongFade},
                          {"marquee", s.effMarquee}, {"albumColors", s.effAlbumColors}, {"hdCovers", s.effHdCovers},
                          {"prefetch", s.effPrefetch}, {"visualizer", s.effVisualizer}};
@@ -611,64 +683,7 @@ void NowPlaying::LoadSettings(const nlohmann::json& in) {
         s.visualizer = d.visualizer;
     }
     if (in.contains("lyricFlow") && in["lyricFlow"].is_object()) {
-        const nlohmann::json& f = in["lyricFlow"];
-        s.lyricFlow = f.value("on", d.lyricFlow);
-        s.flowDistance = std::clamp(f.value("distance", d.flowDistance), 8.0f, 200.0f);
-        s.flowHeight = std::clamp(f.value("height", d.flowHeight), -4.0f, 120.0f);
-        s.flowSize = std::clamp(f.value("size", d.flowSize), 0.5f, 20.0f);
-        s.flowTilt = std::clamp(f.value("tilt", d.flowTilt), 0.0f, 30.0f);
-        s.flowOpacity = std::clamp(f.value("opacity", d.flowOpacity), 0.2f, 1.0f);
-        s.flowUppercase = f.value("uppercase", d.flowUppercase);
-        s.flowMode = std::clamp(f.value("mode", d.flowMode), 0, 1);
-        s.flowLayout = std::clamp(f.value("layout", d.flowLayout), 0, 5);
-        s.flowAppear = std::clamp(f.value("appear", d.flowAppear), 0, 8);
-        s.flowLeave = std::clamp(f.value("leave", d.flowLeave), 0, 4);
-        s.flowMotion = std::clamp(f.value("motion", d.flowMotion), 0, 4);
-        s.flowSpeed = std::clamp(f.value("speed", d.flowSpeed), 0.3f, 3.0f);
-        // (older versions had only "album color": it becomes color mode 1)
-        s.flowColorMode = std::clamp(f.value("colorMode", f.value("albumColor", false) ? 1 : d.flowColorMode), 0, 4);
-        auto readColor = [&](const char* key, float* out, const float* def) {
-            for (int i = 0; i < 3; ++i) out[i] = def[i];
-            if (f.contains(key) && f[key].is_array() && f[key].size() == 3) {
-                for (int i = 0; i < 3; ++i) {
-                    if (f[key][i].is_number()) out[i] = std::clamp(f[key][i].get<float>(), 0.0f, 1.0f);
-                }
-            }
-        };
-        readColor("color", s.flowColor, d.flowColor);
-        readColor("color2", s.flowColor2, d.flowColor2);
-        readColor("highlightColor", s.flowHighlightColor, d.flowHighlightColor);
-        readColor("outlineColor", s.flowOutlineColor, d.flowOutlineColor);
-        readColor("unsungColor", s.flowUnsungColor, d.flowUnsungColor);
-        readColor("glowCustom", s.flowGlowCustom, d.flowGlowCustom);
-        s.flowFill = std::clamp(f.value("fill", d.flowFill), 0, 4);
-        s.flowFillWholeLine = f.value("fillWholeLine", d.flowFillWholeLine);
-        s.flowUnsung = std::clamp(f.value("unsung", d.flowUnsung), 0, 3);
-        s.flowGlow = std::clamp(f.value("glow", d.flowGlow), 0, 5);
-        s.flowGlowColor = std::clamp(f.value("glowColor", d.flowGlowColor), 0, 3);
-        s.flowGlowStrength = std::clamp(f.value("glowStrength", d.flowGlowStrength), 0.2f, 2.5f);
-        s.flowGlowWhere = std::clamp(f.value("glowWhere", d.flowGlowWhere), 0, 2);
-        s.flowVfx = std::clamp(f.value("vfx", d.flowVfx), 0, 5);
-        s.flowVfxAmount = std::clamp(f.value("vfxAmount", d.flowVfxAmount), 0.1f, 3.0f);
-        s.flowVfxColor = std::clamp(f.value("vfxColor", d.flowVfxColor), 0, 3);
-        s.flowHighlight = f.value("highlight", d.flowHighlight);
-        s.flowOutline = f.value("outline", d.flowOutline);
-        s.flowOutlineAlpha = std::clamp(f.value("outlineAlpha", d.flowOutlineAlpha), 0.1f, 1.0f);
-        s.flowShadow = f.value("shadow", d.flowShadow);
-        s.flowShadowStyle = std::clamp(f.value("shadowStyle", d.flowShadowStyle), 0, 2);
-        s.flowFont = std::clamp(f.value("font", d.flowFont), 0, render::lyricflow::kFontCount - 1);
-        s.flowBold = f.value("bold", d.flowBold);
-        s.flowResolution = std::clamp(f.value("resolution", d.flowResolution), 9, 32);
-        s.flowLetterSpacing = std::clamp(f.value("letterSpacing", d.flowLetterSpacing), -1.0f, 4.0f);
-        s.flowWordSpacing = std::clamp(f.value("wordSpacing", d.flowWordSpacing), 0.1f, 1.5f);
-        s.flowLeaveTime = std::clamp(f.value("leaveTime", d.flowLeaveTime), 0.15f, 1.5f);
-        s.flowPauseHide = std::clamp(f.value("pauseHide", d.flowPauseHide), 0.0f, 120.0f);
-        s.flowAngle = std::clamp(f.value("angle", d.flowAngle), -180.0f, 180.0f);
-        s.flowSpread = std::clamp(f.value("spread", d.flowSpread), 0.0f, 0.5f);
-        s.flowTurn = std::clamp(f.value("turn", d.flowTurn), -90.0f, 90.0f);
-        s.flowRoll = std::clamp(f.value("roll", d.flowRoll), -45.0f, 45.0f);
-        s.flowPinKey = f.value("pinKey", d.flowPinKey);
-        s.flowPinTarget = std::clamp(f.value("pinTarget", d.flowPinTarget), 0, 1);
+        mu::FlowFromJson(s, in["lyricFlow"]);
     } else {
         s.lyricFlow = d.lyricFlow;
     }

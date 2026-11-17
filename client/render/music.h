@@ -15,6 +15,8 @@
 #include <cstddef>
 #include <string>
 
+#include <nlohmann/json_fwd.hpp>
+
 #include "core/lyrics.h"
 #include "core/media.h"
 #include "render/icons.h"
@@ -171,6 +173,11 @@ struct Settings {
 };
 
 Settings& Get();
+
+// Lyric Flow's settings as the profile's JSON object "lyricFlow", and back
+// (modules/hud/music.cpp). FlowFromJson keeps the defaults for what's missing.
+nlohmann::json FlowToJson(const Settings& s);
+void FlowFromJson(Settings& s, const nlohmann::json& flow);
 
 // The album art as an ImGui texture (0 = none). Updates it when the song
 // changes; one texture slot is reused forever.

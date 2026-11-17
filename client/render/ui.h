@@ -63,6 +63,7 @@ bool WideButton(const char* label);
 // A row of buttons for ready-made styles ("presets"): returns the one
 // clicked (-1 = none). "selected" is drawn lit (-1 = none of them).
 int Presets(std::initializer_list<const char*> names, int selected);
+int Presets(const char* const* names, int count, int selected);  // (a list that changes: your styles)
 
 // --- THE SEARCH (Music > Settings) ---------------------------------------------------
 // While a search is on, every control above only shows if its label (in the

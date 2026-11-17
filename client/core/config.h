@@ -42,6 +42,11 @@ void MarkDirty();
 // Saves if there have been pending changes for more than 1 s. Main thread,
 // WITHOUT the lock held (it takes it only as long as needed).
 void SaveIfDirty();
+// THE LAUNCHER CAN CHANGE THE CONFIG TOO (for example, Lyric Flow's style
+// from its Lyrics page). Called often from Luma's loop: about once a second it
+// looks at the profile file's date, and if someone else wrote it, loads it
+// again (what changes shows at once in the game).
+void ReloadIfChangedOutside();
 
 // Saves right now (when unloading Luma). Main thread, without the lock held.
 void SaveNow();

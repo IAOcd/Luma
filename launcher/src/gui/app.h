@@ -20,6 +20,7 @@ void AppInit(HWND hwnd, float scale);
 void AppSetScale(float scale);
 // ¿Hay que reconstruir las fuentes antes del próximo frame? (lo pide AppSetScale)
 bool AppFontsDirty();
+void RequestFontsRebuild();  // (new letters for a song: rebuilt on the next frame)
 void AppRebuildFonts();
 // Dibujar un frame (entre ImGui::NewFrame y ImGui::Render).
 void AppFrame();

@@ -304,6 +304,7 @@ void WaitForUnload() {
             windowLocated = sdk::mouse::LocateWindow(GetForegroundWindow()) || !sdk::mouse::Available();
         }
         config::SaveIfDirty();  // autosave (only if something changed)
+        config::ReloadIfChangedOutside();  // the launcher changed it (Lyric Flow's style...)
         render::input::PollHolds();             // toggle sprint/sneak: game menus and focus
         perf::benchmark::Poll();
         sdk::network::Poll();                   // ping of the connection to the server

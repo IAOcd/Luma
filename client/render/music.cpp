@@ -9,7 +9,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include <imgui_internal.h>  // ImLerp for colors
 
@@ -27,6 +30,9 @@
 #include "render/rainbow.h"
 #include "render/theme.h"
 #include "render/ui.h"
+#include "flow_presets.h"
+#include "flow_styles.h"
+#include "core/paths.h"
 #include "render/menu.h"
 #include "render/overlay.h"
 
@@ -1142,36 +1148,11 @@ constexpr const char* kTabsAccount[] = {"Spotify help", "Lighter mode"};
 //  where the lyrics are, their size or their font. Once applied, everything
 //  can still be changed by hand; the style's button stays lit only while
 //  nothing of it was changed.
-struct FlowLook {
-    int colorMode;
-    float color[3], color2[3];
-    bool outline;
-    bool shadow;
-    int shadowStyle;
-    int appear, leave, motion;
-    float speed;
-    int fill, unsung, glow, glowColor;
-    float glowStrength;
-    int glowWhere, vfx;
-    float vfxAmount;
-    int vfxColor;
-};
-constexpr const char* kFlowStyleNames[] = {"Karaoke", "Neon", "Party", "Dream", "Fire", "Minimal"};
-constexpr FlowLook kFlowStyles[] = {
-    // Karaoke: the album's color, filled as it's sung, a soft glow on the word being sung.
-    {1, {1, 1, 1}, {0.70f, 0.56f, 1.0f}, true, false, 0, 1, 1, 0, 1.0f, 1, 0, 1, 0, 1.0f, 1, 0, 1.0f, 0},
-    // Neon: one strong color, a neon glow on every word, a bright edge and sparks.
-    {0, {0.30f, 0.95f, 1.0f}, {0.70f, 0.56f, 1.0f}, false, false, 0, 0, 1, 0, 1.0f, 4, 0, 3, 0, 1.2f, 0, 1, 1.0f, 0},
-    // Party: a rainbow, words that pop and wave, confetti, a glow that pulses.
-    {4, {1, 1, 1}, {0.70f, 0.56f, 1.0f}, true, true, 0, 0, 4, 2, 1.0f, 2, 0, 5, 3, 1.0f, 1, 3, 1.2f, 2},
-    // Dream: the album's gradient, a wide light, stardust, a colored shadow, floating.
-    {2, {1, 1, 1}, {0.70f, 0.56f, 1.0f}, false, true, 1, 3, 0, 1, 0.8f, 1, 0, 2, 1, 0.9f, 0, 2, 1.0f, 1},
-    // Fire: orange to yellow, a flash on each word, embers, thick 3D letters.
-    {3, {1.0f, 0.45f, 0.10f}, {1.0f, 0.85f, 0.30f}, true, true, 2, 2, 2, 0, 1.0f, 1, 0, 4, 0, 1.0f, 1, 4, 1.0f, 0},
-    // Minimal: white with a border, nothing else.
-    {0, {1, 1, 1}, {0.70f, 0.56f, 1.0f}, true, false, 0, 1, 1, 0, 1.0f, 0, 0, 0, 0, 1.0f, 1, 0, 1.0f, 0},
-};
-constexpr int kFlowStyleCount = static_cast<int>(sizeof(kFlowStyles) / sizeof(kFlowStyles[0]));
+// (The table lives in shared/flow_styles.h: the launcher offers the same ones.)
+using flowstyles::FlowLook;
+constexpr const auto& kFlowStyleNames = flowstyles::kNames;
+constexpr const auto& kFlowStyles = flowstyles::kStyles;
+constexpr int kFlowStyleCount = flowstyles::kCount;
 
 bool Near(float a, float b) {
     return std::fabs(a - b) < 0.001f;
@@ -1229,6 +1210,56 @@ int CurrentFlowStyle(const Settings& s) {
         }
     }
     return -1;
+}
+
+// --- YOUR styles (shared/flow_presets.h) --------------------------------------------
+// Saved with a name in %APPDATA%\Luma\configlow_styles.json, the same file the
+// launcher's Lyrics page uses. Read again when its date changes (looked at
+// once a second, only while this page is open).
+std::vector<flowpresets::Preset> g_userStyles;
+std::filesystem::file_time_type g_userStylesWhen{};
+ULONGLONG g_userStylesChecked = 0;
+bool g_userStylesRead = false;
+int g_pickedStyle = -1;  // the style of yours you're using or just changed (its name, update, delete)
+
+void RefreshUserStyles(bool force = false) {
+    const ULONGLONG now = GetTickCount64();
+    if (!force && g_userStylesRead && now - g_userStylesChecked < 1000) return;
+    g_userStylesChecked = now;
+    const std::filesystem::path file = flowpresets::FileIn(paths::DataDir());
+    std::error_code ec;
+    const auto when = std::filesystem::last_write_time(file, ec);
+    const auto stamp = ec ? std::filesystem::file_time_type{} : when;
+    if (!force && g_userStylesRead && stamp == g_userStylesWhen) return;
+    g_userStylesRead = true;
+    g_userStylesWhen = stamp;
+    g_userStyles = flowpresets::Load(file);
+}
+
+void SaveUserStyles() {
+    flowpresets::Save(flowpresets::FileIn(paths::DataDir()), g_userStyles);
+    RefreshUserStyles(true);
+}
+
+nlohmann::json CurrentLook(const Settings& s) {
+    return flowpresets::LookOf(FlowToJson(s));
+}
+
+// Before a style replaces what you have: if it isn't saved anywhere, it's
+// kept as "Your previous style" (your config is never lost).
+void BackupBeforeStyle(const Settings& s) {
+    RefreshUserStyles(true);
+    if (flowpresets::BackupIfUnsaved(g_userStyles, CurrentLook(s), CurrentFlowStyle(s) >= 0, Tr("Your previous style"))) {
+        SaveUserStyles();
+    }
+}
+
+void ApplyUserStyle(Settings& s, int i) {
+    BackupBeforeStyle(s);
+    if (i < 0 || i >= static_cast<int>(g_userStyles.size())) return;
+    nlohmann::json flow = FlowToJson(s);
+    flowpresets::ApplyTo(flow, g_userStyles[static_cast<std::size_t>(i)].look);
+    FlowFromJson(s, flow);
 }
 
 struct VizLook {
@@ -1337,8 +1368,69 @@ bool FlowBasic(Settings& s) {
                                         kFlowStyleNames[4], kFlowStyleNames[5]},
                                        CurrentFlowStyle(s));
         if (picked >= 0) {
+            BackupBeforeStyle(s);
             ApplyFlowStyle(s, picked);
             changed = true;
+        }
+    }
+    // YOUR styles (the same ones as in the launcher's Lyrics page): click one to
+    // use it; the one you're using can be renamed, updated or deleted.
+    {
+        RefreshUserStyles();
+        const int mine = flowpresets::Find(g_userStyles, CurrentLook(s));
+        if (mine >= 0) g_pickedStyle = mine;
+        if (g_pickedStyle >= static_cast<int>(g_userStyles.size())) g_pickedStyle = -1;
+        if (!g_userStyles.empty()) {
+            std::vector<const char*> names;
+            names.reserve(g_userStyles.size());
+            for (const auto& u : g_userStyles) names.push_back(u.name.c_str());
+            const int picked = ui::Presets(names.data(), static_cast<int>(names.size()), mine);
+            if (picked >= 0) {
+                ApplyUserStyle(s, picked);
+                g_pickedStyle = picked;
+                changed = true;
+            }
+        }
+        if (g_pickedStyle >= 0) {
+            flowpresets::Preset& u = g_userStyles[static_cast<std::size_t>(g_pickedStyle)];
+            // its name (the box shows the style you're using; written when you change it)
+            static int nameFor = -1;
+            static char name[64] = "";
+            if (nameFor != g_pickedStyle || (!ImGui::IsAnyItemActive() && u.name != name)) {
+                std::snprintf(name, sizeof(name), "%s", u.name.c_str());
+                nameFor = g_pickedStyle;
+            }
+            if (ui::Text("Style name", name, sizeof(name))) {
+                std::string n = name;
+                while (!n.empty() && n.back() == ' ') n.pop_back();
+                if (!n.empty()) {
+                    u.name = n;
+                    u.autoSaved = false;
+                    SaveUserStyles();
+                }
+            }
+            if (mine != g_pickedStyle && ui::Button("Update", "Save the changes in this style")) {
+                u.look = CurrentLook(s);
+                u.autoSaved = false;
+                SaveUserStyles();
+            }
+            static ULONGLONG armedAt = 0;
+            const bool armed = GetTickCount64() - armedAt < 3000;
+            if (ui::Button(armed ? "Sure? Click again" : "Delete", "Delete this style")) {
+                if (armed) {
+                    g_userStyles.erase(g_userStyles.begin() + g_pickedStyle);
+                    g_pickedStyle = -1;
+                    armedAt = 0;
+                    SaveUserStyles();
+                } else {
+                    armedAt = GetTickCount64();
+                }
+            }
+        }
+        if (ui::Button("Save as new", "Save this style")) {
+            g_userStyles.push_back({flowpresets::NextName(g_userStyles, Tr("My style")), CurrentLook(s), false});
+            g_pickedStyle = static_cast<int>(g_userStyles.size()) - 1;
+            SaveUserStyles();
         }
     }
     if (ui::WideButton("Adjust in the world")) menu::StartLiveEdit(kPageLyricFlow);

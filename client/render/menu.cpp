@@ -3442,6 +3442,10 @@ bool WideButton(const char* label) {
 }
 
 int Presets(std::initializer_list<const char*> names, int selected) {
+    return Presets(names.begin(), static_cast<int>(names.size()), selected);
+}
+
+int Presets(const char* const* names, int count, int selected) {
     if (Filtering()) return -1;
     m::FlushRow();
     const float fs = ImGui::GetFontSize();
@@ -3450,7 +3454,8 @@ int Presets(std::initializer_list<const char*> names, int selected) {
     int clicked = -1;
     float x = 0.0f;
     int i = 0;
-    for (const char* name : names) {
+    for (int n = 0; n < count; ++n) {
+        const char* name = names[n];
         const float w = ImGui::CalcTextSize(Tr(name)).x + ImGui::GetStyle().FramePadding.x * 2.0f + fs * 0.6f;
         if (i > 0 && x + w <= avail) {
             ImGui::SameLine(0.0f, gap);

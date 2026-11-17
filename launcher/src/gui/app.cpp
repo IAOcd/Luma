@@ -3599,34 +3599,60 @@ float Hash(int a, int b) {
     return static_cast<float>((h ^ (h >> 16)) & 0xFFFF) / 65535.0f;
 }
 
-// THE PREVIEW of a style: "LUMA" drawn the way the style draws lyrics in the
-// game (its colors, its fill, its light, its shadow and border, its
-// particles), animated. An approximation drawn here, not the game's own code
-// (that one draws in the 3D world), but with the same choices.
-void DrawFlowPreview(ImDrawList* d, ImVec2 center, float height, int styleIndex, float alpha, float seed) {
+// THE PREVIEW of a style: a text ("LUMA" on the cards; the line being sung on
+// the lyrics section's stage) drawn the way the style draws lyrics in the game
+// (its colors, its fill, its light, its shadow and border, its particles),
+// animated. An approximation drawn here, not the game's own code (that one
+// draws in the 3D world), but with the same choices. "progress" 0..1 = how
+// much is sung (-1: a loop). "maxWidth" > 0: a long line is made smaller.
+void DrawFlowLook(ImDrawList* d, ImVec2 center, float height, const luma::flowstyles::FlowLook& k, float alpha, float seed,
+                  const char* text, float progress, float maxWidth) {
     const Palette& p = P();
-    const luma::flowstyles::FlowLook& k = luma::flowstyles::kStyles[styleIndex];
     const float now = static_cast<float>(ImGui::GetTime()) + seed;
-    ImFont* font = g_fonts.pixel;
-    // (a whole multiple of the pixel font's size: its pixels stay square and sharp)
-    const float size = std::max(1.0f, std::floor(height * 0.42f / std::max(1.0f, font->FontSize))) * font->FontSize;
-    const char* letters[4] = {"L", "U", "M", "A"};
-    float widths[4], total = 0.0f;
-    const float gap = size * 0.08f;
-    for (int i = 0; i < 4; ++i) {
-        widths[i] = font->CalcTextSizeA(size, FLT_MAX, 0.0f, letters[i]).x;
-        total += widths[i] + (i < 3 ? gap : 0.0f);
+    // the letters, one by one (UTF-8)
+    constexpr int kMaxLetters = 96;
+    const char* starts[kMaxLetters + 1];
+    int n = 0;
+    bool latin = true;
+    const char* end = text + std::strlen(text);
+    const char* cur = text;
+    while (cur < end && n < kMaxLetters) {
+        unsigned int c = 0;
+        const int len = ImTextCharFromUtf8(&c, cur, end);
+        if (len <= 0) break;
+        if (c > 0x24F) latin = false;
+        starts[n++] = cur;
+        cur += len;
+    }
+    starts[n] = cur;
+    if (n == 0) return;
+    // Minecraft's pixel letters; another alphabet: a font that has it
+    ImFont* font = latin ? g_fonts.pixel : g_fonts.line;
+    // (pixel letters: a whole multiple of their size, so the pixels stay square)
+    float size = latin ? std::max(1.0f, std::floor(height * 0.42f / std::max(1.0f, font->FontSize))) * font->FontSize : height * 0.42f;
+    float widths[kMaxLetters], total = 0.0f;
+    float gap = n <= 6 ? size * 0.08f : 0.0f;  // ("LUMA" spaced; a real line, as written)
+    for (int i = 0; i < n; ++i) {
+        widths[i] = font->CalcTextSizeA(size, FLT_MAX, 0.0f, starts[i], starts[i + 1]).x;
+        total += widths[i] + (i < n - 1 ? gap : 0.0f);
+    }
+    if (maxWidth > 0.0f && total > maxWidth) {
+        const float k2 = maxWidth / total;
+        size *= k2;
+        gap *= k2;
+        total = maxWidth;
+        for (int i = 0; i < n; ++i) widths[i] *= k2;
     }
     const float x0 = center.x - total * 0.5f;
     const float y0 = center.y - size * 0.5f;
-    // The fill: a loop of 2.6 s (it fills, stays a moment, starts again).
+    // The fill: what's sung, or a loop of 2.6 s (it fills, stays a moment, starts again).
     const float cycle = std::fmod(now * k.speed, 2.6f) / 2.0f;
-    const float sweep = std::clamp(cycle, 0.0f, 1.0f) * total;
+    const float sweep = (progress >= 0.0f ? progress : std::clamp(cycle, 0.0f, 1.0f)) * total;
     // each letter's color
     const ImVec4 albumA = p.accent;
     const ImVec4 albumB = Mix(p.accent, ImVec4(1, 1, 1, 1), 0.45f);
     auto letterColor = [&](int i) {
-        const float f = static_cast<float>(i) / 3.0f;
+        const float f = n > 1 ? static_cast<float>(i) / static_cast<float>(n - 1) : 0.0f;
         switch (k.colorMode) {
             case 1: return albumA;
             case 2: return Mix(albumA, albumB, f);
@@ -3635,7 +3661,7 @@ void DrawFlowPreview(ImDrawList* d, ImVec2 center, float height, int styleIndex,
             default: return ImVec4(k.color[0], k.color[1], k.color[2], 1);
         }
     };
-    const ImVec4 mainColor = letterColor(1);
+    const ImVec4 mainColor = letterColor(n / 2);
     // its light (soft, behind the letters)
     if (k.glow != 0) {
         float strength = 0.75f * k.glowStrength;
@@ -3652,7 +3678,7 @@ void DrawFlowPreview(ImDrawList* d, ImVec2 center, float height, int styleIndex,
     }
     // the letters
     float x = x0;
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < n; ++i) {
         float dy = 0.0f;
         if (k.motion != 0) dy = std::sin(now * 3.0f * k.speed + static_cast<float>(i) * 0.9f) * size * 0.06f;
         if (k.appear == 3) dy += std::sin(now * 1.4f) * size * 0.05f;  // floating
@@ -3663,11 +3689,11 @@ void DrawFlowPreview(ImDrawList* d, ImVec2 center, float height, int styleIndex,
         if (k.shadow) {
             if (k.shadowStyle == 2) {
                 for (int s = 4; s >= 1; --s) {
-                    d->AddText(font, size, ImVec2(pos.x + px * s * 0.5f, pos.y + px * s * 0.5f), C(Mix(col, ImVec4(0, 0, 0, 1), 0.65f), alpha), letters[i]);
+                    d->AddText(font, size, ImVec2(pos.x + px * s * 0.5f, pos.y + px * s * 0.5f), C(Mix(col, ImVec4(0, 0, 0, 1), 0.65f), alpha), starts[i], starts[i + 1]);
                 }
             } else {
                 const ImVec4 sc = k.shadowStyle == 1 ? col : ImVec4(0, 0, 0, 1);
-                d->AddText(font, size, ImVec2(pos.x + px * 1.5f, pos.y + px * 1.5f), C(sc, (k.shadowStyle == 1 ? 0.45f : 0.6f) * alpha), letters[i]);
+                d->AddText(font, size, ImVec2(pos.x + px * 1.5f, pos.y + px * 1.5f), C(sc, (k.shadowStyle == 1 ? 0.45f : 0.6f) * alpha), starts[i], starts[i + 1]);
             }
         }
         // border
@@ -3676,19 +3702,19 @@ void DrawFlowPreview(ImDrawList* d, ImVec2 center, float height, int styleIndex,
                                       luma::flowstyles::kDefaultOutlineColor[2], 1), luma::flowstyles::kDefaultOutlineAlpha * alpha);
             for (int o = 0; o < 4; ++o) {
                 const float ox = (o == 0 ? -px : o == 1 ? px : 0.0f), oy = (o == 2 ? -px : o == 3 ? px : 0.0f);
-                d->AddText(font, size, ImVec2(pos.x + ox, pos.y + oy), oc, letters[i]);
+                d->AddText(font, size, ImVec2(pos.x + ox, pos.y + oy), oc, starts[i], starts[i + 1]);
             }
         }
         // the letter: not yet sung (dim), and the sung part on top
         if (k.fill == 0) {
-            d->AddText(font, size, pos, C(col, alpha), letters[i]);
+            d->AddText(font, size, pos, C(col, alpha), starts[i], starts[i + 1]);
         } else {
             const float unsungA = k.unsung == 0 ? 0.35f : 0.2f;
-            d->AddText(font, size, pos, C(Mix(col, ImVec4(1, 1, 1, 1), 0.4f), unsungA * alpha), letters[i]);
+            d->AddText(font, size, pos, C(Mix(col, ImVec4(1, 1, 1, 1), 0.4f), unsungA * alpha), starts[i], starts[i + 1]);
             const float lit = std::clamp(sweep - (x - x0), 0.0f, widths[i]);
             if (lit > 0.0f) {
                 d->PushClipRect(ImVec2(pos.x - px * 3, pos.y - size), ImVec2(pos.x + lit, pos.y + size * 2.0f), true);
-                d->AddText(font, size, pos, C(col, alpha), letters[i]);
+                d->AddText(font, size, pos, C(col, alpha), starts[i], starts[i + 1]);
                 d->PopClipRect();
             }
         }
@@ -3702,8 +3728,9 @@ void DrawFlowPreview(ImDrawList* d, ImVec2 center, float height, int styleIndex,
     }
     // the particles: each one is born, flies and fades (from its number alone)
     if (k.vfx != 0) {
-        const int n = static_cast<int>(10 * k.vfxAmount);
-        for (int i = 0; i < n; ++i) {
+        // (a long line gets more of them, so they spread along it)
+        const int sparks = static_cast<int>(10 * k.vfxAmount * std::clamp(total / (size * 4.0f), 1.0f, 4.0f));
+        for (int i = 0; i < sparks; ++i) {
             const float life = 1.4f + Hash(i, 7) * 0.8f;
             const float tt = now / life + Hash(i, 3);
             const int gen = static_cast<int>(std::floor(tt));
@@ -3744,54 +3771,18 @@ void DrawFlowPreview(ImDrawList* d, ImVec2 center, float height, int styleIndex,
     }
 }
 
-void DrawLyricsPage(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
+
+void DrawFlowPreview(ImDrawList* d, ImVec2 center, float height, int styleIndex, float alpha, float seed) {
+    DrawFlowLook(d, center, height, luma::flowstyles::kStyles[styleIndex], alpha, seed, "LUMA", -1.0f, 0.0f);
+}
+
+// YOUR STYLES: pills. Click = apply. Double click = rename (Enter keeps it,
+// Esc cancels). The x on hover = delete (click it twice). Then "Update"
+// (when you changed the style you were using) and "+ Save as new".
+float DrawUserStyles(ImDrawList* d, ImVec2 min, ImVec2 max, float y) {
     const Palette& p = P();
-    flowcfg::Refresh();
     const flowcfg::State& s = flowcfg::g_state;
-    const float W = max.x - min.x;
-    // Title and what it is
-    Text(d, g_fonts.title, ImVec2(min.x + S(4.0f), min.y + S(2.0f)), C(p.text), T("lyrics.title"));
-    const float sub = std::min(W * 0.55f, S(560.0f));
-    TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(4.0f), min.y + S(8.0f) + g_fonts.title->FontSize), C(p.textDim), T("lyrics.subtitle"), sub);
-    // On / off and where, at the right
     {
-        bool on = s.on;
-        const ImVec2 tp(max.x - S(50.0f), min.y + S(4.0f));
-        Text(d, g_fonts.semibold, ImVec2(tp.x - S(12.0f) - TextSize(g_fonts.semibold, T("lyrics.on")).x, tp.y + S(3.0f)), C(p.text), T("lyrics.on"));
-        if (Toggle("##flow_on", tp, &on)) flowcfg::Change([&](nlohmann::json& f) { f["on"] = on; });
-        const char* labels[2] = {T("lyrics.where_world"), T("lyrics.where_sky")};
-        int mode = s.mode;
-        const float w = SegmentedWidth(labels, 2);
-        if (Segmented("##flow_mode", ImVec2(max.x - w, min.y + S(42.0f)), labels, 2, &mode)) {
-            flowcfg::Change([&](nlohmann::json& f) { f["mode"] = mode; });
-        }
-    }
-    float y = min.y + S(98.0f);
-    // A line of state: live in the game / problems
-    {
-        const char* text = nullptr;
-        ImVec4 dot = p.success;
-        if (s.broken) {
-            text = T("lyrics.no_config");
-            dot = p.danger;
-        } else if (!s.moduleOn) {
-            text = T("lyrics.module_off");
-            dot = p.accent;
-        } else if (data.game.lumaLoaded) {
-            text = T("lyrics.live");
-        }
-        if (text != nullptr) {
-            Dot(d, ImVec2(min.x + S(10.0f), y + g_fonts.tiny->FontSize * 0.5f), dot);
-            Text(d, g_fonts.tiny, ImVec2(min.x + S(22.0f), y), C(p.text, 0.85f), text);
-        }
-        y += g_fonts.tiny->FontSize + S(14.0f);
-    }
-    // YOUR STYLES: pills. Click = apply. Double click = rename (Enter keeps it,
-    // Esc cancels). The x on hover = delete (click it twice). Then "Update"
-    // (when you changed the style you were using) and "+ Save as new".
-    {
-        Text(d, g_fonts.semibold, ImVec2(min.x + S(4.0f), y), C(p.text), T("lyrics.your_styles"));
-        y += g_fonts.semibold->FontSize + S(10.0f);
         const float h = S(34.0f);
         float x = min.x;
         static int armed = -1;          // the pill whose x was pressed once (press again = delete)
@@ -3919,14 +3910,159 @@ void DrawLyricsPage(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data
         y += h + S(6.0f);
         Text(d, g_fonts.tiny, ImVec2(min.x + S(4.0f), y), C(p.textDim), list.empty() ? T("lyrics.no_styles") : T("lyrics.styles_hint"));
         y += g_fonts.tiny->FontSize + S(16.0f);
-        Text(d, g_fonts.semibold, ImVec2(min.x + S(4.0f), y), C(p.text), T("lyrics.ready_styles"));
-        y += g_fonts.semibold->FontSize + S(10.0f);
     }
-    // The six styles: a 3 x 2 grid of cards (each one, its preview)
-    const float footer = g_fonts.tiny->FontSize + S(16.0f);
+    return y;
+}
+
+// How a style looks, from the profile's "lyricFlow" (your own or saved
+// styles aren't one of the six: the stage reads their choices here).
+luma::flowstyles::FlowLook LookFromJson(const nlohmann::json& j) {
+    luma::flowstyles::FlowLook k = luma::flowstyles::kStyles[0];
+    if (!j.is_object()) return k;
+    auto num = [&](const char* key, auto& v) {
+        const auto it = j.find(key);
+        if (it != j.end() && it->is_number()) v = it->get<std::decay_t<decltype(v)>>();
+    };
+    auto flag = [&](const char* key, bool& v) {
+        const auto it = j.find(key);
+        if (it != j.end() && it->is_boolean()) v = it->get<bool>();
+    };
+    auto color = [&](const char* key, float* c) {
+        const auto it = j.find(key);
+        if (it == j.end() || !it->is_array() || it->size() < 3) return;
+        for (int i = 0; i < 3; ++i) {
+            if ((*it)[static_cast<std::size_t>(i)].is_number()) c[i] = (*it)[static_cast<std::size_t>(i)].get<float>();
+        }
+    };
+    num("colorMode", k.colorMode);
+    color("color", k.color);
+    color("color2", k.color2);
+    flag("outline", k.outline);
+    flag("shadow", k.shadow);
+    num("shadowStyle", k.shadowStyle);
+    num("appear", k.appear);
+    num("leave", k.leave);
+    num("motion", k.motion);
+    num("speed", k.speed);
+    num("fill", k.fill);
+    num("unsung", k.unsung);
+    num("glow", k.glow);
+    num("glowColor", k.glowColor);
+    num("glowStrength", k.glowStrength);
+    num("glowWhere", k.glowWhere);
+    num("vfx", k.vfx);
+    num("vfxAmount", k.vfxAmount);
+    num("vfxColor", k.vfxColor);
+    return k;
+}
+
+// THE STAGE of the lyrics section: a little Minecraft night (sky, stars, the
+// square moon, a blocky hill) with the line being sung drawn in YOUR style,
+// filling as it's sung. "In the sky" puts it high; "in the world", low, over
+// the hill. The switch at the top right turns them on and off.
+void DrawLyricsStage(ImDrawList* d, ImVec2 a, ImVec2 b, const media::Track& t) {
+    const Palette& p = P();
+    const flowcfg::State& s = flowcfg::g_state;
+    const float R = S(18.0f), w = b.x - a.x, h = b.y - a.y;
+    const float now = static_cast<float>(ImGui::GetTime());
+    // the sky: night blue, a little of the album's color in it
+    const ImVec4 top = Mix(ImVec4(0.04f, 0.05f, 0.11f, 1), p.accent, 0.10f);
+    const ImVec4 low = Mix(ImVec4(0.15f, 0.19f, 0.33f, 1), p.accent, 0.16f);
+    d->AddRectFilled(a, ImVec2(b.x, a.y + R * 2.0f), C(top), R, ImDrawFlags_RoundCornersTop);
+    d->AddRectFilled(ImVec2(a.x, b.y - R * 2.0f), b, C(low), R, ImDrawFlags_RoundCornersBottom);
+    d->AddRectFilledMultiColor(ImVec2(a.x, a.y + R), ImVec2(b.x, b.y - R), C(top), C(top), C(low), C(low));
+    // stars (square, like the game's), twinkling
+    for (int i = 0; i < 46; ++i) {
+        const float sx = a.x + R + Hash(i, 11) * (w - R * 2.0f);
+        const float sy = a.y + R * 0.6f + Hash(i, 29) * h * 0.55f;
+        const float tw = 0.35f + 0.65f * (0.5f + 0.5f * std::sin(now * (0.8f + Hash(i, 5) * 1.6f) + static_cast<float>(i)));
+        const float r = Hash(i, 3) > 0.85f ? S(1.6f) : S(1.0f);
+        d->AddRectFilled(ImVec2(sx - r, sy - r), ImVec2(sx + r, sy + r), C(ImVec4(1, 1, 1, 1), 0.55f * tw));
+    }
+    // the moon: a square, with its soft light
+    {
+        const ImVec2 mc(b.x - w * 0.16f, a.y + h * 0.26f);
+        const float m = S(13.0f);
+        SoftLight(d, mc, m * 5.0f, ImVec4(0.85f, 0.88f, 1.0f, 1), 0.22f);
+        d->AddRectFilled(ImVec2(mc.x - m, mc.y - m), ImVec2(mc.x + m, mc.y + m), C(ImVec4(0.92f, 0.93f, 0.86f, 1)));
+        d->AddRectFilled(ImVec2(mc.x - m * 0.5f, mc.y - m * 0.2f), ImVec2(mc.x - m * 0.1f, mc.y + m * 0.2f), C(ImVec4(0.78f, 0.79f, 0.72f, 1)));
+    }
+    // the hill: blocks, a ground band with round bottom corners (so nothing
+    // sticks out of the stage), and steps above it away from the corners
+    const float ground = b.y - h * 0.16f;
+    const ImVec4 grass = Mix(ImVec4(0.07f, 0.13f, 0.08f, 1), p.accent, 0.06f);
+    const ImVec4 dirt = Mix(ImVec4(0.05f, 0.06f, 0.06f, 1), p.accent, 0.04f);
+    d->AddRectFilled(ImVec2(a.x, ground), b, C(dirt), R, ImDrawFlags_RoundCornersBottom);
+    d->AddRectFilled(ImVec2(a.x, ground), ImVec2(b.x, ground + S(4.0f)), C(grass));
+    const float blk = S(12.0f);
+    float level = 0.0f;
+    for (float x = a.x + R; x + blk <= b.x - R; x += blk) {
+        const int col = static_cast<int>((x - a.x) / blk);
+        const float wave = std::sin(static_cast<float>(col) * 0.21f) * 0.5f + 0.5f;
+        const float target = std::floor(wave * 3.0f + Hash(col, 7) * 1.2f);
+        level += (target - level) > 0.0f ? 1.0f : (target < level ? -1.0f : 0.0f);
+        level = std::clamp(level, 0.0f, 3.0f);
+        if (level <= 0.0f) continue;
+        const float y0 = ground - level * blk;
+        d->AddRectFilled(ImVec2(x, y0), ImVec2(x + blk, ground), C(dirt));
+        d->AddRectFilled(ImVec2(x, y0), ImVec2(x + blk, y0 + S(4.0f)), C(grass));
+    }
+    // the words: the line being sung, filling as it's sung (else the song's
+    // name, or Luma's, filling in a loop)
+    const luma::flowstyles::FlowLook look = s.style >= 0 && s.style < luma::flowstyles::kCount ? luma::flowstyles::kStyles[s.style]
+                                                                                                  : LookFromJson(s.look);
+    std::string text = "LUMA";
+    float progress = -1.0f;
+    if (HasLyricLines(t)) {
+        int end = 0;
+        const lyrics::Line* line = LineOf(g_lyricLine, &end);
+        if (line == nullptr && !g_lyrics.lines.empty()) line = &g_lyrics.lines[0];  // (before the first line: the first one, waiting)
+        if (line != nullptr && line->text.find_first_not_of(" \t") != std::string::npos) {
+            text = line->text;
+            const int ms = LyricsMs(t);
+            progress = end > line->ms ? std::clamp(static_cast<float>(ms - line->ms) / static_cast<float>(end - line->ms), 0.0f, 1.0f) : 0.0f;
+        }
+    } else if (t.present && t.title[0] != '\0') {
+        text = t.title;
+    }
+    static float where = 1.0f;  // 1 = sky, 0 = world (it slides when you change it)
+    where += ((s.mode == 1 ? 1.0f : 0.0f) - where) * std::min(1.0f, Dt() * 6.0f);
+    const float ty = a.y + h * (0.52f - 0.22f * where);
+    const float alpha = s.on ? 1.0f : 0.3f;
+    d->PushClipRect(a, b, true);
+    DrawFlowLook(d, ImVec2((a.x + b.x) * 0.5f, ty), h * 0.72f, look, alpha * g_fade, 0.0f, text.c_str(), progress, w - S(120.0f));
+    d->PopClipRect();
+    d->AddRect(a, b, C(ImVec4(1, 1, 1, 1), 0.10f), R);
+    // over it: the style's name (left) and the switch (right)
+    {
+        const char* name = s.user >= 0 && s.user < static_cast<int>(flowcfg::g_presets.size())
+                               ? flowcfg::g_presets[static_cast<std::size_t>(s.user)].name.c_str()
+                               : (s.style >= 0 && s.style < luma::flowstyles::kCount ? T(kStyleKeys[s.style][0]) : T("lyrics.my_style"));
+        const ImVec2 ns = TextSize(g_fonts.tiny, name);
+        const ImVec2 pa(a.x + S(14.0f), a.y + S(14.0f)), pb(pa.x + ns.x + S(22.0f), pa.y + ns.y + S(10.0f));
+        d->AddRectFilled(pa, pb, C(ImVec4(0, 0, 0, 1), 0.35f), (pb.y - pa.y) * 0.5f);
+        Text(d, g_fonts.tiny, ImVec2(pa.x + S(11.0f), pa.y + S(5.0f)), C(ImVec4(1, 1, 1, 1), 0.9f), name);
+    }
+    {
+        bool on = s.on;
+        const ImVec2 tp(b.x - S(64.0f), a.y + S(14.0f));
+        const char* label = T("lyrics.on");
+        const ImVec2 ls = TextSize(g_fonts.tiny, label);
+        Text(d, g_fonts.tiny, ImVec2(tp.x - S(10.0f) - ls.x, tp.y + S(13.0f) - ls.y * 0.5f), C(ImVec4(1, 1, 1, 1), 0.85f), label);
+        if (Toggle("##lyr_on", tp, &on)) flowcfg::Change([&](nlohmann::json& f) { f["on"] = on; });
+    }
+}
+
+// THE SIX READY-MADE STYLES: a 3 x 2 grid of cards, each with its preview.
+// ("appear" 0..1: the cards rise in, one after the other)
+void DrawStyleCards(ImDrawList* d, ImVec2 min, ImVec2 max, float appear) {
+    const Palette& p = P();
+    const flowcfg::State& s = flowcfg::g_state;
+    const float W = max.x - min.x;
+    const float y = min.y;
     const float gap = S(14.0f);
     const float cw = (W - gap * 2.0f) / 3.0f;
-    const float ch = std::max(S(120.0f), (max.y - y - footer - gap) * 0.5f);
+    const float ch = std::max(S(120.0f), (max.y - y - gap) * 0.5f);
     const float dim = s.on ? 1.0f : 0.55f;  // (off: they're still chosen, just dimmer)
     for (int i = 0; i < luma::flowstyles::kCount; ++i) {
         const int cardStart = d->VtxBuffer.Size;
@@ -3935,7 +4071,7 @@ void DrawLyricsPage(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data
             int start;
             float in;
             ~CardIn() { AnimateSince(d, start, in, ImVec2(0.0f, (1.0f - in) * S(18.0f))); }
-        } cardIn{d, cardStart, EaseOutCubic(std::clamp(g_sheet * 2.2f - 0.35f - static_cast<float>(i) * 0.12f, 0.0f, 1.0f))};
+        } cardIn{d, cardStart, EaseOutCubic(std::clamp(appear * 2.2f - 0.35f - static_cast<float>(i) * 0.12f, 0.0f, 1.0f))};
         const int col = i % 3, row = i / 3;
         const ImVec2 cmin(min.x + col * (cw + gap), y + row * (ch + gap));
         const ImVec2 cmax(cmin.x + cw, cmin.y + ch);
@@ -3971,12 +4107,8 @@ void DrawLyricsPage(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data
         // the chosen one: the accent around it
         if (lit > 0.01f) d->AddRect(a, b, C(p.accent, lit), S(kRound), 0, S(2.0f));
     }
-    // At the bottom: your own style / where the rest is
-    {
-        const char* text = s.style < 0 && s.user < 0 && s.found ? T("lyrics.custom") : T("lyrics.more");
-        Text(d, g_fonts.tiny, ImVec2(min.x + S(4.0f), max.y - g_fonts.tiny->FontSize), C(p.textDim), text);
-    }
 }
+
 
 
 // The album art (or a placeholder) at "center", "size" wide, with its old
@@ -6705,6 +6837,7 @@ void DrawComingSoon(ImDrawList* d, ImVec2 min, ImVec2 max, const char* icon, con
 void DrawSpotifyPage(ImDrawList* d, ImVec2 min, ImVec2 max);
 void DrawSpotifyOverlays(ImDrawList* d, ImVec2 display);
 void DrawSettingsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data);
+void DrawLyricsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data);  // (below)
 void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data);  // (below)
 
 // The other sections: a glass sheet that rises over the stage.
@@ -6716,13 +6849,15 @@ void DrawSheet(ImDrawList* d, ImVec2 display, const account::Info& acc, const Lo
     const float s = EaseOutCubic(g_sheet);
     // SPOTIFY is a whole section, not a window: right on the album's living
     // background (the stage fades away under it).
-    if (g_sheetPage == Page::Spotify || g_sheetPage == Page::Settings) {
+    if (g_sheetPage == Page::Spotify || g_sheetPage == Page::Settings || g_sheetPage == Page::Lyrics) {
         const float rise = (1.0f - s) * S(30.0f);
         const ImVec2 cmin(S(40.0f), S(58.0f) + rise), cmax(display.x - S(40.0f), display.y - S(kDockBottom) - S(kDockH) - S(16.0f) + rise);
         const float saved = g_fade;
         g_fade = s;
         if (g_sheetPage == Page::Spotify) {
             DrawSpotifyPage(d, cmin, cmax);
+        } else if (g_sheetPage == Page::Lyrics) {
+            DrawLyricsSection(d, cmin, cmax, data);
         } else {
             DrawSettingsSection(d, cmin, cmax, acc, data);
         }
@@ -6743,7 +6878,6 @@ void DrawSheet(ImDrawList* d, ImVec2 display, const account::Info& acc, const Lo
     const ImVec2 cmin(min.x + S(24.0f), min.y + S(24.0f)), cmax(max.x - S(24.0f), max.y - S(24.0f));
     d->PushClipRect(min, max, true);
     switch (g_sheetPage) {
-        case Page::Lyrics: DrawLyricsPage(d, cmin, cmax, data); break;
         case Page::Spotify: DrawSpotifyPage(d, cmin, cmax); break;
         default: DrawSettings(d, cmin, cmax, acc, data); break;
     }
@@ -6909,7 +7043,7 @@ void DrawFlash(ImDrawList* d, ImVec2 display) {
 // The whole stage (Home, with the sheet over it for the other sections).
 void DrawStage(ImDrawList* d, ImVec2 display, const media::Track& t, const LocalData& data, const std::string& name, const account::Info& acc) {
     // (under a section the stage dims; under Spotify's whole section it fades away)
-    const bool wholeSection = g_sheetPage == Page::Spotify || g_sheetPage == Page::Settings;
+    const bool wholeSection = g_sheetPage == Page::Spotify || g_sheetPage == Page::Settings || g_sheetPage == Page::Lyrics;
     const float stageAlpha = (1.0f - 0.35f * EaseOutCubic(g_sheet)) * (wholeSection ? 1.0f - EaseOutCubic(g_sheet) : 1.0f);
     const ImVec2 smin(S(40.0f), S(70.0f));
     const ImVec2 smax(display.x - S(40.0f), display.y - S(kDockBottom) - S(kDockH) - S(70.0f));
@@ -7400,39 +7534,39 @@ void DrawSettingsAboutAll(ImDrawList* d, ImVec2 min, ImVec2 max) {
     if (max.y - y2 > S(110.0f)) DrawSettingsLinks(d, ImVec2(min.x, y2), ImVec2(max.x, std::min(max.y, y2 + S(150.0f))));
 }
 
-void DrawSettingsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data) {
+// THE INDEX of a whole section (Settings, Lyrics): a glass column with the
+// title and the parts; the lit row slides to the chosen one. (icon nullptr =
+// Spotify's logo.) True when the chosen part changed.
+struct IndexEntry {
+    const char* icon;
+    const char* key;
+};
+
+bool DrawSectionIndex(ImDrawList* d, ImVec2 na, ImVec2 nb, const char* title, const IndexEntry* entries, int count, int* tab, float* pill,
+                      const char* idPrefix) {
     const Palette& p = P();
-    // --- the index (left) ---
-    struct Entry {
-        const char* icon;
-        const char* key;
-    };
-    const Entry entries[] = {{kIconSliders, "settings.general"}, {icons::kMusic, "set.music"},  {nullptr, "nav.spotify"},
-                             {icons::kPerson, "settings.account"}, {icons::kGamepad, "set.game"}, {icons::kInfo, "settings.about"}};
-    constexpr int kEntries = 6;
-    const float navW = S(230.0f);
-    const ImVec2 na = min, nb(min.x + navW, max.y);
+    bool changed = false;
     d->AddRectFilled(na, nb, C(Mix(p.card, ImVec4(0, 0, 0, 1), 0.15f), 0.45f + 0.35f * (1.0f - g_glass)), S(18.0f));
     d->AddRect(na, nb, C(ImVec4(1, 1, 1, 1), 0.12f), S(18.0f));
-    Text(d, g_fonts.title, ImVec2(na.x + S(20.0f), na.y + S(18.0f)), C(p.text), T("nav.settings"));
+    Text(d, g_fonts.title, ImVec2(na.x + S(20.0f), na.y + S(18.0f)), C(p.text), title);
     const float rowH = S(46.0f);
     const float listY = na.y + S(70.0f);
-    g_settingsPill += (static_cast<float>(g_settingsTab) - g_settingsPill) * std::min(1.0f, Dt() * 14.0f);
+    *pill += (static_cast<float>(*tab) - *pill) * std::min(1.0f, Dt() * 14.0f);
     {
-        const float py = listY + g_settingsPill * rowH;
+        const float py = listY + *pill * rowH;
         d->AddRectFilled(ImVec2(na.x + S(10.0f), py), ImVec2(nb.x - S(10.0f), py + rowH - S(6.0f)), C(p.accent, 0.22f), S(12.0f));
         d->AddRectFilled(ImVec2(na.x + S(10.0f), py + S(10.0f)), ImVec2(na.x + S(13.0f), py + rowH - S(16.0f)), C(p.accent), S(2.0f));
     }
-    for (int i = 0; i < kEntries; ++i) {
+    for (int i = 0; i < count; ++i) {
         const ImVec2 ra(na.x + S(10.0f), listY + rowH * static_cast<float>(i)), rb(nb.x - S(10.0f), ra.y + rowH - S(6.0f));
-        char id[24];
-        std::snprintf(id, sizeof(id), "##set_tab%d", i);
+        char id[32];
+        std::snprintf(id, sizeof(id), "##%s_tab%d", idPrefix, i);
         float hover = 0.0f;
-        if (Hit(id, ra, rb, &hover) && g_settingsTab != i) {
-            g_settingsTab = i;
-            g_settingsTabIn = 0.0f;
+        if (Hit(id, ra, rb, &hover) && *tab != i) {
+            *tab = i;
+            changed = true;
         }
-        const float lit = std::clamp(1.0f - std::fabs(g_settingsPill - static_cast<float>(i)), 0.0f, 1.0f);
+        const float lit = std::clamp(1.0f - std::fabs(*pill - static_cast<float>(i)), 0.0f, 1.0f);
         if (hover > 0.0f && lit < 0.5f) d->AddRectFilled(ra, rb, C(p.text, 0.05f * hover), S(12.0f));
         const ImVec4 col = Mix(p.text, p.accent, lit * 0.8f);
         const ImVec2 ic(ra.x + S(22.0f), (ra.y + rb.y) * 0.5f);
@@ -7443,6 +7577,16 @@ void DrawSettingsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const account::I
         }
         Text(d, g_fonts.semibold, ImVec2(ra.x + S(42.0f), (ra.y + rb.y - g_fonts.semibold->FontSize) * 0.5f), C(col), T(entries[i].key));
     }
+    return changed;
+}
+
+void DrawSettingsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data) {
+    // --- the index (left) ---
+    const IndexEntry entries[] = {{kIconSliders, "settings.general"}, {icons::kMusic, "set.music"},  {nullptr, "nav.spotify"},
+                                  {icons::kPerson, "settings.account"}, {icons::kGamepad, "set.game"}, {icons::kInfo, "settings.about"}};
+    const float navW = S(230.0f);
+    const ImVec2 na = min, nb(min.x + navW, max.y);
+    if (DrawSectionIndex(d, na, nb, T("nav.settings"), entries, 6, &g_settingsTab, &g_settingsPill, "set")) g_settingsTabIn = 0.0f;
     // --- the chosen section (right), coming in softly ---
     g_settingsTabIn = std::min(1.0f, g_settingsTabIn + Dt() * 6.0f);
     const float e = EaseOutCubic(g_settingsTabIn);
@@ -7459,6 +7603,158 @@ void DrawSettingsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const account::I
     }
     d->PopClipRect();
     AnimateSince(d, start, e, ImVec2((1.0f - e) * S(24.0f), 0.0f));
+}
+
+// =============================================================================
+//  THE LYRICS SECTION (design C): a whole section like Settings. The index on
+//  the left; on the right, at the top, THE STAGE (your song's line in your
+//  style, on a little Minecraft night) and under it the chosen part.
+// =============================================================================
+int g_lyricsTab = 0;  // 0 ready-made styles, 1 your styles, 2 where, 3 timing, 4 in the game
+float g_lyricsTabIn = 1.0f;
+float g_lyricsPill = 0.0f;
+
+// "Where they're shown": two big choices, each with a small drawing of it.
+void DrawLyricsWhere(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    const flowcfg::State& s = flowcfg::g_state;
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("lyrics.tab_where"));
+    const float top = min.y + S(62.0f);
+    const float gap = S(16.0f);
+    const float cw = (max.x - min.x - S(40.0f) - gap) * 0.5f;
+    const float ch = std::min(max.y - top - S(20.0f), S(230.0f));
+    for (int i = 0; i < 2; ++i) {
+        const int mode = i == 0 ? 1 : 0;  // (the sky first: it's the default)
+        const ImVec2 a(min.x + S(20.0f) + (cw + gap) * static_cast<float>(i), top), b(a.x + cw, top + ch);
+        char id[24];
+        std::snprintf(id, sizeof(id), "##lyr_where%d", i);
+        float hover = 0.0f;
+        if (Hit(id, a, b, &hover) && s.mode != mode) flowcfg::Change([&](nlohmann::json& f) { f["mode"] = mode; });
+        const float lit = Anim(ImGui::GetID(id) + 1, s.mode == mode, 8.0f);
+        d->AddRectFilled(a, b, C(p.text, 0.04f + 0.04f * hover), S(16.0f));
+        d->AddRect(a, b, C(Mix(ImVec4(1, 1, 1, 1), p.accent, lit), 0.10f + 0.9f * lit), S(16.0f), 0, S(1.0f) + S(1.0f) * lit);
+        // the drawing: a horizon, and where the words go
+        const ImVec2 va(a.x + S(14.0f), a.y + S(14.0f)), vb(b.x - S(14.0f), a.y + ch * 0.58f);
+        d->AddRectFilledMultiColor(va, vb, C(ImVec4(0.06f, 0.07f, 0.14f, 1)), C(ImVec4(0.06f, 0.07f, 0.14f, 1)),
+                                   C(ImVec4(0.18f, 0.22f, 0.36f, 1)), C(ImVec4(0.18f, 0.22f, 0.36f, 1)));
+        const float ground = vb.y - (vb.y - va.y) * 0.28f;
+        d->AddRectFilled(ImVec2(va.x, ground), vb, C(ImVec4(0.10f, 0.16f, 0.10f, 1)));
+        const float wy = mode == 1 ? va.y + (vb.y - va.y) * 0.22f : ground - (vb.y - va.y) * 0.22f;
+        const float bar = (vb.x - va.x) * (mode == 1 ? 0.55f : 0.40f);
+        const ImVec2 wc((va.x + vb.x) * 0.5f, wy);
+        SoftLightOval(d, wc, bar * 0.6f, S(14.0f), p.accent, 0.5f * lit + 0.15f);
+        d->AddRectFilled(ImVec2(wc.x - bar * 0.5f, wy - S(3.0f)), ImVec2(wc.x + bar * 0.5f, wy + S(3.0f)), C(ImVec4(1, 1, 1, 1), 0.9f), S(3.0f));
+        // the name and what it means
+        float ty = vb.y + S(12.0f);
+        Text(d, g_fonts.semibold, ImVec2(a.x + S(16.0f), ty), C(p.text), T(mode == 1 ? "lyrics.where_sky" : "lyrics.where_world"));
+        if (lit > 0.01f) {
+            const ImVec2 c(b.x - S(24.0f), ty + g_fonts.semibold->FontSize * 0.5f);
+            d->AddCircleFilled(c, S(9.0f), C(p.accent, lit), 24);
+            icons::Draw(d, kIconCheck, c, S(11.0f), C(p.onAccent, lit), S(2.2f));
+        }
+        ty += g_fonts.semibold->FontSize + S(4.0f);
+        TextWrap(d, g_fonts.tiny, ImVec2(a.x + S(16.0f), ty), C(p.textDim), T(mode == 1 ? "lyrics.sky_hint" : "lyrics.world_hint"), cw - S(32.0f));
+    }
+}
+
+// "Timing": the same setting as the game's Offset, big.
+void DrawLyricsTiming(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("lyrics.tab_timing"));
+    float y = min.y + S(56.0f);
+    y += TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(22.0f), y), C(p.textDim), T("lyrics.timing_hint"), max.x - min.x - S(44.0f)) + S(26.0f);
+    const float off = flowcfg::g_state.offset;
+    char value[24];
+    std::snprintf(value, sizeof(value), "%+.1f s", off);
+    const float cx = (min.x + max.x) * 0.5f;
+    const ImVec2 vs = TextSize(g_fonts.hero, value);
+    Text(d, g_fonts.hero, ImVec2(cx - vs.x * 0.5f, y), C(off == 0.0f ? p.text : p.accent), value);
+    const float cy = y + vs.y * 0.5f;
+    const float half = std::max(vs.x * 0.5f, S(70.0f)) + S(40.0f);
+    if (RoundButton(d, "##lyr_off_minus", ImVec2(cx - half, cy), S(22.0f), icons::kMinus, S(16.0f), false)) {
+        flowcfg::SetOffset(std::clamp(off - 0.1f, -5.0f, 5.0f));
+    }
+    if (RoundButton(d, "##lyr_off_plus", ImVec2(cx + half, cy), S(22.0f), icons::kPlus, S(16.0f), false)) {
+        flowcfg::SetOffset(std::clamp(off + 0.1f, -5.0f, 5.0f));
+    }
+    y += vs.y + S(12.0f);
+    const char* what = off < 0.0f ? T("lyrics.timing_earlier") : (off > 0.0f ? T("lyrics.timing_later") : T("lyrics.timing_zero"));
+    const ImVec2 ws = TextSize(g_fonts.tiny, what);
+    Text(d, g_fonts.tiny, ImVec2(cx - ws.x * 0.5f, y), C(p.textDim), what);
+    y += ws.y + S(16.0f);
+    if (off != 0.0f) {
+        const char* reset = T("lyrics.timing_reset");
+        const float w = TextSize(g_fonts.semibold, reset).x + S(36.0f);
+        const ImVec2 a(cx - w * 0.5f, y), b(cx + w * 0.5f, y + S(34.0f));
+        float hover = 0.0f;
+        if (Hit("##lyr_off_reset", a, b, &hover)) flowcfg::SetOffset(0.0f);
+        d->AddRectFilled(a, b, C(p.text, 0.06f + 0.08f * hover), S(17.0f));
+        Text(d, g_fonts.semibold, ImVec2(a.x + S(18.0f), (a.y + b.y - g_fonts.semibold->FontSize) * 0.5f), C(p.text), reset);
+    }
+}
+
+// "In the game": is it working there, and where the rest of the options are.
+void DrawLyricsGame(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
+    const Palette& p = P();
+    const flowcfg::State& s = flowcfg::g_state;
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("lyrics.tab_game"));
+    const float x = min.x + S(22.0f), w = max.x - min.x - S(44.0f);
+    float y = min.y + S(64.0f);
+    auto row = [&](bool ok, const char* text) {
+        Dot(d, ImVec2(x + S(6.0f), y + g_fonts.semibold->FontSize * 0.5f), ok ? p.success : p.accent);
+        y += TextWrap(d, g_fonts.semibold, ImVec2(x + S(20.0f), y), C(p.text), text, w - S(20.0f)) + S(14.0f);
+    };
+    if (s.broken) {
+        Dot(d, ImVec2(x + S(6.0f), y + g_fonts.semibold->FontSize * 0.5f), p.danger);
+        y += TextWrap(d, g_fonts.semibold, ImVec2(x + S(20.0f), y), C(p.text), T("lyrics.no_config"), w - S(20.0f)) + S(14.0f);
+    }
+    row(data.game.lumaLoaded, data.game.lumaLoaded ? T("lyrics.live") : T("lyrics.game_closed"));
+    row(s.moduleOn, s.moduleOn ? T("lyrics.module_on") : T("lyrics.module_off"));
+    row(s.on, s.on ? T("lyrics.shown") : T("lyrics.hidden"));
+    y += S(8.0f);
+    d->AddLine(ImVec2(x, y), ImVec2(x + w, y), C(p.border));
+    y += S(18.0f);
+    if (s.style < 0 && s.user < 0 && s.found) y += TextWrap(d, g_fonts.tiny, ImVec2(x, y), C(p.text, 0.85f), T("lyrics.custom"), w) + S(10.0f);
+    TextWrap(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), T("lyrics.more"), w);
+}
+
+void DrawLyricsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
+    const Palette& p = P();
+    flowcfg::Refresh();
+    const IndexEntry entries[] = {{icons::kSparkle, "lyrics.tab_ready"}, {icons::kLayers, "lyrics.tab_yours"},
+                                  {icons::kMapPin, "lyrics.tab_where"},  {icons::kTimer, "lyrics.tab_timing"},
+                                  {icons::kGamepad, "lyrics.tab_game"}};
+    const float navW = S(230.0f);
+    const ImVec2 na = min, nb(min.x + navW, max.y);
+    if (DrawSectionIndex(d, na, nb, T("nav.lyrics"), entries, 5, &g_lyricsTab, &g_lyricsPill, "lyr")) g_lyricsTabIn = 0.0f;
+    // --- the right: the stage, and the chosen part under it ---
+    const media::Track t = media::Current();
+    const ImVec2 ca(nb.x + S(20.0f), min.y), cb(std::min(max.x, nb.x + S(20.0f) + S(980.0f)), max.y);
+    const float stageH = std::clamp((cb.y - ca.y) * 0.34f, S(150.0f), S(230.0f));
+    DrawLyricsStage(d, ca, ImVec2(cb.x, ca.y + stageH), t);
+    g_lyricsTabIn = std::min(1.0f, g_lyricsTabIn + Dt() * 6.0f);
+    const float e = EaseOutCubic(g_lyricsTabIn);
+    const ImVec2 pa(ca.x, ca.y + stageH + S(kGap)), pb = cb;
+    const int start = d->VtxBuffer.Size;
+    d->PushClipRect(ImVec2(pa.x - S(4.0f), pa.y - S(4.0f)), ImVec2(pb.x + S(4.0f), pb.y + S(4.0f)), true);
+    switch (g_lyricsTab) {
+        case 0: DrawStyleCards(d, pa, pb, g_lyricsTabIn); break;
+        case 1: {
+            Card(d, pa, pb);
+            SectionTitle(d, ImVec2(pa.x + S(20.0f), pa.y + S(18.0f)), T("lyrics.your_styles"));
+            DrawUserStyles(d, ImVec2(pa.x + S(20.0f), pa.y), ImVec2(pb.x - S(20.0f), pb.y), pa.y + S(62.0f));
+            break;
+        }
+        case 2: DrawLyricsWhere(d, pa, ImVec2(pb.x, std::min(pb.y, pa.y + S(340.0f)))); break;
+        case 3: DrawLyricsTiming(d, pa, ImVec2(pb.x, std::min(pb.y, pa.y + S(300.0f)))); break;
+        default: DrawLyricsGame(d, pa, ImVec2(pb.x, std::min(pb.y, pa.y + S(320.0f))), data); break;
+    }
+    d->PopClipRect();
+    AnimateSince(d, start, e, ImVec2((1.0f - e) * S(24.0f), 0.0f));
+    (void)p;
 }
 
 // Pantalla de "Actualizando Luma..." (tapa todo mientras baja e instala).
@@ -7925,6 +8221,7 @@ void AppInit(HWND hwnd, float scale) {
         it.name = "test";
         sp::StartRadio(it);
     }
+    if (const wchar_t* lt = std::wcsstr(GetCommandLineW(), L"--lyr-tab=")) g_lyricsTab = std::clamp(static_cast<int>(lt[10] - L'0'), 0, 4);  // (for testing)
     if (const wchar_t* st = std::wcsstr(GetCommandLineW(), L"--set-tab=")) g_settingsTab = std::clamp(static_cast<int>(st[10] - L'0'), 0, 5);  // (for testing)
     if (std::wcsstr(GetCommandLineW(), L"--luma-play") != nullptr) sp::WithLumaDevice([](const std::string& id) { sp::ContinueOn(id); });  // (for testing)
     g_statusThread = std::thread(StatusThread);

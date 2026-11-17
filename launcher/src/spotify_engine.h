@@ -41,6 +41,8 @@ State GetState();  // (call each frame: it also notices when the device appears)
 void Command(const std::string& line);
 void SetVolume(int percent);  // (0..100: Windows' volume of the player's sound, instant; remembered)
 int Volume();
+bool HighQuality();              // 320 kbps (else 160)
+void SetHighQuality(bool high);  // (remembered; a running player restarts with it)
 // The songs of a playlist through the player (Spotify's internal channel):
 // for other people's playlists, which the public Web API no longer gives to
 // apps. Starts the player if needed (it only connects). 0 = asked, 1 = here

@@ -154,6 +154,8 @@ double g_minimizeAt = 0.0;  // cuándo minimizar después de JUGAR (0 = no)
 bool g_minimizeAfterPlay = true;
 bool g_startWithWindows = false;  // la verdad está en el registro: se lee al abrir
 bool g_autoUpdate = true;         // actualizarse solo al abrir
+bool g_liveBackground = true;     // the album's colors flow in the background (Settings > Music)
+bool g_homeLyrics = true;         // the lyrics under the song's name on Home
 sky::Mode g_skyMode = sky::Mode::Auto;  // el cielo del cartel: según la hora o fijo
 updater::Info g_upd;              // el estado del actualizador en este frame
 
@@ -228,6 +230,8 @@ void LoadConfig() {
     g_minimizeAfterPlay = json.value("minimizeAfterPlay", true);
     g_autoUpdate = json.value("autoUpdate", true);
     g_skyMode = static_cast<sky::Mode>(std::clamp(json.value("sky", 0), 0, 3));
+    g_liveBackground = json.value("liveBackground", true);
+    g_homeLyrics = json.value("homeLyrics", true);
 }
 
 void SaveConfig() {
@@ -243,6 +247,8 @@ void SaveConfig() {
     json["minimizeAfterPlay"] = g_minimizeAfterPlay;
     json["autoUpdate"] = g_autoUpdate;
     json["sky"] = static_cast<int>(g_skyMode);
+    json["liveBackground"] = g_liveBackground;
+    json["homeLyrics"] = g_homeLyrics;
     std::ofstream(dir / L"launcher.json") << json.dump(2);
 }
 
@@ -2071,6 +2077,7 @@ void DrawAmbient(ImDrawList* d, ImVec2 display, const media::Track& t) {
         auto all = [&](ID3D11ShaderResourceView* view, ID3D11ShaderResourceView* blobs, float alpha) {
             if (view == nullptr || alpha <= 0.0f) return;
             layer(view, alpha, big * 2.2f, 0.0f, c);  // (the still base)
+            if (!g_liveBackground) return;  // (Settings > Music: a still background)
             if (blobs != nullptr) view = blobs;
             for (const Spin& sp : kSpins) {
                 const float orbitA = now * sp.orbitSpeed + sp.phase;
@@ -3079,6 +3086,7 @@ const lyrics::Line* LineOf(int k, int* end) {
 
 // The height the short lyrics take under the song's name.
 float CompactLyricsHeight() {
+    if (!g_homeLyrics) return 0.0f;
     return (g_fonts.line->FontSize + S(4.0f) + g_fonts.regular->FontSize + S(18.0f)) * EaseOutCubic(g_lyricsShow);
 }
 
@@ -3086,6 +3094,7 @@ float CompactLyricsHeight() {
 // the next one, dim. When the line changes, the next one rises into place.
 void DrawCompactLyrics(ImDrawList* d, float x, float y, float w, const media::Track& t, float alpha) {
     const Palette& p = P();
+    if (!g_homeLyrics) return;
     alpha *= g_lyricsShow * (1.0f - g_lyricsViewAnim);
     if (alpha < 0.01f || !t.present || g_lyrics.trackId != t.trackId) return;
     ImFont* big = g_fonts.line;
@@ -6236,6 +6245,10 @@ void Content(ImDrawList* d, ImVec2 min, ImVec2 max) {
 
 bool g_overlaysWanted = false;
 
+bool SpotifySearchOpen() {
+    return sp::g_searchOpen;
+}
+
 // THE WHOLE SECTION (when connected with the new permissions).
 void DrawSpotifySection(ImDrawList* d, ImVec2 min, ImVec2 max, ImVec2 display, const spotify::Status& st) {
     using namespace sp;
@@ -6653,6 +6666,7 @@ void DrawStageTop(ImDrawList* d, ImVec2 display, const LocalData& data, const st
 void DrawComingSoon(ImDrawList* d, ImVec2 min, ImVec2 max, const char* icon, const char* titleKey, const char* textKey);  // (below)
 void DrawSpotifyPage(ImDrawList* d, ImVec2 min, ImVec2 max);
 void DrawSpotifyOverlays(ImDrawList* d, ImVec2 display);
+void DrawSettingsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data);
 void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data);  // (below)
 
 // The other sections: a glass sheet that rises over the stage.
@@ -6664,12 +6678,16 @@ void DrawSheet(ImDrawList* d, ImVec2 display, const account::Info& acc, const Lo
     const float s = EaseOutCubic(g_sheet);
     // SPOTIFY is a whole section, not a window: right on the album's living
     // background (the stage fades away under it).
-    if (g_sheetPage == Page::Spotify) {
+    if (g_sheetPage == Page::Spotify || g_sheetPage == Page::Settings) {
         const float rise = (1.0f - s) * S(30.0f);
         const ImVec2 cmin(S(40.0f), S(58.0f) + rise), cmax(display.x - S(40.0f), display.y - S(kDockBottom) - S(kDockH) - S(16.0f) + rise);
         const float saved = g_fade;
         g_fade = s;
-        DrawSpotifyPage(d, cmin, cmax);
+        if (g_sheetPage == Page::Spotify) {
+            DrawSpotifyPage(d, cmin, cmax);
+        } else {
+            DrawSettingsSection(d, cmin, cmax, acc, data);
+        }
         g_fade = saved;
         return;
     }
@@ -6740,9 +6758,66 @@ void Flash(const char* icon, const char* text) {
     g_flashAt = ImGui::GetTime();
 }
 
+bool SpotifyConnected();  // (with the Spotify section)
+bool SpotifySearchOpen();
+
+// The same keys in the Spotify section: they control your Spotify itself
+// (wherever it plays: this PC, Luma's own player, your phone...).
+void HandleSpotifyKeys() {
+    const spotify::Player pl = spotify::GetPlayer();
+    if (!pl.valid || !pl.hasDevice) return;
+    const ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+        spotify::PlayerPlay(!pl.playing);
+        Flash(pl.playing ? icons::kPauseFilled : icons::kPlayFilled, pl.playing ? T("music.paused") : T("key.play"));
+    }
+    if (io.KeyCtrl) {
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
+            spotify::PlayerPrevious();
+            Flash(icons::kSkipBackFilled, T("key.previous"));
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
+            spotify::PlayerNext();
+            Flash(icons::kSkipForwardFilled, T("key.next"));
+        }
+    } else {
+        const bool left = ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true), right = ImGui::IsKeyPressed(ImGuiKey_RightArrow, true);
+        if ((left || right) && pl.durationMs > 0) {
+            const double to = std::clamp(spotify::PositionSeconds(pl) + (right ? 5.0 : -5.0), 0.0, pl.durationMs / 1000.0);
+            spotify::PlayerSeek(to);
+            char text[32], label[64];
+            FormatTime(to, text, sizeof(text));
+            std::snprintf(label, sizeof(label), "%s 5 s  Â·  %s", right ? "+" : "-", text);
+            Flash(right ? icons::kSkipForward : icons::kSkipBack, label);
+        }
+    }
+    const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true), down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+    if (up || down) {
+        namespace eng = luma::launcher::spotifyengine;
+        const bool luma = eng::GetState() == eng::State::Ready && pl.device.id == eng::DeviceId();
+        const int now = luma ? eng::Volume() : pl.device.volume;
+        if (now >= 0) {
+            const int v = std::clamp(now + (up ? 5 : -5), 0, 100);
+            if (luma) {
+                eng::SetVolume(v);
+            } else {
+                spotify::PlayerVolume(v);
+            }
+            char label[64];
+            std::snprintf(label, sizeof(label), T("key.volume"), v);
+            Flash(icons::kVolume, label);
+        }
+    }
+}
+
 void HandleMusicKeys(const media::Track& t) {
     const ImGuiIO& io = ImGui::GetIO();
-    if (g_page != Page::Home || io.WantTextInput || !t.present) return;
+    if (io.WantTextInput) return;
+    if (g_page == Page::Spotify) {
+        if (SpotifyConnected() && !SpotifySearchOpen()) HandleSpotifyKeys();
+        return;
+    }
+    if (g_page != Page::Home || !t.present) return;
     if (ImGui::IsKeyPressed(ImGuiKey_Space, false) && t.canPlayPause) {
         media::PlayPause();
         Flash(t.playing ? icons::kPauseFilled : icons::kPlayFilled, t.playing ? T("music.paused") : T("key.play"));
@@ -6796,7 +6871,8 @@ void DrawFlash(ImDrawList* d, ImVec2 display) {
 // The whole stage (Home, with the sheet over it for the other sections).
 void DrawStage(ImDrawList* d, ImVec2 display, const media::Track& t, const LocalData& data, const std::string& name, const account::Info& acc) {
     // (under a section the stage dims; under Spotify's whole section it fades away)
-    const float stageAlpha = (1.0f - 0.35f * EaseOutCubic(g_sheet)) * (g_sheetPage == Page::Spotify ? 1.0f - EaseOutCubic(g_sheet) : 1.0f);
+    const bool wholeSection = g_sheetPage == Page::Spotify || g_sheetPage == Page::Settings;
+    const float stageAlpha = (1.0f - 0.35f * EaseOutCubic(g_sheet)) * (wholeSection ? 1.0f - EaseOutCubic(g_sheet) : 1.0f);
     const ImVec2 smin(S(40.0f), S(70.0f));
     const ImVec2 smax(display.x - S(40.0f), display.y - S(kDockBottom) - S(kDockH) - S(70.0f));
     // (it comes in when the launcher opens)
@@ -7128,6 +7204,223 @@ void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& ac
         DrawSettingsShortcuts(d, ImVec2(min.x, rowY), ImVec2(min.x + leftW, rowY + rowH));
         DrawSettingsLinks(d, ImVec2(rightX, rowY), ImVec2(max.x, rowY + rowH));
     }
+}
+
+
+// =============================================================================
+//  AJUSTES, THE WHOLE SECTION (part L3, design A): an index on the left (a
+//  glass column with the sections) and the chosen one on the right, right on
+//  the album's living background (no window over the stage).
+// =============================================================================
+int g_settingsTab = 0;      // 0 general, 1 music, 2 spotify, 3 account, 4 game, 5 about
+float g_settingsTabIn = 1.0f;
+float g_settingsPill = 0.0f;  // where the lit row of the index is (it slides)
+
+// One row of a settings card: a title, a hint under it, and the control at the right.
+float SettingRow(ImDrawList* d, float x, float y, float w, const char* title, const char* hint, float controlW) {
+    return SettingLabel(d, ImVec2(x, y), w - controlW - S(20.0f), title, hint);
+}
+
+void DrawSettingsMusic(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    static bool arrows = false;
+    if (!arrows) {  // (the arrows of the keys come from another font)
+        arrows = true;
+        render::fontfallback::Need("\xE2\x86\x90\xE2\x86\x91\xE2\x86\x92\xE2\x86\x93");
+    }
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("set.music"));
+    const float x = min.x + S(22.0f), right = max.x - S(22.0f), w = right - x;
+    float y = min.y + S(62.0f);
+    const float gap = S(22.0f);
+    // the living background
+    {
+        const float h = SettingRow(d, x, y, w, T("set.live_bg"), T("set.live_bg_hint"), S(46.0f));
+        if (Toggle("##set_livebg", ImVec2(right - S(46.0f), y + std::max(0.0f, (h - S(26.0f)) * 0.5f)), &g_liveBackground)) SaveConfig();
+        y += std::max(h, S(30.0f)) + gap;
+    }
+    d->AddLine(ImVec2(x, y - gap * 0.5f), ImVec2(right, y - gap * 0.5f), C(p.border));
+    // the lyrics on Home
+    {
+        const float h = SettingRow(d, x, y, w, T("set.home_lyrics"), T("set.home_lyrics_hint"), S(46.0f));
+        if (Toggle("##set_homelyrics", ImVec2(right - S(46.0f), y + std::max(0.0f, (h - S(26.0f)) * 0.5f)), &g_homeLyrics)) SaveConfig();
+        y += std::max(h, S(30.0f)) + gap;
+    }
+    d->AddLine(ImVec2(x, y - gap * 0.5f), ImVec2(right, y - gap * 0.5f), C(p.border));
+    // the lyrics' timing (the same setting as the game's "Offset")
+    {
+        const float h = SettingRow(d, x, y, w, T("opt.offset"), T("set.offset_hint"), S(150.0f));
+        const float off = flowcfg::g_state.offset;
+        char value[16];
+        std::snprintf(value, sizeof(value), "%+.1f s", off);
+        const ImVec2 vs = TextSize(g_fonts.semibold, value);
+        const float cy = y + std::max(h, S(30.0f)) * 0.5f;
+        const float plusX = right - S(16.0f), minusX = plusX - S(40.0f) - vs.x - S(10.0f);
+        Text(d, g_fonts.semibold, ImVec2((minusX + plusX) * 0.5f - vs.x * 0.5f, cy - vs.y * 0.5f), C(p.text), value);
+        if (IconToggle(d, "##set_off_minus", ImVec2(minusX, cy), icons::kMinus, S(15.0f), false)) flowcfg::SetOffset(std::clamp(off - 0.1f, -5.0f, 5.0f));
+        if (IconToggle(d, "##set_off_plus", ImVec2(plusX, cy), icons::kPlus, S(15.0f), false)) flowcfg::SetOffset(std::clamp(off + 0.1f, -5.0f, 5.0f));
+        y += std::max(h, S(30.0f)) + gap;
+    }
+    d->AddLine(ImVec2(x, y - gap * 0.5f), ImVec2(right, y - gap * 0.5f), C(p.border));
+    // the keys (Home)
+    {
+        Text(d, g_fonts.semibold, ImVec2(x, y), C(p.text), T("set.keys"));
+        y += g_fonts.semibold->FontSize + S(10.0f);
+        struct KeyRow {
+            const char* keys;
+            const char* what;
+        };
+        const KeyRow rows[] = {{"Espacio / Space", "set.key_pause"}, {"\xE2\x86\x90  \xE2\x86\x92", "set.key_seek"},
+                               {"Ctrl + \xE2\x86\x90  \xE2\x86\x92", "set.key_song"}, {"\xE2\x86\x91  \xE2\x86\x93", "set.key_volume"},
+                               {"Ctrl + K", "set.key_search"}};
+        for (const KeyRow& r : rows) {
+            const ImVec2 ks = TextSize(g_fonts.semibold, r.keys);
+            d->AddRectFilled(ImVec2(x, y - S(3.0f)), ImVec2(x + ks.x + S(18.0f), y + ks.y + S(3.0f)), C(p.text, 0.08f), S(7.0f));
+            Text(d, g_fonts.semibold, ImVec2(x + S(9.0f), y), C(p.text), r.keys);
+            Text(d, g_fonts.regular, ImVec2(x + std::max(ks.x + S(30.0f), S(170.0f)), y + S(1.0f)), C(p.textDim), T(r.what));
+            y += S(34.0f);
+        }
+    }
+}
+
+void DrawSettingsSpotify(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Card(d, min, max);
+    DrawSpotifyLogo(d, ImVec2(min.x + S(32.0f), min.y + S(28.0f)), S(24.0f), g_fade);
+    Text(d, g_fonts.semibold, ImVec2(min.x + S(52.0f), min.y + S(18.0f)), C(p.text), "Spotify");
+    const float x = min.x + S(22.0f), right = max.x - S(22.0f), w = right - x;
+    float y = min.y + S(62.0f);
+    const spotify::Status st = spotify::GetStatus();
+    float bw = 0.0f;
+    if (st.state != spotify::State::Connected) {
+        y += TextWrap(d, g_fonts.regular, ImVec2(x, y), C(p.textDim), T("set.sp_not_connected"), w) + S(14.0f);
+        if (SmallPill(d, "##set_sp_go", ImVec2(x, y), nullptr, T("set.sp_go"), true, &bw)) GoTo(Page::Spotify);
+        return;
+    }
+    // your account
+    {
+        std::string who = st.user + (st.premium == 1 ? "  \xC2\xB7  Premium" : (st.premium == 0 ? "  \xC2\xB7  Free" : ""));
+        Text(d, g_fonts.title, ImVec2(x, y), C(p.text), who.c_str());
+        y += g_fonts.title->FontSize + S(4.0f);
+        Text(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), T("spotify.shared"));
+        if (SmallPill(d, "##set_sp_off", ImVec2(right - TextSize(g_fonts.semibold, T("spotify.disconnect")).x - S(28.0f), y - S(26.0f)), nullptr,
+                      T("spotify.disconnect"), false, &bw)) {
+            spotify::Disconnect();
+        }
+        y += g_fonts.tiny->FontSize + S(22.0f);
+    }
+    d->AddLine(ImVec2(x, y - S(11.0f)), ImVec2(right, y - S(11.0f)), C(p.border));
+    // Luma's own player: its card, and the sound quality
+    y += sp::LumaPlayerCard(d, x, y, w, g_fade) + S(18.0f);
+    {
+        namespace eng = luma::launcher::spotifyengine;
+        const char* labels[2] = {T("set.sp_q_normal"), T("set.sp_q_high")};
+        int q = eng::HighQuality() ? 1 : 0;
+        const float sw = SegmentedWidth(labels, 2);
+        const float h = SettingRow(d, x, y, w, T("set.sp_quality"), T("set.sp_quality_hint"), sw);
+        if (Segmented("##set_sp_quality", ImVec2(right - sw, y + std::max(0.0f, (h - S(38.0f)) * 0.5f)), labels, 2, &q)) eng::SetHighQuality(q == 1);
+        y += std::max(h, S(38.0f)) + S(16.0f);
+    }
+    TextWrap(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), T("set.sp_note"), w);
+}
+
+void DrawSettingsGame(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
+    const Palette& p = P();
+    const float gap = S(kGap);
+    // the game: its version and whether Luma is in it
+    const ImVec2 a = min, b(max.x, min.y + S(118.0f));
+    Card(d, a, b);
+    SectionTitle(d, ImVec2(a.x + S(20.0f), a.y + S(18.0f)), "Minecraft");
+    {
+        char text[160];
+        const bool loaded = data.game.lumaLoaded;
+        if (data.game.gameVersion.empty()) {
+            std::snprintf(text, sizeof(text), "%s", T("home.not_installed"));
+        } else {
+            std::snprintf(text, sizeof(text), "%s  \xC2\xB7  %s", data.game.gameVersion.c_str(), loaded ? T("home.luma_loaded") : T("home.ready_to_play"));
+        }
+        Dot(d, ImVec2(a.x + S(30.0f), a.y + S(72.0f)), loaded ? p.success : p.accent);
+        Text(d, g_fonts.semibold, ImVec2(a.x + S(44.0f), a.y + S(72.0f) - g_fonts.semibold->FontSize * 0.5f), C(p.text), text);
+    }
+    const float y1 = b.y + gap;
+    DrawSettingsFolders(d, ImVec2(min.x, y1), ImVec2(max.x, y1 + S(126.0f)));
+    const float y2 = y1 + S(126.0f) + gap;
+    if (max.y - y2 > S(120.0f)) DrawSettingsShortcuts(d, ImVec2(min.x, y2), ImVec2(max.x, std::min(max.y, y2 + S(170.0f))));
+}
+
+void DrawSettingsAboutAll(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    const float gap = S(kGap);
+    DrawSettingsAbout(d, min, ImVec2(max.x, min.y + S(250.0f)));
+    const float y1 = min.y + S(250.0f) + gap;
+    // what Luma is made with (and their licenses)
+    const ImVec2 a(min.x, y1), b(max.x, std::min(max.y, y1 + S(200.0f)));
+    Card(d, a, b);
+    SectionTitle(d, ImVec2(a.x + S(20.0f), a.y + S(18.0f)), T("set.credits"));
+    TextWrap(d, g_fonts.tiny, ImVec2(a.x + S(22.0f), a.y + S(56.0f)), C(p.textDim), T("set.credits_text"), b.x - a.x - S(44.0f));
+    const float y2 = b.y + gap;
+    if (max.y - y2 > S(110.0f)) DrawSettingsLinks(d, ImVec2(min.x, y2), ImVec2(max.x, std::min(max.y, y2 + S(150.0f))));
+}
+
+void DrawSettingsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data) {
+    const Palette& p = P();
+    // --- the index (left) ---
+    struct Entry {
+        const char* icon;
+        const char* key;
+    };
+    const Entry entries[] = {{kIconSliders, "settings.general"}, {icons::kMusic, "set.music"},  {nullptr, "nav.spotify"},
+                             {icons::kPerson, "settings.account"}, {icons::kGamepad, "set.game"}, {icons::kInfo, "settings.about"}};
+    constexpr int kEntries = 6;
+    const float navW = S(230.0f);
+    const ImVec2 na = min, nb(min.x + navW, max.y);
+    d->AddRectFilled(na, nb, C(Mix(p.card, ImVec4(0, 0, 0, 1), 0.15f), 0.45f + 0.35f * (1.0f - g_glass)), S(18.0f));
+    d->AddRect(na, nb, C(ImVec4(1, 1, 1, 1), 0.12f), S(18.0f));
+    Text(d, g_fonts.title, ImVec2(na.x + S(20.0f), na.y + S(18.0f)), C(p.text), T("nav.settings"));
+    const float rowH = S(46.0f);
+    const float listY = na.y + S(70.0f);
+    g_settingsPill += (static_cast<float>(g_settingsTab) - g_settingsPill) * std::min(1.0f, Dt() * 14.0f);
+    {
+        const float py = listY + g_settingsPill * rowH;
+        d->AddRectFilled(ImVec2(na.x + S(10.0f), py), ImVec2(nb.x - S(10.0f), py + rowH - S(6.0f)), C(p.accent, 0.22f), S(12.0f));
+        d->AddRectFilled(ImVec2(na.x + S(10.0f), py + S(10.0f)), ImVec2(na.x + S(13.0f), py + rowH - S(16.0f)), C(p.accent), S(2.0f));
+    }
+    for (int i = 0; i < kEntries; ++i) {
+        const ImVec2 ra(na.x + S(10.0f), listY + rowH * static_cast<float>(i)), rb(nb.x - S(10.0f), ra.y + rowH - S(6.0f));
+        char id[24];
+        std::snprintf(id, sizeof(id), "##set_tab%d", i);
+        float hover = 0.0f;
+        if (Hit(id, ra, rb, &hover) && g_settingsTab != i) {
+            g_settingsTab = i;
+            g_settingsTabIn = 0.0f;
+        }
+        const float lit = std::clamp(1.0f - std::fabs(g_settingsPill - static_cast<float>(i)), 0.0f, 1.0f);
+        if (hover > 0.0f && lit < 0.5f) d->AddRectFilled(ra, rb, C(p.text, 0.05f * hover), S(12.0f));
+        const ImVec4 col = Mix(p.text, p.accent, lit * 0.8f);
+        const ImVec2 ic(ra.x + S(22.0f), (ra.y + rb.y) * 0.5f);
+        if (entries[i].icon == nullptr) {
+            DrawSpotifyLogo(d, ic, S(18.0f), g_fade);
+        } else {
+            icons::Draw(d, entries[i].icon, ic, S(17.0f), C(col, 0.75f + 0.25f * std::max(lit, hover)), S(1.7f));
+        }
+        Text(d, g_fonts.semibold, ImVec2(ra.x + S(42.0f), (ra.y + rb.y - g_fonts.semibold->FontSize) * 0.5f), C(col), T(entries[i].key));
+    }
+    // --- the chosen section (right), coming in softly ---
+    g_settingsTabIn = std::min(1.0f, g_settingsTabIn + Dt() * 6.0f);
+    const float e = EaseOutCubic(g_settingsTabIn);
+    const ImVec2 ca(nb.x + S(20.0f), min.y), cb(std::min(max.x, nb.x + S(20.0f) + S(860.0f)), max.y);
+    const int start = d->VtxBuffer.Size;
+    d->PushClipRect(ImVec2(ca.x - S(4.0f), ca.y - S(4.0f)), ImVec2(cb.x + S(4.0f), cb.y + S(4.0f)), true);
+    switch (g_settingsTab) {
+        case 0: DrawSettingsGeneral(d, ca, ImVec2(cb.x, ca.y + S(392.0f))); break;
+        case 1: DrawSettingsMusic(d, ca, ImVec2(cb.x, std::min(cb.y, ca.y + S(560.0f)))); break;
+        case 2: DrawSettingsSpotify(d, ca, ImVec2(cb.x, cb.y)); break;
+        case 3: DrawSettingsAccount(d, ca, ImVec2(cb.x, ca.y + S(240.0f)), acc, data); break;
+        case 4: DrawSettingsGame(d, ca, cb, data); break;
+        default: DrawSettingsAboutAll(d, ca, cb); break;
+    }
+    d->PopClipRect();
+    AnimateSince(d, start, e, ImVec2((1.0f - e) * S(24.0f), 0.0f));
 }
 
 // Pantalla de "Actualizando Luma..." (tapa todo mientras baja e instala).
@@ -7585,6 +7878,7 @@ void AppInit(HWND hwnd, float scale) {
         it.name = "test";
         sp::StartRadio(it);
     }
+    if (const wchar_t* st = std::wcsstr(GetCommandLineW(), L"--set-tab=")) g_settingsTab = std::clamp(static_cast<int>(st[10] - L'0'), 0, 5);  // (for testing)
     if (std::wcsstr(GetCommandLineW(), L"--luma-play") != nullptr) sp::WithLumaDevice([](const std::string& id) { sp::ContinueOn(id); });  // (for testing)
     g_statusThread = std::thread(StatusThread);
     account::Init();

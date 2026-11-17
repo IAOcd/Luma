@@ -214,6 +214,27 @@ void Read(HANDLE pipe) {
 
 }  // namespace
 
+bool HighQuality() {
+    std::error_code ec;
+    return !fs::exists(CacheDir() / L"quality-normal", ec);  // (high, 320 kbps, unless chosen otherwise)
+}
+
+void SetHighQuality(bool high) {
+    std::error_code ec;
+    if (high) {
+        fs::remove(CacheDir() / L"quality-normal", ec);
+    } else {
+        fs::create_directories(CacheDir(), ec);
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, (CacheDir() / L"quality-normal").c_str(), L"w") == 0 && f != nullptr) std::fclose(f);
+    }
+    // (running: it restarts with the new quality)
+    if (g_process != nullptr) {
+        Stop();
+        Start();
+    }
+}
+
 void Start() {
     const State s = GetState();
     if (s == State::Starting || s == State::Ready || s == State::Login || s == State::NoProgram) return;
@@ -244,7 +265,7 @@ void Start() {
         return;
     }
     SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0);
-    std::wstring cmd = L"\"" + ExePath().wstring() + L"\" --name \"Luma\" --cache \"" + CacheDir().wstring() + L"\" --quality 320 --volume 100";
+    std::wstring cmd = L"\"" + ExePath().wstring() + L"\" --name \"Luma\" --cache \"" + CacheDir().wstring() + L"\" --quality " + (HighQuality() ? std::wstring(L"320") : std::wstring(L"160")) + L" --volume 100";
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES;

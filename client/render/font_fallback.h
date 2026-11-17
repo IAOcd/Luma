@@ -34,6 +34,7 @@ void Need(const char* utf8);
 // Called by the font loader right after adding each font: merges the letters
 // that were needed into it, from the fallback fonts.
 void MergeInto(ImGuiIO& io, float size);
+void MergeInto(ImFontAtlas* atlas, float size);  // (the same, into any atlas: another thread may build one)
 
 // Called once at the start of every font build (fixes the lists for it).
 void BeginBuild();

@@ -353,7 +353,6 @@ void AnimateSince(ImDrawList* d, int start, float alpha, ImVec2 offset) {
 // Used for the far lines of the lyrics and for the glow of the sung words.
 constexpr int kAtlasPadding = 24;
 ID3D11ShaderResourceView* g_blurAtlas[2] = {nullptr, nullptr};
-bool g_blurAtlasDirty = true;
 
 void ReleaseBlurAtlas() {
     for (auto*& v : g_blurAtlas) {
@@ -387,39 +386,19 @@ void BlurAlpha(std::vector<float>& img, int w, int h, int rx, int ry) {
     for (int k = 0; k < 3; ++k) pass(ry, false);
 }
 
-void BuildBlurAtlas() {
-    g_blurAtlasDirty = false;
-    ReleaseBlurAtlas();
-    if (g_device == nullptr) return;
-    unsigned char* pixels = nullptr;
-    int w = 0, h = 0;
-    ImGui::GetIO().Fonts->GetTexDataAsAlpha8(&pixels, &w, &h);
-    if (pixels == nullptr || w <= 0 || h <= 0) return;
+// The two blurred copies of the letters' picture, ready to be sent to the GPU.
+// (Slow on a big atlas, about 2 s: it runs in the fonts' helper thread.)
+void BlurLetters(const unsigned char* alpha, int w, int h, std::vector<std::uint8_t> out[2]) {
     // (horizontal, vertical) per level: a little, more. Three box passes spread
     // about 3x the radius: it must stay inside the padding, or a neighbor letter's
     // blur shows as the edge of a box.
     const int radii[2][2] = {{2, 1}, {3, 3}};
     for (int level = 0; level < 2; ++level) {
         std::vector<float> img(static_cast<std::size_t>(w) * h);
-        for (std::size_t i = 0; i < img.size(); ++i) img[i] = pixels[i] / 255.0f;
+        for (std::size_t i = 0; i < img.size(); ++i) img[i] = alpha[i] / 255.0f;
         BlurAlpha(img, w, h, radii[level][0], radii[level][1]);
-        std::vector<std::uint8_t> rgba(img.size() * 4, 255);
-        for (std::size_t i = 0; i < img.size(); ++i) rgba[i * 4 + 3] = static_cast<std::uint8_t>(std::clamp(img[i] * 1.4f, 0.0f, 1.0f) * 255.0f);
-        D3D11_TEXTURE2D_DESC desc{};
-        desc.Width = static_cast<UINT>(w);
-        desc.Height = static_cast<UINT>(h);
-        desc.MipLevels = 1;
-        desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        desc.SampleDesc.Count = 1;
-        desc.Usage = D3D11_USAGE_IMMUTABLE;
-        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        D3D11_SUBRESOURCE_DATA init{rgba.data(), static_cast<UINT>(w * 4), 0};
-        ID3D11Texture2D* texture = nullptr;
-        if (SUCCEEDED(g_device->CreateTexture2D(&desc, &init, &texture))) {
-            g_device->CreateShaderResourceView(texture, nullptr, &g_blurAtlas[level]);
-            texture->Release();
-        }
+        out[level].assign(img.size() * 4, 255);
+        for (std::size_t i = 0; i < img.size(); ++i) out[level][i * 4 + 3] = static_cast<std::uint8_t>(std::clamp(img[i] * 1.4f, 0.0f, 1.0f) * 255.0f);
     }
 }
 
@@ -3506,6 +3485,18 @@ void DrawOptionsMenuBody(ImDrawList* d, const media::Track& t) {
     }
 }
 
+// The filled heart's color: the album art's (the launcher's accent), made a
+// little brighter when the cover is very dark, so it shows on the dark glass.
+ImVec4 HeartColor() {
+    ImVec4 c = P().accent;
+    const float light = 0.299f * c.x + 0.587f * c.y + 0.114f * c.z;
+    if (light < 0.45f) {
+        const float k = (0.45f - light) / 0.45f * 0.6f;
+        c = ImVec4(c.x + (1.0f - c.x) * k, c.y + (1.0f - c.y) * k, c.z + (1.0f - c.z) * k, 1.0f);
+    }
+    return c;
+}
+
 // The heart, in the album art's corner (glass, filled when it's a favorite;
 // it pops when you press it).
 void DrawArtHeart(ImDrawList* d, ImVec2 artC, float artSize, const media::Track& t, float alpha) {
@@ -3532,8 +3523,8 @@ void DrawArtHeart(ImDrawList* d, ImVec2 artC, float artSize, const media::Track&
     const float grow = 1.0f + 0.25f * std::sin(pop * 3.14159f);
     d->AddCircleFilled(c, r * (1.0f + 0.06f * hover), C(ImVec4(0.05f, 0.05f, 0.06f, 1.0f), (0.45f + 0.2f * hover) * alpha), 32);
     d->AddCircle(c, r * (1.0f + 0.06f * hover), C(ImVec4(1, 1, 1, 1), 0.15f * alpha), 32, 1.0f);
-    const ImVec4 red = viaSpotify ? ImVec4(0.118f, 0.843f, 0.376f, 1.0f) : ImVec4(1.0f, 0.36f, 0.42f, 1.0f);
-    icons::Draw(d, fav ? icons::kHeartFilled : icons::kHeart, c, S(18.0f) * grow, C(fav ? red : ImVec4(1, 1, 1, 1), alpha), S(1.8f));
+    // (filled: in the album art's own color, like the rest of the launcher)
+    icons::Draw(d, fav ? icons::kHeartFilled : icons::kHeart, c, S(18.0f) * grow, C(fav ? HeartColor() : ImVec4(1, 1, 1, 1), alpha), S(1.8f));
 }
 
 // --- 3. The Lyrics sheet ------------------------------------------------------------------
@@ -4416,7 +4407,7 @@ void DrawSpotifyPlayer(ImDrawList* d, ImVec2 min, ImVec2 max, const spotify::Sta
         const float grow = 1.0f + 0.25f * std::sin(pop * 3.14159f);
         d->AddCircleFilled(c, r * (1.0f + 0.06f * hover), C(ImVec4(0.05f, 0.05f, 0.06f, 1.0f), 0.55f + 0.2f * hover), 32);
         icons::Draw(d, pl.liked ? icons::kHeartFilled : icons::kHeart, c, std::round(S(18.0f) * grow),
-                    C(pl.liked ? kSpotifyGreen : ImVec4(1, 1, 1, 1), pl.likedKnown ? 1.0f : 0.4f), S(1.8f));
+                    C(pl.liked ? HeartColor() : ImVec4(1, 1, 1, 1), pl.likedKnown ? 1.0f : 0.4f), S(1.8f));
     }
     float y = artMax.y + S(18.0f);
     TextFit(d, g_fonts.title, ImVec2(lx, y), C(p.text), pl.title.c_str(), colW);
@@ -7838,6 +7829,9 @@ void StatusThread() {
 
 }  // namespace
 
+void BuildFirstFonts();  // (the fonts: below, with their helper thread)
+bool FontJobDone();
+
 void AppInit(HWND hwnd, float scale) {
     luma::launcher::smtc::Init(hwnd);  // (Luma's own player tells Windows what plays)
     perf::Init();  // (the music's clock: core/media.cpp)
@@ -7848,7 +7842,7 @@ void AppInit(HWND hwnd, float scale) {
     if (g_startWithWindows) {
         WriteStartup(true);  // por si moviste el launcher a otra carpeta: actualizar la ruta
     }
-    AppRebuildFonts();
+    BuildFirstFonts();
     skins::Load();
     // "--page=skins" / "--page=settings": abrir directo en esa sección (para pruebas).
     if (std::wcsstr(GetCommandLineW(), L"--page=skins") != nullptr) g_page = Page::Skins;
@@ -7935,15 +7929,15 @@ void RequestFontsRebuild() {
 }
 
 bool AppFontsDirty() {
-    return g_fontsDirty;
+    return FontJobDone();  // (a new atlas is ready: window.cpp swaps it in)
 }
 
-void AppRebuildFonts() {
-    g_fontsDirty = false;
-    ImGuiIO& io = ImGui::GetIO();
-    io.Fonts->Clear();
-    io.Fonts->TexGlyphPadding = kAtlasPadding;  // (room for the blurred copies: BlurText)
-    g_blurAtlasDirty = true;
+// Every font of the launcher, into "atlas". It runs in the fonts' helper
+// thread (or at the start), so it only touches what it is given.
+Fonts BuildFonts(ImFontAtlas* atlas, float scale, std::string& pixelDir) {
+    Fonts fonts;
+    atlas->Clear();
+    atlas->TexGlyphPadding = kAtlasPadding;  // (room for the blurred copies: BlurText)
     wchar_t windowsDir[MAX_PATH];
     GetWindowsDirectoryW(windowsDir, MAX_PATH);
     const fs::path dir = fs::path(windowsDir) / L"Fonts";
@@ -7955,60 +7949,217 @@ void AppRebuildFonts() {
         }
         ImFontConfig config;
         config.OversampleH = 2;
-        return io.Fonts->AddFontFromFileTTF(path.string().c_str(), size * g_scale, &config);
+        return atlas->AddFontFromFileTTF(path.string().c_str(), size * scale, &config);
     };
     // (song titles and lyrics in other alphabets: their letters are merged
     // into the fonts that show them: render/font_fallback.h)
     render::fontfallback::BeginBuild();
     auto merge = [&](ImFont* font, float size) {
-        if (font != nullptr) render::fontfallback::MergeInto(io, size * g_scale);
+        if (font != nullptr) render::fontfallback::MergeInto(atlas, size * scale);
     };
-    g_fonts.regular = load(L"segoeui.ttf", 15.0f);
-    if (g_fonts.regular == nullptr) {
-        g_fonts.regular = io.Fonts->AddFontDefault();
+    fonts.regular = load(L"segoeui.ttf", 15.0f);
+    if (fonts.regular == nullptr) {
+        fonts.regular = atlas->AddFontDefault();
     }
-    merge(g_fonts.regular, 15.0f);
-    g_fonts.tiny = load(L"segoeui.ttf", 13.0f);
-    g_fonts.semibold = load(L"seguisb.ttf", 16.0f);
-    merge(g_fonts.semibold, 16.0f);
-    g_fonts.title = load(L"segoeuib.ttf", 22.0f);
-    g_fonts.hero = load(L"segoeuib.ttf", 42.0f);
-    merge(g_fonts.hero, 42.0f);
-    g_fonts.lyric = load(L"segoeuib.ttf", 34.0f);
-    merge(g_fonts.lyric, 34.0f);
-    g_fonts.line = load(L"seguisb.ttf", 21.0f);
-    merge(g_fonts.line, 21.0f);
+    merge(fonts.regular, 15.0f);
+    fonts.tiny = load(L"segoeui.ttf", 13.0f);
+    fonts.semibold = load(L"seguisb.ttf", 16.0f);
+    merge(fonts.semibold, 16.0f);
+    fonts.title = load(L"segoeuib.ttf", 22.0f);
+    fonts.hero = load(L"segoeuib.ttf", 42.0f);
+    merge(fonts.hero, 42.0f);
+    fonts.lyric = load(L"segoeuib.ttf", 34.0f);
+    merge(fonts.lyric, 34.0f);
+    fonts.line = load(L"seguisb.ttf", 21.0f);
+    merge(fonts.line, 21.0f);
     // La letra pixelada: no la distribuimos; se lee de la carpeta de TU juego
     // (Luma.dll anota cuál es en profile.json).
-    g_fonts.pixel = nullptr;
+    fonts.pixel = nullptr;
     {
         const nlohmann::json profile = ReadJson(DataDir() / L"profile.json");
-        g_pixelFontDir = profile.value("gameDir", std::string());
-        if (!g_pixelFontDir.empty()) {
-            const fs::path font = fs::path(std::u8string(reinterpret_cast<const char8_t*>(g_pixelFontDir.data()), g_pixelFontDir.size())) / L"data" / L"fonts" / L"Mojangles.ttf";
+        pixelDir = profile.value("gameDir", std::string());
+        if (!pixelDir.empty()) {
+            const fs::path font = fs::path(std::u8string(reinterpret_cast<const char8_t*>(pixelDir.data()), pixelDir.size())) / L"data" / L"fonts" / L"Mojangles.ttf";
             std::error_code ec;
             if (fs::exists(font, ec)) {
                 ImFontConfig config;
                 config.OversampleH = 1;
                 config.OversampleV = 1;
                 config.PixelSnapH = true;
-                g_fonts.pixel = io.Fonts->AddFontFromFileTTF(font.string().c_str(), std::round(20.0f * g_scale), &config);
+                fonts.pixel = atlas->AddFontFromFileTTF(font.string().c_str(), std::round(20.0f * scale), &config);
             }
         }
     }
-    ImFont* fallback = g_fonts.regular;
-    if (g_fonts.tiny == nullptr) g_fonts.tiny = fallback;
-    if (g_fonts.semibold == nullptr) g_fonts.semibold = fallback;
-    if (g_fonts.title == nullptr) g_fonts.title = g_fonts.semibold;
-    if (g_fonts.hero == nullptr) g_fonts.hero = g_fonts.title;
-    if (g_fonts.lyric == nullptr) g_fonts.lyric = g_fonts.hero;
-    if (g_fonts.line == nullptr) g_fonts.line = g_fonts.title;
-    if (g_fonts.pixel == nullptr) g_fonts.pixel = g_fonts.semibold;
-    io.Fonts->Build();
+    ImFont* fallback = fonts.regular;
+    if (fonts.tiny == nullptr) fonts.tiny = fallback;
+    if (fonts.semibold == nullptr) fonts.semibold = fallback;
+    if (fonts.title == nullptr) fonts.title = fonts.semibold;
+    if (fonts.hero == nullptr) fonts.hero = fonts.title;
+    if (fonts.lyric == nullptr) fonts.lyric = fonts.hero;
+    if (fonts.line == nullptr) fonts.line = fonts.title;
+    if (fonts.pixel == nullptr) fonts.pixel = fonts.semibold;
+    atlas->Build();
+    unsigned char* pixels = nullptr;
+    int w = 0, h = 0;
+    atlas->GetTexDataAsRGBA32(&pixels, &w, &h);  // (ready for the GPU: no work left for the UI thread)
+    return fonts;
+}
+
+// --- THE FONTS ARE BUILT IN THE BACKGROUND ------------------------------------------
+// New letters (a Japanese song name in the Spotify section, say) need a new
+// font atlas: half a second of reading font files, and its blurred copies, two
+// seconds more. Done on the UI thread, the window froze for seconds. So a
+// helper thread builds a whole new atlas (and its blur); the UI keeps drawing
+// with the old one and changes to the new one in a single moment, between two
+// frames (window.cpp). Meanwhile the new letters just show a moment later.
+struct FontJob {
+    ImFontAtlas* atlas = nullptr;  // the new atlas (nullptr: only the blur of the current one)
+    Fonts fonts;
+    std::string pixelDir;
+    std::vector<unsigned char> alpha;  // (blur only: a copy of the current atlas' letters)
+    int w = 0, h = 0;
+    // (already on the GPU: Direct3D 11 lets other threads create textures, so
+    // the UI thread only swaps pointers; sending 16 MB pictures took ~50 ms)
+    ID3D11ShaderResourceView* fontView = nullptr;
+    ID3D11ShaderResourceView* blurView[2] = {nullptr, nullptr};
+};
+std::unique_ptr<FontJob> g_fontJob;
+std::thread g_fontThread;
+std::atomic<bool> g_fontJobDone{false};
+ID3D11ShaderResourceView* g_fontView = nullptr;  // the letters' picture on the GPU (ours, after the first)
+ImFontAtlas* g_oldAtlas = nullptr;                // the one before: the next helper frees it (~50 ms)
+
+// An RGBA picture to the GPU (any thread). nullptr if it fails.
+ID3D11ShaderResourceView* MakeTexture(const void* rgba, int w, int h) {
+    if (g_device == nullptr || rgba == nullptr || w <= 0 || h <= 0) return nullptr;
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = static_cast<UINT>(w);
+    desc.Height = static_cast<UINT>(h);
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA init{rgba, static_cast<UINT>(w * 4), 0};
+    ID3D11Texture2D* texture = nullptr;
+    ID3D11ShaderResourceView* view = nullptr;
+    if (SUCCEEDED(g_device->CreateTexture2D(&desc, &init, &texture))) {
+        g_device->CreateShaderResourceView(texture, nullptr, &view);
+        texture->Release();
+    }
+    return view;
+}
+
+void RunFontJob(FontJob* job, ImFontAtlas* trash, float scale) {
+    if (trash != nullptr) IM_DELETE(trash);  // (an atlas nobody uses any more)
+    const unsigned char* alpha = job->alpha.data();
+    if (job->atlas != nullptr) {
+        job->fonts = BuildFonts(job->atlas, scale, job->pixelDir);
+        unsigned char* pixels = nullptr;
+        job->atlas->GetTexDataAsRGBA32(&pixels, &job->w, &job->h);
+        job->fontView = MakeTexture(pixels, job->w, job->h);
+        unsigned char* a8 = nullptr;
+        job->atlas->GetTexDataAsAlpha8(&a8, &job->w, &job->h);
+        alpha = a8;
+    }
+    if (alpha != nullptr && job->w > 0) {
+        std::vector<std::uint8_t> blur[2];
+        BlurLetters(alpha, job->w, job->h, blur);
+        for (int level = 0; level < 2; ++level) job->blurView[level] = MakeTexture(blur[level].data(), job->w, job->h);
+    }
+    g_fontJobDone.store(true);
+}
+
+bool FontJobDone() {
+    return g_fontJobDone.load();
+}
+
+void StartFontJob(bool blurOnly) {
+    if (g_fontThread.joinable()) return;  // (one at a time; the next one after this)
+    auto job = std::make_unique<FontJob>();
+    if (blurOnly) {
+        unsigned char* alpha = nullptr;
+        ImGui::GetIO().Fonts->GetTexDataAsAlpha8(&alpha, &job->w, &job->h);
+        if (alpha == nullptr) return;
+        job->alpha.assign(alpha, alpha + static_cast<std::size_t>(job->w) * job->h);
+    } else {
+        g_fontsDirty = false;
+        render::fontfallback::BeginBuild();  // (the needed letters, fixed for this build: UI thread)
+        job->atlas = IM_NEW(ImFontAtlas)();
+    }
+    g_fontJobDone.store(false);
+    FontJob* raw = job.get();
+    g_fontJob = std::move(job);
+    ImFontAtlas* trash = g_oldAtlas;
+    g_oldAtlas = nullptr;
+    g_fontThread = std::thread(RunFontJob, raw, trash, g_scale);
+}
+
+void ReleaseFontJob(FontJob& job) {
+    if (job.atlas != nullptr) IM_DELETE(job.atlas);
+    job.atlas = nullptr;
+    if (job.fontView != nullptr) job.fontView->Release();
+    job.fontView = nullptr;
+    for (auto*& v : job.blurView) {
+        if (v != nullptr) v->Release();
+        v = nullptr;
+    }
+}
+
+void StopFontJob() {
+    if (g_fontThread.joinable()) g_fontThread.join();
+    if (g_fontJob) ReleaseFontJob(*g_fontJob);
+    g_fontJob.reset();
+    if (g_oldAtlas != nullptr) IM_DELETE(g_oldAtlas);
+    g_oldAtlas = nullptr;
+    if (g_fontView != nullptr) g_fontView->Release();
+    g_fontView = nullptr;
+}
+
+// The first fonts, at the start (there is nothing to draw with yet): built
+// right here; only their blur goes to the helper thread.
+void BuildFirstFonts() {
+    g_fontsDirty = false;
+    render::fontfallback::BeginBuild();
+    g_fonts = BuildFonts(ImGui::GetIO().Fonts, g_scale, g_pixelFontDir);
+    StartFontJob(true);
+}
+
+void AppRebuildFonts() {
+    // (window.cpp calls this between two frames, when AppFontsDirty says a
+    // finished build is waiting: the new atlas takes the old one's place, and
+    // that is only a few pointers)
+    if (!g_fontJobDone.load()) return;
+    g_fontThread.join();
+    std::unique_ptr<FontJob> job = std::move(g_fontJob);
+    g_fontJobDone.store(false);
+    if (job->atlas != nullptr) {
+        if (job->fontView == nullptr) {  // (the GPU said no: keep the fonts we have)
+            ReleaseFontJob(*job);
+            return;
+        }
+        ImGuiIO& io = ImGui::GetIO();
+        if (g_oldAtlas != nullptr) IM_DELETE(g_oldAtlas);  // (rare: two changes with no job between)
+        g_oldAtlas = io.Fonts;
+        io.Fonts = job->atlas;
+        job->atlas = nullptr;
+        g_fonts = job->fonts;
+        g_pixelFontDir = job->pixelDir;
+        if (g_fontView != nullptr) g_fontView->Release();  // (the backend keeps its first one until the end)
+        g_fontView = job->fontView;
+        job->fontView = nullptr;
+        io.Fonts->SetTexID(reinterpret_cast<ImTextureID>(g_fontView));
+    }
+    ReleaseBlurAtlas();
+    for (int level = 0; level < 2; ++level) {
+        g_blurAtlas[level] = job->blurView[level];
+        job->blurView[level] = nullptr;
+    }
 }
 
 void AppFrame() {
-    if (g_blurAtlasDirty) BuildBlurAtlas();
+    if (g_fontsDirty) StartFontJob(false);  // (new letters or a new size: in the background)
     TickTheme(Dt());  // (the soft change between dark and light)
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     const Palette& p = P();
@@ -8102,6 +8253,7 @@ void AppShutdown() {
     luma::launcher::spotifyengine::Stop();  // (closes Luma's own player, Soloist)
     luma::launcher::smtc::Shutdown();
     spotify::Shutdown();
+    StopFontJob();
     ReleaseBlurAtlas();
     lyrics::Shutdown();
     audioviz::Shutdown();

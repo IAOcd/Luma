@@ -217,11 +217,9 @@ void Render(HWND hwnd) {
     struct Done {
         ~Done() { rendering = false; }
     } done;
-    if (AppFontsDirty()) {
-        ImGui_ImplDX11_InvalidateDeviceObjects();
-        AppRebuildFonts();
-        ImGui_ImplDX11_CreateDeviceObjects();
-    }
+    // New fonts, built in the background (app.cpp): they take the old ones' place
+    // here, between two frames (app.cpp sends their picture to the GPU).
+    if (AppFontsDirty()) AppRebuildFonts();
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();

@@ -97,6 +97,10 @@ void BeginBuild() {
 }
 
 void MergeInto(ImGuiIO& io, float size) {
+    MergeInto(io.Fonts, size);
+}
+
+void MergeInto(ImFontAtlas* atlas, float size) {
     for (int g = 0; g < kGroupCount; ++g) {
         if (g_ranges[g].empty()) continue;
         for (int f = 0; f < 4; ++f) {
@@ -107,7 +111,7 @@ void MergeInto(ImGuiIO& io, float size) {
             config.OversampleV = 1;
             config.GlyphRanges = g_ranges[g].data();
             const std::string path = paths::ToUtf8(g_fontsDir / kFiles[g][f]);
-            io.Fonts->AddFontFromFileTTF(path.c_str(), size, &config);
+            atlas->AddFontFromFileTTF(path.c_str(), size, &config);
         }
     }
 }

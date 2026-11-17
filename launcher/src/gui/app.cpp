@@ -50,6 +50,7 @@
 #include "account.h"
 #include "core/audio_viz.h"
 #include "core/lyrics.h"
+#include "core/spotify.h"
 #include "flow_presets.h"
 #include "flow_styles.h"
 #include "render/font_fallback.h"
@@ -2469,6 +2470,7 @@ struct State {
     float offset = 0.0f;     // "lyricsOffset" (seconds)
     nlohmann::json look = nlohmann::json::object();  // how it looks now (to save it as your style)
     int user = -1;           // which of YOUR styles it is (-1 = none)
+    std::string spotifyClientId;  // "spotifyClientId": your Spotify app (the same as the game's)
     bool moduleOn = true;    // the "Now playing" module is on (it draws them)
 };
 State g_state;
@@ -2622,6 +2624,8 @@ void Refresh(bool force = false) {
             const auto settings = np->find("settings");
             if (settings != np->end() && settings->is_object()) {
                 s.offset = Get(*settings, "lyricsOffset", 0.0f);
+                const auto sid = settings->find("spotifyClientId");
+                if (sid != settings->end() && sid->is_string()) s.spotifyClientId = sid->get<std::string>();
                 const auto flow = settings->find("lyricFlow");
                 if (flow != settings->end() && flow->is_object()) {
                     s.on = Get(*flow, "on", false);
@@ -4031,6 +4035,282 @@ void DrawStageSong(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t,
     g_fade = savedFade;
 }
 
+// =============================================================================
+//  THE SPOTIFY SECTION (part S1: the connection)
+// =============================================================================
+//  The same connection as the game (client/core/spotify.cpp): your own small
+//  Spotify app (its Client ID), Spotify's own sign-in page in your browser,
+//  and the pass saved encrypted in %APPDATA%\Luma\spotify.dat. Connect here
+//  or in the game: both are connected. The Client ID is kept in your Luma
+//  profile (the same setting the game's Music page uses).
+// =============================================================================
+
+// Spotify's logo (its official shape: the circle and its three waves), from
+// Simple Icons (simpleicons.org, CC0). Spotify's own brand rules: use it as
+// it is, in Spotify green (or white/black), never changed.
+constexpr const char* kSpotifyLogo =
+    "F M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-"
+    "10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-"
+    "3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 "
+    "10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2"
+    ".72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z";
+const ImVec4 kSpotifyGreen(0.118f, 0.843f, 0.376f, 1.0f);  // #1ED760
+
+void DrawSpotifyLogo(ImDrawList* d, ImVec2 c, float size, float alpha) {
+    d->AddCircleFilled(c, size * 0.46f, C(ImVec4(0, 0, 0, 1), alpha), 48);  // (the waves are holes: black under them)
+    icons::Draw(d, kSpotifyLogo, c, size, C(kSpotifyGreen, alpha));
+}
+
+// A Client ID looks like 32 letters/numbers from 0-9 and a-f.
+bool LooksLikeClientId(const std::string& s) {
+    if (s.size() != 32) return false;
+    for (char c : s) {
+        if (!std::isxdigit(static_cast<unsigned char>(c))) return false;
+    }
+    return true;
+}
+
+std::string CleanClientId(const char* text) {
+    std::string out;
+    for (const char* c = text; *c != '\0'; ++c) {
+        if (!std::isspace(static_cast<unsigned char>(*c)) && *c != '"' && *c != '\'') out.push_back(*c);
+    }
+    return out;
+}
+
+// Keeps the connection's Client ID the one in your profile (the game's too).
+void SyncSpotifyClientId() {
+    static std::string applied = "\x01";
+    if (flowcfg::g_state.spotifyClientId != applied) {
+        applied = flowcfg::g_state.spotifyClientId;
+        spotify::SetClientId(applied);
+    }
+}
+
+void SaveSpotifyClientId(const std::string& id) {
+    flowcfg::ChangeProfile([&](nlohmann::json& profile) { flowcfg::SettingsOf(profile)["spotifyClientId"] = id; });
+    SyncSpotifyClientId();
+}
+
+// A small button made of text in a pill (Open, Copy, Paste...).
+bool SmallPill(ImDrawList* d, const char* id, ImVec2 pos, const char* icon, const char* label, bool strong, float* outWidth = nullptr) {
+    const Palette& p = P();
+    const ImVec2 ts = TextSize(g_fonts.semibold, label);
+    const float w = ts.x + (icon != nullptr ? S(44.0f) : S(28.0f)), h = S(34.0f);
+    if (outWidth != nullptr) *outWidth = w;
+    float hover = 0.0f;
+    const bool clicked = Hit(id, pos, ImVec2(pos.x + w, pos.y + h), &hover);
+    const float press = Anim(ImGui::GetID(id) + 2, ImGui::IsItemActive(), 22.0f);
+    const ImVec2 a(pos.x + S(1.0f) * press, pos.y + S(1.0f) * press), b(pos.x + w - S(1.0f) * press, pos.y + h - S(1.0f) * press);
+    if (strong) {
+        d->AddRectFilled(a, b, C(Mix(kSpotifyGreen, ImVec4(1, 1, 1, 1), 0.12f * hover)), h * 0.5f);
+    } else {
+        d->AddRectFilled(a, b, C(p.text, 0.07f + 0.07f * hover), h * 0.5f);
+        d->AddRect(a, b, C(ImVec4(1, 1, 1, 1), 0.12f), h * 0.5f);
+    }
+    const ImVec4 tc = strong ? ImVec4(0.02f, 0.02f, 0.02f, 1.0f) : p.text;
+    float tx = a.x + S(14.0f);
+    if (icon != nullptr) {
+        icons::Draw(d, icon, ImVec2(tx + S(8.0f), (a.y + b.y) * 0.5f), S(15.0f), C(tc), S(1.8f));
+        tx += S(18.0f);
+    }
+    Text(d, g_fonts.semibold, ImVec2(tx, (a.y + b.y - ts.y) * 0.5f), C(tc), label);
+    return clicked;
+}
+
+void DrawSpotifyPage(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    flowcfg::Refresh();
+    SyncSpotifyClientId();
+    const spotify::Status st = spotify::GetStatus();
+    const float W = max.x - min.x;
+    // Header: the logo, the name, what it is
+    DrawSpotifyLogo(d, ImVec2(min.x + S(22.0f), min.y + S(20.0f)), S(40.0f), g_fade);
+    Text(d, g_fonts.title, ImVec2(min.x + S(52.0f), min.y + S(2.0f)), C(p.text), "Spotify");
+    TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(52.0f), min.y + S(8.0f) + g_fonts.title->FontSize), C(p.textDim), T("spotify.subtitle"),
+             std::min(W * 0.6f, S(600.0f)));
+    float y = min.y + S(84.0f);
+    const float now = static_cast<float>(ImGui::GetTime());
+
+    // --- Connected: your account ------------------------------------------------------------
+    if (st.state == spotify::State::Connected) {
+        const ImVec2 cmin(min.x, y), cmax(min.x + std::min(W, S(720.0f)), y + S(150.0f));
+        Card(d, cmin, cmax);
+        const ImVec2 av(cmin.x + S(46.0f), cmin.y + S(46.0f));
+        d->AddCircleFilled(av, S(24.0f), C(kSpotifyGreen, 0.18f), 40);
+        DrawSpotifyLogo(d, av, S(30.0f), g_fade);
+        float tx = av.x + S(40.0f);
+        const std::string name = st.user.empty() ? std::string(T("spotify.connected")) : st.user;
+        Text(d, g_fonts.title, ImVec2(tx, av.y - g_fonts.title->FontSize * 0.55f - S(6.0f)), C(p.text), name.c_str());
+        {
+            const char* plan = st.premium == 1 ? "Premium" : (st.premium == 0 ? "Free" : "...");
+            const ImVec4 pc = st.premium == 1 ? kSpotifyGreen : p.textDim;
+            const ImVec2 ps = TextSize(g_fonts.tiny, plan);
+            const ImVec2 pa(tx, av.y + S(10.0f)), pb(tx + ps.x + S(16.0f), av.y + S(10.0f) + ps.y + S(6.0f));
+            d->AddRectFilled(pa, pb, C(pc, 0.18f), (pb.y - pa.y) * 0.5f);
+            Text(d, g_fonts.tiny, ImVec2(pa.x + S(8.0f), pa.y + S(3.0f)), C(pc), plan);
+            Text(d, g_fonts.tiny, ImVec2(pb.x + S(10.0f), pa.y + S(3.0f)), C(p.textDim), T("spotify.shared"));
+        }
+        float bx = cmin.x + S(22.0f);
+        const float by = cmax.y - S(52.0f);
+        float bw = 0.0f;
+        if (st.outdated) {
+            if (SmallPill(d, "##sp_reconnect", ImVec2(bx, by), icons::kRotate, T("spotify.reconnect"), true, &bw)) spotify::Connect();
+            bx += bw + S(10.0f);
+        }
+        if (SmallPill(d, "##sp_disconnect", ImVec2(bx, by), nullptr, T("spotify.disconnect"), false, &bw)) spotify::Disconnect();
+        y = cmax.y + S(16.0f);
+        // what it means / what comes
+        const char* note = st.outdated ? T("spotify.outdated") : (st.premium == 0 ? T("spotify.free_note") : T("spotify.next_part"));
+        y += TextWrap(d, g_fonts.regular, ImVec2(min.x + S(4.0f), y), C(st.outdated || st.premium == 0 ? p.warning : p.textDim), note,
+                      std::min(W, S(720.0f)));
+        return;
+    }
+
+    // --- Waiting for you in the browser --------------------------------------------------------
+    if (st.state == spotify::State::SigningIn) {
+        const ImVec2 c(min.x + std::min(W, S(720.0f)) * 0.5f, y + S(70.0f));
+        Spinner(d, c, S(18.0f), C(kSpotifyGreen));
+        const char* text = T("spotify.waiting");
+        const ImVec2 ts = TextSize(g_fonts.semibold, text);
+        Text(d, g_fonts.semibold, ImVec2(c.x - ts.x * 0.5f, c.y + S(32.0f)), C(p.text), text);
+        float bw = 0.0f;
+        const char* cancel = T("spotify.cancel");
+        const float cw = TextSize(g_fonts.semibold, cancel).x + S(28.0f);
+        if (SmallPill(d, "##sp_cancel", ImVec2(c.x - cw * 0.5f, c.y + S(64.0f)), nullptr, cancel, false, &bw)) spotify::Disconnect();
+        return;
+    }
+
+    // --- Not connected: the guide, step by step ------------------------------------------------
+    const float colW = std::min(W, S(760.0f));
+    if (st.state == spotify::State::Error) {
+        std::string msg = T("spotify.error");
+        if (!st.error.empty()) msg += "  (" + st.error + ")";
+        Dot(d, ImVec2(min.x + S(10.0f), y + g_fonts.tiny->FontSize * 0.5f), p.danger);
+        TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(22.0f), y), C(p.danger), msg.c_str(), colW - S(22.0f));
+        y += g_fonts.tiny->FontSize * 2.0f + S(8.0f);
+    }
+    Text(d, g_fonts.semibold, ImVec2(min.x + S(4.0f), y), C(p.text), T("spotify.guide_title"));
+    y += g_fonts.semibold->FontSize + S(4.0f);
+    y += TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(4.0f), y), C(p.textDim), T("spotify.guide_why"), colW) + S(12.0f);
+    const bool hasId = LooksLikeClientId(flowcfg::g_state.spotifyClientId);
+    auto step = [&](int n, const char* key, float extraH) {
+        const ImVec2 c(min.x + S(16.0f), y + S(11.0f));
+        const bool done = (n <= 4 && hasId) || (n == 5 && hasId);
+        d->AddCircleFilled(c, S(12.0f), C(done ? kSpotifyGreen : p.text, done ? 1.0f : 0.10f), 32);
+        if (done) {
+            icons::Draw(d, kIconCheck, c, S(12.0f), C(ImVec4(0.02f, 0.02f, 0.02f, 1)), S(2.4f));
+        } else {
+            char num[4];
+            std::snprintf(num, sizeof(num), "%d", n);
+            const ImVec2 ns = TextSize(g_fonts.semibold, num);
+            Text(d, g_fonts.semibold, ImVec2(c.x - ns.x * 0.5f, c.y - ns.y * 0.5f), C(p.text), num);
+        }
+        const float th = TextWrap(d, g_fonts.regular, ImVec2(min.x + S(40.0f), y + S(1.0f)), C(p.text), T(key), colW - S(40.0f));
+        const float rowY = y + std::max(th, S(22.0f)) + S(8.0f);
+        y = rowY + extraH;
+        return rowY;
+    };
+    float bw = 0.0f;
+    {
+        const float ry = step(1, "spotify.step1", S(42.0f));
+        if (SmallPill(d, "##sp_open", ImVec2(min.x + S(40.0f), ry), icons::kAppWindow, T("spotify.open_dashboard"), false, &bw)) {
+            ShellExecuteW(nullptr, L"open", L"https://developer.spotify.com/dashboard", nullptr, nullptr, SW_SHOWNORMAL);
+        }
+    }
+    step(2, "spotify.step2", S(6.0f));
+    {
+        const float ry = step(3, "spotify.step3", S(42.0f));
+        // the address, as code, with "Copy"
+        const char* uri = spotify::kRedirectUri;
+        const ImVec2 us = TextSize(g_fonts.semibold, uri);
+        const ImVec2 a(min.x + S(40.0f), ry), b(a.x + us.x + S(24.0f), ry + S(34.0f));
+        d->AddRectFilled(a, b, C(ImVec4(0, 0, 0, 1), 0.30f), S(8.0f));
+        Text(d, g_fonts.semibold, ImVec2(a.x + S(12.0f), (a.y + b.y - us.y) * 0.5f), C(kSpotifyGreen), uri);
+        static double copiedAt = -10.0;
+        const bool copied = ImGui::GetTime() - copiedAt < 1.5;
+        if (SmallPill(d, "##sp_copyuri", ImVec2(b.x + S(10.0f), ry), copied ? kIconCheck : icons::kCopy, copied ? T("opt.copied") : T("spotify.copy"),
+                      false, &bw)) {
+            ImGui::SetClipboardText(uri);
+            copiedAt = ImGui::GetTime();
+        }
+    }
+    step(4, "spotify.step4", S(6.0f));
+    {
+        const float ry = step(5, "spotify.step5", S(46.0f));
+        // the Client ID box (edit in place, or paste)
+        static char buf[80] = "";
+        static bool init = false;
+        if (!init || (!ImGui::IsAnyItemActive() && flowcfg::g_state.spotifyClientId != buf && !ImGui::IsItemActive())) {
+            static std::string last;
+            if (!init || last != flowcfg::g_state.spotifyClientId) {
+                std::snprintf(buf, sizeof(buf), "%s", flowcfg::g_state.spotifyClientId.c_str());
+                last = flowcfg::g_state.spotifyClientId;
+            }
+            init = true;
+        }
+        const float boxW = S(380.0f);
+        const ImVec2 a(min.x + S(40.0f), ry), b(a.x + boxW, ry + S(38.0f));
+        const std::string cleaned = CleanClientId(buf);
+        const bool ok = LooksLikeClientId(cleaned);
+        d->AddRectFilled(a, b, C(ImVec4(0, 0, 0, 1), 0.30f), S(10.0f));
+        d->AddRect(a, b, C(cleaned.empty() ? ImVec4(1, 1, 1, 0.15f) : (ok ? kSpotifyGreen : p.warning), cleaned.empty() ? 1.0f : 0.8f),
+                   S(10.0f), 0, S(1.5f));
+        ImGui::SetCursorScreenPos(ImVec2(a.x + S(12.0f), (a.y + b.y - g_fonts.semibold->FontSize) * 0.5f - S(3.0f)));
+        ImGui::PushFont(g_fonts.semibold);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_Text, p.text);
+        ImGui::PushStyleColor(ImGuiCol_TextDisabled, p.textDim);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, S(3.0f)));
+        ImGui::SetNextItemWidth(boxW - S(24.0f));
+        const bool edited = ImGui::InputTextWithHint("##sp_clientid", T("spotify.client_id_hint"), buf, sizeof(buf));
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(3);
+        ImGui::PopFont();
+        if (edited) {
+            const std::string id = CleanClientId(buf);
+            if (id.empty() || LooksLikeClientId(id)) SaveSpotifyClientId(id);
+        }
+        float x = b.x + S(10.0f);
+        if (SmallPill(d, "##sp_paste", ImVec2(x, ry + S(2.0f)), nullptr, T("spotify.paste"), false, &bw)) {
+            const char* clip = ImGui::GetClipboardText();
+            if (clip != nullptr) {
+                std::snprintf(buf, sizeof(buf), "%s", CleanClientId(clip).c_str());
+                const std::string id = CleanClientId(buf);
+                if (LooksLikeClientId(id)) SaveSpotifyClientId(id);
+            }
+        }
+        if (!cleaned.empty() && !ok) {
+            Text(d, g_fonts.tiny, ImVec2(a.x + S(4.0f), b.y + S(4.0f)), C(p.warning), T("spotify.bad_id"));
+        }
+    }
+    // 6. Connect
+    {
+        const float ry = step(6, "spotify.step6", S(50.0f));
+        const char* label = T("spotify.connect");
+        if (!hasId) {
+            const ImVec2 ts = TextSize(g_fonts.semibold, label);
+            const ImVec2 a(min.x + S(40.0f), ry), b(a.x + ts.x + S(64.0f), ry + S(40.0f));
+            d->AddRectFilled(a, b, C(p.text, 0.06f), S(20.0f));
+            Text(d, g_fonts.semibold, ImVec2(a.x + S(44.0f), (a.y + b.y - ts.y) * 0.5f), C(p.textDim), label);
+            DrawSpotifyLogo(d, ImVec2(a.x + S(24.0f), (a.y + b.y) * 0.5f), S(20.0f), 0.4f * g_fade);
+        } else {
+            const ImVec2 ts = TextSize(g_fonts.semibold, label);
+            const ImVec2 a(min.x + S(40.0f), ry), b(a.x + ts.x + S(64.0f), ry + S(40.0f));
+            float hover = 0.0f;
+            if (Hit("##sp_connect", a, b, &hover)) spotify::Connect();
+            const float breathe = 0.5f + 0.5f * std::sin(now * 2.2f);
+            SoftLightOval(d, ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f), (b.x - a.x) * 0.75f, S(40.0f), kSpotifyGreen,
+                          (0.35f + 0.25f * breathe + 0.3f * hover) * g_fade);
+            d->AddRectFilled(a, b, C(Mix(kSpotifyGreen, ImVec4(1, 1, 1, 1), 0.12f * hover)), S(20.0f));
+            d->AddCircleFilled(ImVec2(a.x + S(24.0f), (a.y + b.y) * 0.5f), S(10.0f), C(ImVec4(0, 0, 0, 1)), 24);
+            icons::Draw(d, kSpotifyLogo, ImVec2(a.x + S(24.0f), (a.y + b.y) * 0.5f), S(20.0f), C(kSpotifyGreen));
+            Text(d, g_fonts.semibold, ImVec2(a.x + S(44.0f), (a.y + b.y - ts.y) * 0.5f), C(ImVec4(0.02f, 0.02f, 0.02f, 1)), label);
+        }
+    }
+    TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(4.0f), std::min(y, max.y - S(30.0f))), C(p.textDim), T("spotify.premium_note"), colW);
+}
+
 // The dock: the sections, in a glass pill at the bottom.
 void DrawDock(ImDrawList* d, ImVec2 display) {
     const Palette& p = P();
@@ -4042,7 +4322,7 @@ void DrawDock(ImDrawList* d, ImVec2 display) {
     const Item items[] = {
         {Page::Home, kIconHome, "nav.home"},
         {Page::Lyrics, icons::kList, "nav.lyrics"},
-        {Page::Spotify, icons::kMusic2, "nav.spotify"},
+        {Page::Spotify, kSpotifyLogo, "nav.spotify"},
         {Page::Settings, kIconSliders, "nav.settings"},
     };
     constexpr int kCount = 4;
@@ -4216,7 +4496,7 @@ void DrawSheet(ImDrawList* d, ImVec2 display, const account::Info& acc, const Lo
     d->PushClipRect(min, max, true);
     switch (g_sheetPage) {
         case Page::Lyrics: DrawLyricsPage(d, cmin, cmax, data); break;
-        case Page::Spotify: DrawComingSoon(d, cmin, cmax, icons::kMusic2, "nav.spotify", "spotify.soon_text"); break;
+        case Page::Spotify: DrawSpotifyPage(d, cmin, cmax); break;
         default: DrawSettings(d, cmin, cmax, acc, data); break;
     }
     d->PopClipRect();
@@ -5246,6 +5526,7 @@ void AppFrame() {
     const media::Track track = media::Current();
     UpdateMusic(track, visible);
     flowcfg::Refresh();  // (the lyrics' offset, the style chosen in the game)
+    SyncSpotifyClientId();  // (the Spotify connection, shared with the game)
     UpdateLyrics(track, visible);
 
     // Al terminar JUGAR con éxito: minimizar (un instante después, para que
@@ -5293,6 +5574,7 @@ void AppFrame() {
 
 void AppShutdown() {
     g_quit.store(true);
+    spotify::Shutdown();
     ReleaseBlurAtlas();
     lyrics::Shutdown();
     audioviz::Shutdown();

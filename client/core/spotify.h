@@ -46,6 +46,13 @@ enum class State {
 struct Status {
     State state = State::NoClientId;
     std::string error;  // a short reason when state == Error
+    // Your account (once connected; empty / -1 until it's asked).
+    std::string user;    // your name on Spotify
+    int premium = -1;    // 1 Premium, 0 Free (Spotify only lets Premium control the music), -1 unknown
+    // Connected with an older Luma that asked for fewer permissions (only to
+    // see the queue): connect again to give the new ones (control the music,
+    // your library, your playlists).
+    bool outdated = false;
 };
 
 struct QueueItem {

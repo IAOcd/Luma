@@ -32,7 +32,15 @@ namespace luma::spotify {
 namespace {
 
 constexpr unsigned short kPort = 43821;
-constexpr const char* kScope = "user-read-playback-state user-read-currently-playing";
+// What Luma asks Spotify for (you accept it on Spotify's page). Seeing what
+// plays and your queue; controlling the music (Premium); your library (Liked
+// songs: read and add/remove), your playlists and what you played lately.
+constexpr const char* kScope =
+    "user-read-playback-state user-read-currently-playing user-modify-playback-state "
+    "user-library-read user-library-modify playlist-read-private playlist-read-collaborative "
+    "user-read-recently-played user-read-private";  // (private: only to know if the account is Premium)
+// The permission that the newest Luma needs (if the saved one lacks it: connect again).
+constexpr const char* kNewestScope = "user-read-private";
 
 std::mutex g_mutex;          // protects everything below that's not atomic
 std::string g_clientId;
@@ -212,6 +220,19 @@ std::string LoadPass() {
 void DeletePass() {
     std::error_code ec;
     std::filesystem::remove(PassPath(), ec);
+    std::filesystem::remove(paths::DataDir() / L"spotify_scope.txt", ec);
+}
+
+// What permissions the saved pass has (not secret: just their names).
+void SaveScope(const std::string& scope) {
+    std::ofstream(paths::DataDir() / L"spotify_scope.txt", std::ios::binary | std::ios::trunc) << scope;
+}
+std::string LoadScope() {
+    std::ifstream file(paths::DataDir() / L"spotify_scope.txt", std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+}
+bool ScopeOutdated() {
+    return std::filesystem::exists(PassPath()) && LoadScope().find(kNewestScope) == std::string::npos;
 }
 
 // --- Tokens ---------------------------------------------------------------------------------
@@ -235,6 +256,7 @@ int Redeem(const std::string& form) {
     g_accessExpires = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(60, j.value("expires_in", 3600) - 60));
     // Spotify may give a new pass (they rotate): keep the newest.
     if (j.contains("refresh_token") && j["refresh_token"].is_string()) SavePass(j["refresh_token"].get<std::string>());
+    if (j.contains("scope") && j["scope"].is_string()) SaveScope(j["scope"].get<std::string>());
     return 1;
 }
 
@@ -247,7 +269,15 @@ bool EnsureToken() {
         SetState(clientId.empty() ? State::NoClientId : State::SignedOut);
         return false;
     }
-    const int r = Redeem("grant_type=refresh_token&refresh_token=" + UrlEncode(pass) + "&client_id=" + UrlEncode(clientId));
+    int r = Redeem("grant_type=refresh_token&refresh_token=" + UrlEncode(pass) + "&client_id=" + UrlEncode(clientId));
+    if (r == 0) {
+        // The game and the launcher share this pass, and Spotify may give a new
+        // one each time it's used: if the other one just changed it, use that.
+        const std::string newer = LoadPass();
+        if (!newer.empty() && newer != pass) {
+            r = Redeem("grant_type=refresh_token&refresh_token=" + UrlEncode(newer) + "&client_id=" + UrlEncode(clientId));
+        }
+    }
     if (r == 0) {
         DeletePass();  // revoked or expired: you need to connect again
         g_accessToken.clear();
@@ -355,6 +385,27 @@ void RunConnect() {
     SetState(State::Connected);
 }
 
+// --- Your account (name, Premium or not) ----------------------------------------------------
+bool g_profileAsked = false;  // (only the thread)
+
+void FetchProfile() {
+    if (!EnsureToken()) return;
+    std::string body;
+    const int status = Https(L"api.spotify.com", L"GET", "/v1/me", "Authorization: Bearer " + g_accessToken + "\r\n", {}, body);
+    if (status == 401) {
+        g_accessToken.clear();
+        return;
+    }
+    g_profileAsked = true;
+    if (status != 200) return;
+    const auto j = nlohmann::json::parse(body, nullptr, false);
+    if (!j.is_object()) return;
+    std::lock_guard lock(g_mutex);
+    g_status.user = j.value("display_name", j.value("id", std::string()));
+    const std::string product = j.value("product", std::string());
+    g_status.premium = product.empty() ? -1 : (product == "premium" ? 1 : 0);
+}
+
 // --- The queue ------------------------------------------------------------------------------
 void PublishQueue(std::vector<QueueItem> items) {
     std::lock_guard lock(g_mutex);
@@ -407,6 +458,7 @@ void ThreadMain() {
     while (!g_stop.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         if (g_disconnectRequested.exchange(false)) {
+            g_profileAsked = false;
             DeletePass();
             g_accessToken.clear();
             PublishQueue({});
@@ -416,6 +468,23 @@ void ThreadMain() {
         if (g_connectRequested.exchange(false)) {
             RunConnect();
             lastTrack = 0;  // ask for the queue right away
+            g_profileAsked = false;
+        }
+        {
+            const bool outdated = ScopeOutdated();
+            std::lock_guard lock(g_mutex);
+            g_status.outdated = outdated && g_status.state == State::Connected;
+            if (g_status.state != State::Connected) {
+                g_status.user.clear();
+                g_status.premium = -1;
+            }
+        }
+        if (!g_profileAsked && std::filesystem::exists(PassPath()) && !ClientId().empty()) {
+            try {
+                FetchProfile();
+            } catch (...) {
+            }
+            g_profileAsked = true;  // (once per connection; a failure isn't retried in a loop)
         }
         if (!g_active.load()) continue;
         const media::Track t = media::Current();

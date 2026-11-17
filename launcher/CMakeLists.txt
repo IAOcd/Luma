@@ -46,6 +46,7 @@ add_executable(LumaLauncher WIN32
     # The lyrics too (looked up and timed like in the game), and the letters
     # of other alphabets for them.
     ${PROJECT_SOURCE_DIR}/client/core/lyrics.cpp
+    ${PROJECT_SOURCE_DIR}/client/core/spotify.cpp   # the Spotify connection (the same as the game's)
     ${PROJECT_SOURCE_DIR}/client/core/text_bidi.cpp
     ${PROJECT_SOURCE_DIR}/client/core/paths.cpp
     ${PROJECT_SOURCE_DIR}/client/render/font_fallback.cpp

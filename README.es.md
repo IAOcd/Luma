@@ -7,14 +7,12 @@ Es una DLL que se carga dentro del juego oficial y le agrega un overlay, un HUD 
 
 Luma **no** incluye nada que dé ventaja en multijugador: nada de killaura, fly, reach, xray, ESP, autoclicker, etc.
 
-> **Estado:** fases 0 a 8 casi completas, y el launcher con ventana (partes 1 y 2).
-> - **HUD:** keystrokes, FPS, CPS, reloj, coordenadas, brújula, velocidad, ping, armadura, ítem en mano, contador de ítems, muñeco movible y marca de agua. Todo se edita en el editor de HUD: se arrastra, se cambia de tamaño desde las esquinas y se alinea con "imanes".
-> - **Visual:** mira personalizada, post-procesado, fullbright, freelook, zoom (con modos cinematográficos), FOV, contorno de bloque y hitboxes, dibujados dentro del mundo.
-> - **Rendimiento:** overlay de frametime, benchmark exportable a CSV y optimizaciones del proceso, cada una por separado y medible.
-> - **Launcher:** ventana con temas oscuro y claro, botón PLAY que abre el juego e inyecta Luma, estadísticas, noticias, ajustes en inglés, español y portugués, e inicio de sesión opcional con Microsoft/Xbox.
+> **Estado: Luma es un client de música (desde la 0.7.0).** Luma se enfoca en una sola cosa: la música dentro de Minecraft, y está pensado para usarse **junto a otros clients** (Flarial, por ahora). El HUD general, el zoom, el freelook, la free cam, las optimizaciones y lo demás siguen en el código, pero apagados (`client/core/features.h`, `kMusicOnly`).
+> - **En el juego:** *Sonando ahora* (7 estilos), letras palabra por palabra, **Lyric Flow** (la letra escrita en tu mundo, con estilos listos y efectos), el visualizador, la página *Música* y el *Halo* del menú radial.
+> - **El launcher:** tu canción al centro sobre los colores vivos del álbum, su letra, un dock de vidrio, la sección **Spotify** con **el reproductor propio de Luma**, la sección **Letras** (estilos compartidos con el juego) y Ajustes. En inglés, español y portugués.
 > - **Menú:** se abre con **L**. **Fin (End)** descarga Luma sin cerrar el juego.
 >
-> **Novedades de la 0.3.0:** menú nuevo en el juego (en inglés, español y portugués), skins que cambian al instante sin pasar por el vestidor, mira pintada a mano (8x8 a 64x64), colores rainbow, lista de jugadores con Tab, scoreboard movible, menú radial y Closet. Las notas completas están en `release/notes/0.3.0.json`.
+> **Novedades de la 0.7.0:** el launcher nuevo, Spotify dentro de él con el reproductor propio de Luma, Lyric Flow dibujado por el juego con efectos y estilos listos, y Luma funcionando junto a Flarial. Las notas completas están en `release/notes/0.7.0.json`.
 
 ---
 
@@ -25,6 +23,7 @@ Luma **no** incluye nada que dé ventaja en multijugador: nada de killaura, fly,
 | **Visual Studio 2022** (Community es gratis) | Trae el compilador de C++, que convierte el código en `.exe` y `.dll` | En el instalador, marca la carga de trabajo **"Desarrollo para el escritorio con C++"** |
 | **CMake** 3.24 o superior | Lee las "recetas" `CMakeLists.txt` y genera el proyecto de Visual Studio | `winget install Kitware.CMake`, o en el instalador de Visual Studio: "Herramientas de CMake de C++ para Windows" |
 | **Git** | Guarda el historial de cambios del proyecto | `winget install Git.Git` |
+| **Rust** (opcional) | Compila `luma-spotify.exe`, el reproductor de Spotify propio de Luma (`launcher/player`). Sin él lo demás compila igual; la compilación oficial lo necesita | `winget install Rustlang.Rustup` |
 
 Las bibliotecas externas (MinHook, Dear ImGui, nlohmann/json, nanosvg) **no hay que instalarlas**: CMake las descarga solo la primera vez que configuras el proyecto. Por eso esa primera vez necesitas internet.
 
@@ -147,6 +146,11 @@ El módulo de música (*Reproduciendo*) muestra lo que Windows dice que está so
 
 ### El launcher
 
+- **El escenario (Inicio):** la canción que suena al centro (el mismo código de música del juego), sobre la carátula difuminada y sus colores, que fluyen despacio (se puede apagar). El color del álbum tiñe todo el launcher. Bajo el artista, la línea que se canta se llena palabra por palabra; el botón del micrófono abre la vista grande de la letra. Teclas: Espacio pausa, las flechas mueven 5 segundos, Ctrl+flechas cambian de canción, arriba/abajo el volumen.
+- **Spotify** (`client/core/spotify.cpp`, la misma conexión que el juego): tu biblioteca, playlists, álbumes, artistas, buscador (Ctrl+K), cola, dispositivos, radio y un menú de opciones. Necesita el Client ID de tu propia app de Spotify (la sección trae una guía paso a paso).
+- **El reproductor propio de Luma** (`launcher/player`, Rust sobre [librespot](https://github.com/librespot-org/librespot), la misma idea que el reproductor integrado de Spotifast): un dispositivo de Spotify Connect llamado "Luma" que suena por Windows sin la app de Spotify. Necesita **Spotify Premium** y se aprueba una vez en el navegador. Viaja **dentro** de `LumaLauncher.exe` y se escribe en `%APPDATA%\Luma\bin\` al usarlo. librespot no está hecho ni respaldado por Spotify. Su volumen es el volumen de Windows de ese sonido, compartido con la página de música del juego.
+- **Sección Letras:** los estilos de Lyric Flow con un escenario que muestra la línea que suena con tu estilo, tus estilos guardados, dónde se ven (cielo o mundo) y la sincronía de la letra. Es el mismo perfil que usa el juego: el juego toma los cambios en vivo.
+- **Carátulas en alta calidad:** la de Spotify de 640 px cuando suena por Spotify; la de Apple Music de 1000 px para otras apps que dan una chica.
 - **Ventana propia:** Win32 + Direct3D 11 + Dear ImGui (`launcher/src/gui/`). Se mueve desde la barra de arriba, se agranda desde los bordes y tiene la sombra y las esquinas redondeadas de Windows 11.
 - **Temas:** oscuro y claro, sacados de los dos colores del logo. Se cambian con el botón del sol o la luna, arriba a la derecha.
 - **Idiomas:** inglés, español y portugués, se elige en *Ajustes*. Los textos están en `shared/i18n.cpp`, una línea por texto con los tres idiomas. El menú del juego va a usar los mismos textos.

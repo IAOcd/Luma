@@ -1,0 +1,70 @@
+{
+  "notes": {
+    "en": [
+      {
+        "title": "Luma is now a music client",
+        "body": "Luma focuses on one thing: music inside Minecraft. It's made to be used alongside other clients like Flarial, and works on top of them. The general HUD, zoom, freelook, free cam and optimizations are turned off, so nothing clashes with what your other client already does, and Luma costs less."
+      },
+      {
+        "title": "A brand new launcher",
+        "body": "Your song in the middle over the album's living colors, its lyrics filling word by word, a big lyrics view, a glass dock and the album's color tinting everything. Space pauses, the arrows move through the song and change it, and the volume keys work too. New Settings and Lyrics sections, with a stage that shows the line being sung in your style."
+      },
+      {
+        "title": "Spotify inside Luma",
+        "body": "Your library, playlists, albums, artists, search, queue, devices and radio, right in the launcher. With Spotify Premium, Luma's own player can play the music without the Spotify app: approve it once in the browser and it shows up as a device called Luma. Its volume is shared with the game's music page."
+      },
+      {
+        "title": "Lyric Flow, alive",
+        "body": "The lyrics written in your world are now drawn by the game itself, so blocks cover them. They fill word by word with glows, particles and shadows, and come in ready-made styles (Karaoke, Neon, Party, Dream, Fire, Minimal). Save your own styles and use them from the game or the launcher."
+      },
+      {
+        "title": "Sharper album art",
+        "body": "Spotify's own art when it plays from Spotify, and Apple Music's when another app gives a small one."
+      }
+    ],
+    "es": [
+      {
+        "title": "Luma ahora es un client de música",
+        "body": "Luma se enfoca en una sola cosa: la música dentro de Minecraft. Está pensado para usarse junto a otros clients como Flarial, y funciona encima de ellos. El HUD general, el zoom, el freelook, la free cam y las optimizaciones quedan apagados, así nada choca con lo que ya hace tu otro client, y Luma cuesta menos."
+      },
+      {
+        "title": "Un launcher totalmente nuevo",
+        "body": "Tu canción al centro sobre los colores vivos del álbum, su letra llenándose palabra por palabra, una vista grande de la letra, un dock de vidrio y el color del álbum tiñéndolo todo. Espacio pausa, las flechas avanzan en la canción y la cambian, y las teclas de volumen también funcionan. Secciones nuevas de Ajustes y Letras, con un escenario que muestra la línea que suena con tu estilo."
+      },
+      {
+        "title": "Spotify dentro de Luma",
+        "body": "Tu biblioteca, playlists, álbumes, artistas, buscador, cola, dispositivos y radio, en el launcher. Con Spotify Premium, el reproductor propio de Luma puede sonar sin la app de Spotify: lo apruebas una vez en el navegador y aparece como un dispositivo llamado Luma. Su volumen se comparte con la página de música del juego."
+      },
+      {
+        "title": "Lyric Flow, con vida",
+        "body": "La letra escrita en tu mundo ahora la dibuja el propio juego, así los bloques la tapan. Se llena palabra por palabra con brillos, partículas y sombras, y trae estilos listos (Karaoke, Neón, Fiesta, Sueño, Fuego, Mínimo). Guarda tus propios estilos y úsalos desde el juego o el launcher."
+      },
+      {
+        "title": "Carátulas más nítidas",
+        "body": "La carátula de Spotify cuando suena por Spotify, y la de Apple Music cuando otra app da una chica."
+      }
+    ],
+    "pt": [
+      {
+        "title": "O Luma agora é um client de música",
+        "body": "O Luma foca em uma coisa só: a música dentro do Minecraft. Ele foi feito para ser usado junto com outros clients como o Flarial, e funciona por cima deles. O HUD geral, o zoom, o freelook, a free cam e as otimizações ficam desligados, assim nada choca com o que o seu outro client já faz, e o Luma pesa menos."
+      },
+      {
+        "title": "Um launcher totalmente novo",
+        "body": "Sua música no centro sobre as cores vivas do álbum, a letra se preenchendo palavra por palavra, uma visão grande da letra, um dock de vidro e a cor do álbum tingindo tudo. Espaço pausa, as setas avançam na música e trocam de faixa, e as teclas de volume também funcionam. Novas seções de Ajustes e Letras, com um palco que mostra a linha cantada no seu estilo."
+      },
+      {
+        "title": "Spotify dentro do Luma",
+        "body": "Sua biblioteca, playlists, álbuns, artistas, busca, fila, dispositivos e rádio, no launcher. Com o Spotify Premium, o player do próprio Luma toca sem o app do Spotify: aprove uma vez no navegador e ele aparece como um dispositivo chamado Luma. O volume é compartilhado com a página de música do jogo."
+      },
+      {
+        "title": "Lyric Flow, com vida",
+        "body": "A letra escrita no seu mundo agora é desenhada pelo próprio jogo, então os blocos a cobrem. Ela se preenche palavra por palavra com brilhos, partículas e sombras, e traz estilos prontos (Karaokê, Neon, Festa, Sonho, Fogo, Mínimo). Salve seus próprios estilos e use no jogo ou no launcher."
+      },
+      {
+        "title": "Capas mais nítidas",
+        "body": "A capa do Spotify quando toca pelo Spotify, e a do Apple Music quando outro app dá uma pequena."
+      }
+    ]
+  }
+}

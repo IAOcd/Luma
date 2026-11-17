@@ -49,6 +49,7 @@
 #include <nlohmann/json.hpp>
 
 #include "account.h"
+#include "smtc_bridge.h"
 #include "spotify_engine.h"
 #include "core/audio_viz.h"
 #include "core/lyrics.h"
@@ -2796,13 +2797,14 @@ void ApplyStyle(int i) {
 //  fades over a few letters, so it glides word by word.
 
 bool SpotifyDrivesHome(const media::Track& t, spotify::Player& out);  // (with the Spotify section, below)
+void SpotifyVolumeBar(ImDrawList* d, ImVec2 left, float width, const spotify::Player& pl, float alpha);  // (below)
 
-// Is this app Spotify? (Luma's own Spotify player plays inside a hidden Edge:
-// Windows calls it "Edge")
+// Is this app Spotify? (Luma's own player, Spotify Soloist, shows in Windows
+// as Luma itself: smtc_bridge.h)
 bool IsSpotifyApp(const char* app) {
     if (std::strstr(app, "Spotify") != nullptr) return true;
     namespace eng = luma::launcher::spotifyengine;
-    return eng::GetState() == eng::State::Ready && (std::strstr(app, "Edge") != nullptr || std::strstr(app, "msedge") != nullptr);
+    return eng::GetState() == eng::State::Ready && std::strstr(app, "Luma") != nullptr;
 }
 
 lyrics::Result g_lyrics;
@@ -4080,7 +4082,13 @@ void DrawStageSong(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t,
         if (IconToggle(d, "##lyricsview", ImVec2(x + w - S(54.0f), y), icons::kMicVocal, S(18.0f), g_lyricsView, canView)) {
             g_lyricsView = !g_lyricsView;
         }
-        if (w >= S(480.0f)) VolumeBar(d, ImVec2(x + w - S(190.0f), y), S(86.0f), t, alpha);
+        if (w >= S(480.0f)) {
+            if (viaSpotify) {
+                SpotifyVolumeBar(d, ImVec2(x + w - S(190.0f), y), S(86.0f), sp, alpha);  // (Spotify's device volume)
+            } else {
+                VolumeBar(d, ImVec2(x + w - S(190.0f), y), S(86.0f), t, alpha);
+            }
+        }
     }
     g_fade = savedFade;
 }
@@ -4263,7 +4271,11 @@ void DrawDevicesMenu(ImDrawList* d) {
 // The device's volume (Spotify's), like Home's bar.
 void SpotifyVolumeBar(ImDrawList* d, ImVec2 left, float width, const spotify::Player& pl, float alpha) {
     const Palette& p = P();
-    if (pl.device.volume < 0 || !pl.device.canVolume) return;
+    {
+        namespace eng = luma::launcher::spotifyengine;
+        const bool luma = eng::GetState() == eng::State::Ready && pl.device.id == eng::DeviceId();
+        if (!luma && (pl.device.volume < 0 || !pl.device.canVolume)) return;
+    }
     icons::Draw(d, icons::kVolume, left, S(17.0f), C(p.text, 0.75f * alpha), S(1.7f));
     const float x0 = left.x + S(18.0f), x1 = x0 + width;
     float hover = 0.0f;
@@ -4271,12 +4283,18 @@ void SpotifyVolumeBar(ImDrawList* d, ImVec2 left, float width, const spotify::Pl
     static float shown = -1.0f;
     static int sent = -1;
     const float press = Anim(ImGui::GetID("##sp_volume") + 4, ImGui::IsItemActive(), 16.0f);
-    const float real = static_cast<float>(pl.device.volume) / 100.0f;
+    namespace eng = luma::launcher::spotifyengine;
+    const bool luma = eng::GetState() == eng::State::Ready && pl.device.id == eng::DeviceId();
+    const float real = luma ? static_cast<float>(eng::Volume()) / 100.0f : static_cast<float>(pl.device.volume) / 100.0f;
     if (ImGui::IsItemActive()) {
         shown = std::clamp((ImGui::GetIO().MousePos.x - x0) / std::max(1.0f, width), 0.0f, 1.0f);
         const int v = static_cast<int>(std::lround(shown * 100.0f));
         if (v != sent) {
-            spotify::PlayerVolume(v);
+            if (luma) {
+                eng::SetVolume(v);  // (Luma's own player: Windows' volume of its sound, at once)
+            } else {
+                spotify::PlayerVolume(v);
+            }
             sent = v;
         }
     } else {
@@ -4627,23 +4645,49 @@ std::vector<Item> ParseList(const nlohmann::json& j, const char* key = "items") 
 // --- Asking (cached parsed lists, per address) ----------------------------------------------------
 
 struct Parsed {
-    std::shared_ptr<const nlohmann::json> src;
+    std::vector<std::shared_ptr<const nlohmann::json>> srcs;  // (one per page)
     std::vector<Item> items;
 };
 std::map<std::string, Parsed> g_parsed;
 
-// The items at "path" ("key": where the list is in the answer). Returns the
-// state (0 coming, 1 here, 2 failed) and fills "out" with a pointer to them.
-int Items(const std::string& path, const std::vector<Item>*& out, const char* key = "items", int maxAge = 300) {
-    std::shared_ptr<const nlohmann::json> j;
-    const int state = spotify::Browse(path, j, maxAge);
+// Spotify gives long lists in pages (50 at a time) and says where the next one is.
+std::string NextPath(const nlohmann::json& j, const char* key) {
+    const nlohmann::json* o = &j;
+    if (j.is_object() && j.contains(key) && j[key].is_object()) o = &j[key];
+    if (!o->is_object()) return {};
+    const auto it = o->find("next");
+    if (it == o->end() || !it->is_string()) return {};
+    const std::string url = it->get<std::string>();
+    const std::string prefix = "https://api.spotify.com";
+    return url.rfind(prefix, 0) == 0 ? url.substr(prefix.size()) : std::string();
+}
+
+// The items at "path" ("key": where the list is in the answer), with ALL its
+// pages (up to "maxPages": 10 = 500 playlists...). Returns the state (0
+// coming, 1 here, 2 failed) and fills "out" with a pointer to them.
+int Items(const std::string& path, const std::vector<Item>*& out, const char* key = "items", int maxAge = 300, int maxPages = 10) {
     Parsed& p = g_parsed[path];
-    if (j && j != p.src) {
-        p.src = j;
-        p.items = ParseList(*j, key);
+    std::vector<std::shared_ptr<const nlohmann::json>> srcs;
+    int first = 0;
+    std::string cur = path;
+    for (int i = 0; i < maxPages && !cur.empty(); ++i) {
+        std::shared_ptr<const nlohmann::json> j;
+        const int st = spotify::Browse(cur, j, maxAge);
+        if (i == 0) first = st;
+        if (!j) break;
+        srcs.push_back(j);
+        cur = NextPath(*j, key);
+    }
+    if (srcs != p.srcs) {
+        p.srcs = srcs;
+        p.items.clear();
+        for (const auto& j : srcs) {
+            std::vector<Item> page = ParseList(*j, key);
+            p.items.insert(p.items.end(), std::make_move_iterator(page.begin()), std::make_move_iterator(page.end()));
+        }
     }
     out = &p.items;
-    return p.src ? 1 : state;
+    return srcs.empty() ? first : 1;
 }
 
 std::shared_ptr<const nlohmann::json> Json(const std::string& path, int* state = nullptr, int maxAge = 300) {
@@ -4679,12 +4723,23 @@ std::string UrlEncode(const std::string& s) {
 // was asked there.
 std::function<void(const std::string&)> g_whenLumaReady;
 
+int g_drawerAsk = -1;  // (the drawer tab to open: Luma's player isn't set up yet)
+void ContinueOn(const std::string& deviceId);  // (below)
+bool PlayOnLuma(const std::string& body);  // (below)
+
 void WithLumaDevice(std::function<void(const std::string&)> then) {
     namespace eng = luma::launcher::spotifyengine;
-    if (eng::GetState() == eng::State::Ready && !eng::DeviceId().empty()) {
+    const eng::State st = eng::GetState();
+    if (st == eng::State::Ready && !eng::DeviceId().empty()) {
         then(eng::DeviceId());
         return;
     }
+    if (st == eng::State::NoProgram) {
+        g_drawerAsk = 1;  // (the Devices drawer says why)
+        Flash(icons::kAppWindow, T("sp.luma_missing"));
+        return;
+    }
+    if (st == eng::State::Off || st == eng::State::Error) g_drawerAsk = 1;  // (the first time: the browser step shows there)
     g_whenLumaReady = std::move(then);
     eng::Start();
 }
@@ -4698,9 +4753,44 @@ void LumaPlayerTick() {
         auto then = std::move(g_whenLumaReady);
         g_whenLumaReady = nullptr;
         then(eng::DeviceId());
-    } else if (st == eng::State::Error || st == eng::State::NoEdge || st == eng::State::Off) {
+    } else if (st == eng::State::Error || st == eng::State::NoProgram) {
         g_whenLumaReady = nullptr;
     }
+}
+
+// PLAYS ON LUMA what you were listening to: the same song, from the same
+// second, inside the same playlist / album. (Not a "transfer": when nothing
+// was playing, there's nothing to transfer and Luma's player is left with an
+// empty song.) Nothing known: what you played last, or your Liked songs.
+std::string LikedUri();  // (below)
+void ContinueOn(const std::string& deviceId) {
+    const spotify::Player pl = spotify::GetPlayer();
+    nlohmann::json j = nlohmann::json::object();
+    if (!pl.trackUri.empty()) {
+        if (!pl.contextUri.empty()) {
+            j["context_uri"] = pl.contextUri;
+            j["offset"] = {{"uri", pl.trackUri}};
+        } else {
+            j["uris"] = {pl.trackUri};
+        }
+        j["position_ms"] = static_cast<long long>(spotify::PositionSeconds(pl) * 1000.0);
+    } else {
+        const std::vector<Item>* recent = nullptr;
+        Items("/v1/me/player/recently-played?limit=30", recent, "items", 60, 1);
+        if (!LikedUri().empty()) {  // (a context plays best in Luma's player)
+            j["context_uri"] = LikedUri();
+        } else if (recent != nullptr && !recent->empty()) {
+            nlohmann::json uris = nlohmann::json::array();
+            for (const Item& it : *recent) {
+                if (uris.size() < 30 && it.type == kTrack) uris.push_back(it.uri);
+            }
+            j["uris"] = uris;
+        } else {
+            spotify::PlayerTransfer(deviceId);  // (nothing else known)
+            return;
+        }
+    }
+    if (!PlayOnLuma(j.dump())) spotify::Send("PUT", "/v1/me/player/play?device_id=" + deviceId, j.dump());
 }
 
 // "?device_id=..." when nothing plays now (Spotify needs to know where).
@@ -4718,13 +4808,47 @@ std::string DeviceParam() {
 
 // Plays "body" ({"context_uri"...} or {"uris"...}): where it plays now, or
 // (nothing open anywhere) in Luma's own player.
+// A play body for Luma's own player, as its direct command ("load ...").
+bool PlayOnLuma(const std::string& body) {
+    namespace eng = luma::launcher::spotifyengine;
+    const auto j = nlohmann::json::parse(body, nullptr, false);
+    if (!j.is_object()) return false;
+    const long long pos = j.contains("position_ms") && j["position_ms"].is_number() ? j["position_ms"].get<long long>() : 0;
+    if (j.contains("context_uri") && j["context_uri"].is_string()) {
+        std::string track = "-";
+        if (j.contains("offset") && j["offset"].is_object() && j["offset"].contains("uri") && j["offset"]["uri"].is_string()) {
+            track = j["offset"]["uri"].get<std::string>();
+        }
+        eng::Command("load " + j["context_uri"].get<std::string>() + " " + track + " " + std::to_string(pos));
+        return true;
+    }
+    if (j.contains("uris") && j["uris"].is_array() && !j["uris"].empty()) {
+        int index = 0;
+        if (j.contains("offset") && j["offset"].is_object() && j["offset"].contains("position") && j["offset"]["position"].is_number()) {
+            index = j["offset"]["position"].get<int>();
+        }
+        std::string line = "tracks " + std::to_string(index) + " " + std::to_string(pos);
+        for (const auto& u : j["uris"]) {
+            if (u.is_string()) line += " " + u.get<std::string>();
+        }
+        eng::Command(line);
+        return true;
+    }
+    return false;
+}
+
 void PlayBody(const std::string& body) {
+    namespace eng = luma::launcher::spotifyengine;
     const spotify::Player pl = spotify::GetPlayer();
+    // playing on Luma's own player: straight to it
+    if (pl.hasDevice && eng::GetState() == eng::State::Ready && pl.device.id == eng::DeviceId() && PlayOnLuma(body)) return;
     if (pl.hasDevice) {
         spotify::Send("PUT", "/v1/me/player/play", body);
         return;
     }
-    WithLumaDevice([body](const std::string& id) { spotify::Send("PUT", "/v1/me/player/play?device_id=" + id, body); });
+    WithLumaDevice([body](const std::string& id) {
+        if (!PlayOnLuma(body)) spotify::Send("PUT", "/v1/me/player/play?device_id=" + id, body);
+    });
 }
 
 void PlayContext(const std::string& contextUri, const std::string& trackUri = {}) {
@@ -4734,6 +4858,12 @@ void PlayContext(const std::string& contextUri, const std::string& trackUri = {}
 }
 
 void PlayUris(const std::vector<Item>& list, std::size_t index) {
+    // A song with an album: played inside its album (Luma's own player, like
+    // Spotify's apps, plays an album or playlist best; a loose list fails there).
+    if (index < list.size() && list[index].type == kTrack && !list[index].albumId.empty()) {
+        PlayContext("spotify:album:" + list[index].albumId, list[index].uri);
+        return;
+    }
     nlohmann::json uris = nlohmann::json::array();
     for (std::size_t i = 0; i < list.size() && uris.size() < 100; ++i) {
         if (list[i].type == kTrack || list[i].type == kEpisode) uris.push_back(list[i].uri);
@@ -4876,6 +5006,79 @@ bool PlayButton(ImDrawList* d, const char* id, ImVec2 c, float r, float alpha, b
 
 // --- The options menu (right click / "...") ---------------------------------------------------------
 
+// SPOTIFY'S RADIO of a song / artist / album / playlist: Luma's player asks
+// Spotify for it (the same "Radio" playlist Spotify's app makes), then its
+// page opens and it plays.
+std::string g_radioSeed, g_radioTitle;
+double g_radioAskedAt = 0.0;
+std::string g_radioPlayId;  // the radio playlist to play once its songs are here
+double g_radioPlayAt = 0.0;
+
+// Plays the radio: on Luma's own player as its list of songs (its "context"
+// sometimes comes empty to librespot), elsewhere as the playlist.
+void RadioPlayTick() {
+    if (g_radioPlayId.empty()) return;
+    namespace eng = luma::launcher::spotifyengine;
+    const std::string uri = "spotify:playlist:" + g_radioPlayId;
+    const spotify::Player pl = spotify::GetPlayer();
+    const bool luma = !pl.hasDevice || (eng::GetState() == eng::State::Ready && pl.device.id == eng::DeviceId());
+    if (!luma) {
+        PlayContext(uri);
+        g_radioPlayId.clear();
+        return;
+    }
+    std::shared_ptr<const nlohmann::json> j;
+    const int st = eng::PlaylistSongs(g_radioPlayId, j);
+    if (st == 1 && j) {
+        const std::vector<Item> songs = ParseList(*j, "items");
+        if (!songs.empty()) {
+            nlohmann::json uris = nlohmann::json::array();
+            for (const Item& t : songs) {
+                if (uris.size() < 100) uris.push_back(t.uri);
+            }
+            PlayBody(nlohmann::json({{"uris", uris}}).dump());
+        } else {
+            PlayContext(uri);
+        }
+        g_radioPlayId.clear();
+    } else if (st == 2 || ImGui::GetTime() - g_radioPlayAt > 20.0) {
+        PlayContext(uri);
+        g_radioPlayId.clear();
+    }
+}
+
+void StartRadio(const Item& it) {
+    g_radioSeed = it.uri;
+    g_radioTitle = std::string(T("sp.radio_of")) + " " + it.name;
+    g_radioAskedAt = ImGui::GetTime();
+    std::shared_ptr<const nlohmann::json> j;
+    luma::launcher::spotifyengine::Ask("radio " + it.uri, j, true);
+    Flash(icons::kSignal, T("sp.radio_looking"));
+}
+
+void RadioTick() {
+    if (g_radioSeed.empty()) return;
+    std::shared_ptr<const nlohmann::json> j;
+    const int st = luma::launcher::spotifyengine::Ask("radio " + g_radioSeed, j);
+    if (st == 0 && ImGui::GetTime() - g_radioAskedAt < 25.0) return;
+    if (st == 1 && j && j->contains("uri") && (*j)["uri"].is_string()) {
+        const std::string uri = (*j)["uri"].get<std::string>();
+        Item radio;
+        radio.type = kPlaylist;
+        radio.uri = uri;
+        radio.id = uri.substr(uri.find_last_of(':') + 1);
+        radio.name = g_radioTitle;
+        radio.sub = "Spotify";
+        Open(radio);
+        g_radioPlayId = radio.id;  // (played once its songs are read: RadioPlayTick)
+        g_radioPlayAt = ImGui::GetTime();
+        Flash(icons::kSignal, T("sp.radio_started"));
+    } else {
+        Flash(icons::kInfo, T("sp.radio_failed"));
+    }
+    g_radioSeed.clear();
+}
+
 struct Menu {
     bool open = false;
     float anim = 0.0f;
@@ -4883,6 +5086,7 @@ struct Menu {
     Item item;
     int sub = 0;  // 0 the options, 1 "add to a playlist"
     double copiedAt = -10.0;
+    int openedFrame = -1;  // (the click that opened it doesn't also close it)
 };
 Menu g_menu;
 
@@ -4891,12 +5095,13 @@ void OpenMenu(const Item& it) {
     g_menu.item = it;
     g_menu.sub = 0;
     g_menu.pos = ImGui::GetIO().MousePos;
+    g_menu.openedFrame = ImGui::GetFrameCount();
 }
 
 // The artists of a playlist (the 5 that appear most), for its radio.
 std::vector<std::string> PlaylistArtists(const std::string& playlistId, bool* ready) {
     const std::vector<Item>* list = nullptr;
-    const int state = Items("/v1/playlists/" + playlistId + "/tracks?limit=100", list);
+    const int state = Items("/v1/playlists/" + playlistId, list, "items", 300, 30);
     *ready = state == 1;
     std::map<std::string, int> count;
     if (list != nullptr) {
@@ -4934,11 +5139,7 @@ void DrawMenu(ImDrawList* d, ImVec2 display) {
         if (it.type == kTrack) opts.push_back({"##m_radio", icons::kSignal, T("sp.radio_song"), 4});
         if (it.type == kArtist) opts.push_back({"##m_radio", icons::kSignal, T("sp.radio_artist"), 4});
         if (it.type == kAlbum) opts.push_back({"##m_radio", icons::kSignal, T("sp.radio_album"), 4});
-        if (it.type == kPlaylist) {
-            bool ready = false;
-            PlaylistArtists(it.id, &ready);
-            opts.push_back({"##m_radio", icons::kSignal, ready ? T("sp.radio_playlist") : T("sp.radio_loading"), 4, ready});
-        }
+        if (it.type == kPlaylist) opts.push_back({"##m_radio", icons::kSignal, T("sp.radio_playlist"), 4});
         if (it.type == kTrack || it.type == kAlbum) {
             for (std::size_t i = 0; i < it.artists.size() && i < 2; ++i) {
                 opts.push_back({i == 0 ? "##m_artist0" : "##m_artist1", icons::kPerson, std::string(T("sp.go_artist")) + " " + it.artists[i].second,
@@ -4948,7 +5149,7 @@ void DrawMenu(ImDrawList* d, ImVec2 display) {
         if (it.type == kTrack && !it.albumId.empty()) opts.push_back({"##m_album", icons::kLayers, T("sp.go_album"), 5});
         if (it.type == kTrack) {
             opts.push_back({"##m_toplaylist", icons::kPlus, T("sp.add_playlist"), 6});
-            std::shared_ptr<const nlohmann::json> c = Json("/v1/me/tracks/contains?ids=" + it.id, nullptr, 20);
+            std::shared_ptr<const nlohmann::json> c = Json("/v1/me/library/contains?uris=" + it.uri, nullptr, 20);
             if (c && c->is_array() && !c->empty() && (*c)[0].is_boolean()) {
                 likedKnown = true;
                 liked = (*c)[0].get<bool>();
@@ -5013,17 +5214,7 @@ void DrawMenu(ImDrawList* d, ImVec2 display) {
         } else if (clicked == 3) {
             PlayItem(it, true);
         } else if (clicked == 4) {
-            std::vector<std::string> artists;
-            if (it.type == kArtist) {
-                artists.push_back(it.id);
-            } else if (it.type == kPlaylist) {
-                bool ready = false;
-                artists = PlaylistArtists(it.id, &ready);
-            } else {
-                for (const auto& a : it.artists) artists.push_back(a.first);
-            }
-            spotify::PlayMix(artists, it.type == kTrack ? it.uri : std::string());
-            Flash(icons::kSignal, T("sp.radio_started"));
+            StartRadio(it);
         } else if (clicked == 5) {
             OpenAlbum(it.albumId, it.albumName);
         } else if (clicked == 10 || clicked == 11) {
@@ -5036,7 +5227,8 @@ void DrawMenu(ImDrawList* d, ImVec2 display) {
             m.sub = 0;
             close = false;
         } else if (clicked == 7) {
-            spotify::Send(liked ? "DELETE" : "PUT", "/v1/me/tracks?ids=" + it.id);
+            spotify::Send(liked ? "DELETE" : "PUT", "/v1/me/library?uris=" + UrlEncode(it.uri));
+            spotify::Forget("/v1/me/library/contains?uris=" + it.uri);
             spotify::Forget("/v1/me/tracks");
             const spotify::Player pl = spotify::GetPlayer();
             if (pl.trackId == it.id) spotify::PlayerLike(!liked);
@@ -5058,7 +5250,7 @@ void DrawMenu(ImDrawList* d, ImVec2 display) {
                     if (pl.ownerId != me) continue;
                     if (n++ == clicked - 100) {
                         const nlohmann::json body = {{"uris", {it.uri}}};
-                        spotify::Send("POST", "/v1/playlists/" + pl.id + "/tracks", body.dump());
+                        spotify::Send("POST", "/v1/playlists/" + pl.id + "/items", body.dump());
                         spotify::Forget("/v1/playlists/" + pl.id);
                         std::string text = std::string(T("sp.added_to")) + " " + pl.name;
                         Flash(icons::kPlus, text.c_str());
@@ -5070,8 +5262,9 @@ void DrawMenu(ImDrawList* d, ImVec2 display) {
     }
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     const bool inside = mouse.x >= min.x && mouse.x < max.x && mouse.y >= min.y && mouse.y < max.y;
-    if (m.open && (close || ((ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) && !inside) ||
-                   ImGui::IsKeyPressed(ImGuiKey_Escape))) {
+    const bool clickOutside = ImGui::GetFrameCount() > m.openedFrame &&
+                              (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) && !inside;
+    if (m.open && (close || clickOutside || ImGui::IsKeyPressed(ImGuiKey_Escape))) {
         m.open = false;
     }
     const float e = EaseOutCubic(m.anim);
@@ -5274,7 +5467,7 @@ float HomeTab(ImDrawList* d, ImVec2 pos, float width, float alpha) {
     float y = pos.y;
     const std::vector<Item>* list = nullptr;
     // played lately (without repeats)
-    if (Items("/v1/me/player/recently-played?limit=30", list, "items", 60) == 1 && list != nullptr) {
+    if (Items("/v1/me/player/recently-played?limit=30", list, "items", 60, 1) == 1 && list != nullptr) {
         static std::vector<Item> unique;
         static const std::vector<Item>* from = nullptr;
         static std::size_t fromSize = 0;
@@ -5333,8 +5526,11 @@ float SongsPage(ImDrawList* d, Page& pg, ImVec2 pos, float width, float alpha) {
     std::string headPath, listPath, listKey = "items";
     int pageSize = 100;
     if (pg.kind == kPagePlaylist) {
-        headPath = "/v1/playlists/" + it.id + "?fields=name,description,images,owner(display_name,id),tracks(total),uri,id,type";
-        listPath = "/v1/playlists/" + it.id + "/tracks?limit=100";
+        // (Spotify's API since 2026: a playlist's songs come inside the playlist
+        // itself, "items", page after page; the old ".../tracks" answers 403.
+        // And only for YOUR playlists: other people's come without songs.)
+        headPath = "/v1/playlists/" + it.id;
+        listPath = headPath;
     } else if (pg.kind == kPageAlbum) {
         headPath = "/v1/albums/" + it.id;
         listPath = headPath;
@@ -5381,17 +5577,7 @@ float SongsPage(ImDrawList* d, Page& pg, ImVec2 pos, float width, float alpha) {
     if (PlayButton(d, "##sp_pg_play", ImVec2(hx + S(26.0f), by), S(26.0f), alpha)) PlayItem(it);
     if (IconToggle(d, "##sp_pg_shuffle", ImVec2(hx + S(82.0f), by), icons::kShuffle, S(20.0f), false)) PlayItem(it, true);
     if (it.type == kPlaylist || it.type == kAlbum) {
-        if (IconToggle(d, "##sp_pg_radio", ImVec2(hx + S(126.0f), by), icons::kSignal, S(20.0f), false)) {
-            std::vector<std::string> artists;
-            if (it.type == kPlaylist) {
-                bool ready = false;
-                artists = PlaylistArtists(it.id, &ready);
-            } else {
-                for (const auto& a : it.artists) artists.push_back(a.first);
-            }
-            spotify::PlayMix(artists, {});
-            Flash(icons::kSignal, T("sp.radio_started"));
-        }
+        if (IconToggle(d, "##sp_pg_radio", ImVec2(hx + S(126.0f), by), icons::kSignal, S(20.0f), false)) StartRadio(it);
     }
     if (IconToggle(d, "##sp_pg_more", ImVec2(hx + S(170.0f), by), icons::kEllipsis, S(20.0f), false)) OpenMenu(it);
     float y = pos.y + cover + S(30.0f);
@@ -5402,7 +5588,7 @@ float SongsPage(ImDrawList* d, Page& pg, ImVec2 pos, float width, float alpha) {
         std::string path = listPath;
         if (page > 0) path += (path.find('?') == std::string::npos ? "?offset=" : "&offset=") + std::to_string(page * pageSize);
         const std::vector<Item>* list = nullptr;
-        const int state = Items(path, list, listKey.c_str());
+        const int state = Items(path, list, listKey.c_str(), 300, pg.kind == kPagePlaylist ? 30 : 1);
         if (state == 0) loading = true;
         if (list != nullptr) {
             for (const Item& s : *list) {
@@ -5414,9 +5600,27 @@ float SongsPage(ImDrawList* d, Page& pg, ImVec2 pos, float width, float alpha) {
                 }
                 songs.push_back(std::move(copy));
             }
-            more = static_cast<int>(list->size()) >= pageSize && pg.kind != kPageAlbum;
+            more = static_cast<int>(list->size()) >= pageSize && pg.kind != kPageAlbum && pg.kind != kPagePlaylist;
         }
     }
+    // Other people's playlists: the public API gives them without songs, so
+    // they come through Luma's own player (Spotify's internal channel).
+    bool viaPlayer = false;
+    if (pg.kind == kPagePlaylist && songs.empty() && !loading) {
+        std::shared_ptr<const nlohmann::json> pj;
+        const int st = luma::launcher::spotifyengine::PlaylistSongs(it.id, pj);
+        if (st == 1 && pj) {
+            static std::map<std::string, std::vector<Item>> parsed;
+            auto& v = parsed[it.id];
+            if (v.empty()) v = ParseList(*pj, "items");
+            songs = v;
+            viaPlayer = true;
+        } else if (st == 0) {
+            loading = true;
+        }
+    }
+    (void)viaPlayer;
+    if (it.image.empty() && !songs.empty()) it.image = songs.front().image;  // (no cover of its own: its first song's)
     const bool showAlbum = pg.kind != kPageAlbum && pg.kind != kPageShow && width > S(700.0f);
     for (std::size_t i = 0; i < songs.size(); ++i) {
         char rid[32];
@@ -5432,6 +5636,10 @@ float SongsPage(ImDrawList* d, Page& pg, ImVec2 pos, float width, float alpha) {
             }
         });
         y += S(54.0f);
+    }
+    if (songs.empty() && !loading) {
+        TextWrap(d, g_fonts.regular, ImVec2(pos.x, y + S(10.0f)), C(p.textDim, alpha), T("sp.list_unavailable"), width);
+        y += S(60.0f);
     }
     if (loading) {
         Spinner(d, ImVec2(pos.x + width * 0.5f, y + S(24.0f)), S(14.0f), C(kSpotifyGreen, alpha));
@@ -5472,15 +5680,22 @@ float ArtistPage(ImDrawList* d, Page& pg, ImVec2 pos, float width, float alpha) 
     }
     const float by = pos.y + cover - S(26.0f);
     if (PlayButton(d, "##sp_ar_play", ImVec2(hx + S(26.0f), by), S(26.0f), alpha)) PlayItem(it);
-    if (IconToggle(d, "##sp_ar_radio", ImVec2(hx + S(82.0f), by), icons::kSignal, S(20.0f), false)) {
-        spotify::PlayMix({it.id}, {});
-        Flash(icons::kSignal, T("sp.radio_started"));
-    }
+    if (IconToggle(d, "##sp_ar_radio", ImVec2(hx + S(82.0f), by), icons::kSignal, S(20.0f), false)) StartRadio(it);
     if (IconToggle(d, "##sp_ar_more", ImVec2(hx + S(126.0f), by), icons::kEllipsis, S(20.0f), false)) OpenMenu(it);
     float y = pos.y + cover + S(30.0f);
     // popular
     const std::vector<Item>* top = nullptr;
-    if (Items("/v1/artists/" + it.id + "/top-tracks?market=from_token", top, "tracks") == 1 && top != nullptr && !top->empty()) {
+    {
+        std::shared_ptr<const nlohmann::json> tj;
+        luma::launcher::spotifyengine::Ask("artist_top " + it.id, tj);
+        static std::map<std::string, std::vector<Item>> tops;
+        if (tj) {
+            auto& v = tops[it.id];
+            if (v.empty()) v = ParseList(*tj, "items");
+            top = &v;
+        }
+    }
+    if (top != nullptr && !top->empty()) {
         Text(d, g_fonts.title, ImVec2(pos.x, y), C(p.text, alpha), T("sp.popular"));
         y += g_fonts.title->FontSize + S(12.0f);
         for (std::size_t i = 0; i < top->size() && i < 10; ++i) {
@@ -5522,6 +5737,63 @@ float AllPage(ImDrawList* d, Page& pg, ImVec2 pos, float width, float alpha) {
         return ty - pos.y;
     }
     return y - pos.y + Grid(d, "##g_all", *list, ImVec2(pos.x, y), width, alpha);
+}
+
+
+// THE CARD OF LUMA'S OWN PLAYER (Spotify Soloist, see spotify_engine.h): the
+// three steps the first time (your key, the download, pairing), then "Listen
+// in Luma". Returns its height.
+float LumaPlayerCard(ImDrawList* d, float x, float y, float w, float alpha) {
+    namespace eng = luma::launcher::spotifyengine;
+    const Palette& p = P();
+    const eng::State es = eng::GetState();
+    const float pad = S(14.0f);
+    float cy = y + pad;
+    const float tw = w - pad * 2.0f;
+    icons::Draw(d, icons::kLumaLogo, ImVec2(x + pad + S(10.0f), cy + S(9.0f)), S(20.0f), C(p.text, alpha));
+    Text(d, g_fonts.semibold, ImVec2(x + pad + S(28.0f), cy), C(p.text, alpha), T("sp.luma_player"));
+    cy += g_fonts.semibold->FontSize + S(4.0f);
+    cy += TextWrap(d, g_fonts.tiny, ImVec2(x + pad, cy), C(p.textDim, alpha), T("sp.luma_player_hint"), tw) + S(10.0f);
+    float bw = 0.0f;
+    auto waiting = [&](const char* key) {
+        Spinner(d, ImVec2(x + pad + S(10.0f), cy + S(10.0f)), S(9.0f), C(kSpotifyGreen, alpha));
+        cy += TextWrap(d, g_fonts.semibold, ImVec2(x + pad + S(28.0f), cy), C(p.text, alpha), T(key), tw - S(28.0f)) + S(12.0f);
+    };
+    switch (es) {
+        case eng::State::NoProgram:
+            cy += TextWrap(d, g_fonts.regular, ImVec2(x + pad, cy), C(p.warning, alpha), T("sp.luma_missing"), tw) + S(10.0f);
+            break;
+        case eng::State::Login: waiting("sp.luma_login"); break;
+        case eng::State::Starting: waiting("sp.luma_starting"); break;
+        case eng::State::Off:
+        case eng::State::Ready:
+        case eng::State::Error: {
+            if (es == eng::State::Error) {
+                const std::string err = std::string(T("sp.luma_error")) + " " + eng::Error();
+                cy += TextWrap(d, g_fonts.tiny, ImVec2(x + pad, cy), C(p.warning, alpha), err.c_str(), tw) + S(8.0f);
+            }
+            const spotify::Player pl = spotify::GetPlayer();
+            if (es == eng::State::Ready && pl.hasDevice && pl.device.id == eng::DeviceId()) {
+                Text(d, g_fonts.semibold, ImVec2(x + pad, cy + S(6.0f)), C(kSpotifyGreen, alpha), T("spotify.playing_here"));
+            } else if (SmallPill(d, "##lp_listen", ImVec2(x + pad, cy), icons::kPlayFilled, T("sp.luma_listen"), true, &bw)) {
+                WithLumaDevice([](const std::string& id) { sp::ContinueOn(id); });
+            }
+            cy += S(46.0f);
+            break;
+        }
+    }
+    if (es != eng::State::NoProgram && es != eng::State::Login) {
+        const char* out = T("sp.luma_sign_out");
+        const ImVec2 fs = TextSize(g_fonts.tiny, out);
+        const ImVec2 fa(x + pad, cy - S(2.0f)), fb(fa.x + fs.x, fa.y + fs.y);
+        float hover = 0.0f;
+        if (Hit("##lp_signout", fa, fb, &hover)) eng::SignOut();
+        Text(d, g_fonts.tiny, fa, C(Mix(p.textDim, p.text, hover), alpha), out);
+        cy += fs.y + S(6.0f);
+    }
+    const float h = cy - y + S(6.0f);
+    d->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), C(kSpotifyGreen, 0.35f * alpha), S(14.0f));
+    return h;
 }
 
 // --- The drawer (right): queue, devices, lyrics ------------------------------------------------------
@@ -5586,46 +5858,8 @@ void Drawer(ImDrawList* d, ImVec2 min, ImVec2 max, float alpha) {
             Spinner(d, ImVec2((cmin.x + cmax.x) * 0.5f, cmin.y + S(40.0f)), S(14.0f), C(kSpotifyGreen, alpha));
         }
     } else if (g_drawerShown == 1) {
-        // LUMA'S OWN PLAYER: the music plays from Luma (spotify_engine.h)
-        float y0 = cmin.y;
-        {
-            namespace eng = luma::launcher::spotifyengine;
-            static bool playWhenReady = false;
-            const eng::State es = eng::GetState();
-            const ImVec2 ra(cmin.x, y0), rb(cmax.x, y0 + S(92.0f));
-            d->AddRectFilled(ra, rb, C(kSpotifyGreen, 0.10f * alpha), S(14.0f));
-            d->AddRect(ra, rb, C(kSpotifyGreen, 0.35f * alpha), S(14.0f));
-            icons::Draw(d, icons::kLumaLogo, ImVec2(ra.x + S(24.0f), ra.y + S(24.0f)), S(20.0f), C(p.text, alpha));
-            Text(d, g_fonts.semibold, ImVec2(ra.x + S(44.0f), ra.y + S(14.0f)), C(p.text, alpha), T("sp.luma_player"));
-            const char* line = T("sp.luma_player_hint");
-            if (es == eng::State::Starting) line = T("sp.luma_starting");
-            if (es == eng::State::Ready) line = T("sp.luma_ready");
-            if (es == eng::State::NoEdge) line = T("sp.luma_no_edge");
-            std::string err;
-            if (es == eng::State::Error) {
-                err = std::string(T("sp.luma_error")) + " " + eng::Error();
-                line = err.c_str();
-            }
-            TextFit(d, g_fonts.tiny, ImVec2(ra.x + S(44.0f), ra.y + S(16.0f) + g_fonts.semibold->FontSize), C(es == eng::State::Error ? p.warning : p.textDim, alpha),
-                    line, rb.x - ra.x - S(56.0f));
-            float bw = 0.0f;
-            const spotify::Player pl = spotify::GetPlayer();
-            const bool here = es == eng::State::Ready && pl.device.id == eng::DeviceId();
-            if (es == eng::State::Starting) {
-                Spinner(d, ImVec2(ra.x + S(30.0f), rb.y - S(22.0f)), S(9.0f), C(kSpotifyGreen, alpha));
-            } else if (here) {
-                Text(d, g_fonts.semibold, ImVec2(ra.x + S(16.0f), rb.y - S(32.0f)), C(kSpotifyGreen, alpha), T("spotify.playing_here"));
-            } else if (SmallPill(d, "##sp_luma_play", ImVec2(ra.x + S(14.0f), rb.y - S(42.0f)), icons::kPlayFilled, T("sp.luma_listen"), true, &bw)) {
-                WithLumaDevice([](const std::string& id) { spotify::PlayerTransfer(id); });
-                (void)playWhenReady;
-            }
-            if (playWhenReady && es == eng::State::Ready && !eng::DeviceId().empty()) {
-                playWhenReady = false;
-                spotify::PlayerTransfer(eng::DeviceId());
-            }
-            if (es == eng::State::Error || es == eng::State::NoEdge) playWhenReady = false;
-            y0 = rb.y + S(16.0f);
-        }
+        // LUMA'S OWN PLAYER (Spotify Soloist): its 3 steps, then "Listen in Luma"
+        float y0 = cmin.y + LumaPlayerCard(d, cmin.x, cmin.y, cmax.x - cmin.x, alpha) + S(16.0f);
         std::uint32_t version = g_deviceListVersion;
         if (spotify::Devices(g_deviceListVersion, g_deviceList, version)) g_deviceListVersion = version;
         static double asked = -10.0;
@@ -5641,7 +5875,13 @@ void Drawer(ImDrawList* d, ImVec2 min, ImVec2 max, float alpha) {
             char id[32];
             std::snprintf(id, sizeof(id), "##sp_dev%zu", i);
             float hover = 0.0f;
-            if (Hit(id, ra, rb, &hover) && !dv.active) spotify::PlayerTransfer(dv.id);
+            if (Hit(id, ra, rb, &hover) && !dv.active) {
+                if (dv.name == luma::launcher::spotifyengine::kDeviceName) {
+                    ContinueOn(dv.id);
+                } else {
+                    spotify::PlayerTransfer(dv.id);
+                }
+            }
             d->AddRectFilled(ra, ImVec2(rb.x, rb.y - S(6.0f)), C(dv.active ? kSpotifyGreen : p.text, (dv.active ? 0.14f : 0.04f) + 0.06f * hover), S(12.0f));
             const ImVec4 col = dv.active ? kSpotifyGreen : p.text;
             icons::Draw(d, DeviceIcon(dv.type), ImVec2(ra.x + S(24.0f), ra.y + S(25.0f)), S(18.0f), C(col, alpha), S(1.6f));
@@ -5862,9 +6102,7 @@ void TopBar(ImDrawList* d, ImVec2 min, float width, const spotify::Status& st) {
             spotify::PlayerLike(!pl.liked);
         }
         x = bx + S(290.0f);
-        if (width > S(1250.0f)) {
-            SpotifyVolumeBar(d, ImVec2(x, cy), S(90.0f), pl, 1.0f);
-        }
+        SpotifyVolumeBar(d, ImVec2(x, cy), std::clamp(width - (x - min.x) - S(420.0f), S(50.0f), S(110.0f)), pl, 1.0f);
     } else if (pl.valid) {
         namespace eng = luma::launcher::spotifyengine;
         const bool starting = eng::GetState() == eng::State::Starting || g_whenLumaReady != nullptr;
@@ -5875,7 +6113,7 @@ void TopBar(ImDrawList* d, ImVec2 min, float width, const spotify::Status& st) {
         } else {
             float bw = 0.0f;
             if (SmallPill(d, "##sp_t_luma", ImVec2(x, cy), icons::kPlayFilled, T("sp.luma_listen"), true, &bw)) {
-                WithLumaDevice([](const std::string& id) { spotify::PlayerTransfer(id); });
+                WithLumaDevice([](const std::string& id) { sp::ContinueOn(id); });
             }
         }
     }
@@ -5972,12 +6210,18 @@ void Content(ImDrawList* d, ImVec2 min, ImVec2 max) {
 
 }  // namespace sp
 
+bool g_overlaysWanted = false;
+
 // THE WHOLE SECTION (when connected with the new permissions).
 void DrawSpotifySection(ImDrawList* d, ImVec2 min, ImVec2 max, ImVec2 display, const spotify::Status& st) {
     using namespace sp;
     if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) OpenSearch();
     LumaPlayerTick();
     const float drawerW = std::clamp((max.x - min.x) * 0.26f, S(300.0f), S(380.0f));
+    if (g_drawerAsk >= 0) {
+        g_drawer = g_drawerShown = g_drawerAsk;
+        g_drawerAsk = -1;
+    }
     g_drawerAnim += ((g_drawer >= 0 ? 1.0f : 0.0f) - g_drawerAnim) * std::min(1.0f, Dt() * 12.0f);
     const float de = EaseOutCubic(g_drawerAnim);
     TopBar(d, min, max.x - min.x, st);
@@ -5991,7 +6235,15 @@ void DrawSpotifySection(ImDrawList* d, ImVec2 min, ImVec2 max, ImVec2 display, c
         d->AddRectFilled(a, b, C(Mix(P().card, ImVec4(0, 0, 0, 1), 0.3f), 0.9f), S(13.0f));
         Text(d, g_fonts.tiny, ImVec2(a.x + S(14.0f), (a.y + b.y - es.y) * 0.5f), C(P().warning), err);
     }
-    // over everything: the device list, the options, the search
+    RadioTick();
+    RadioPlayTick();
+    g_overlaysWanted = true;  // (the device list, the search and the options: drawn after the dock, over it)
+}
+
+void DrawSpotifyOverlays(ImDrawList* d, ImVec2 display) {
+    using namespace sp;
+    if (!g_overlaysWanted) return;
+    g_overlaysWanted = false;
     DrawDevicesMenu(d);
     SearchLayer(d, display);
     DrawMenu(d, display);
@@ -6376,6 +6628,7 @@ void DrawStageTop(ImDrawList* d, ImVec2 display, const LocalData& data, const st
 
 void DrawComingSoon(ImDrawList* d, ImVec2 min, ImVec2 max, const char* icon, const char* titleKey, const char* textKey);  // (below)
 void DrawSpotifyPage(ImDrawList* d, ImVec2 min, ImVec2 max);
+void DrawSpotifyOverlays(ImDrawList* d, ImVec2 display);
 void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data);  // (below)
 
 // The other sections: a glass sheet that rises over the stage.
@@ -6543,6 +6796,7 @@ void DrawStage(ImDrawList* d, ImVec2 display, const media::Track& t, const Local
     DrawDock(d, display);
     DrawOrb(d, display, data);
     DrawOptionsMenu(d, t);  // (over everything)
+    DrawSpotifyOverlays(d, display);
     HandleMusicKeys(t);
     DrawFlash(d, display);
     (void)name;
@@ -7270,6 +7524,7 @@ void StatusThread() {
 }  // namespace
 
 void AppInit(HWND hwnd, float scale) {
+    luma::launcher::smtc::Init(hwnd);  // (Luma's own player tells Windows what plays)
     perf::Init();  // (the music's clock: core/media.cpp)
     g_hwnd = hwnd;
     g_scale = scale;
@@ -7287,6 +7542,26 @@ void AppInit(HWND hwnd, float scale) {
     if (std::wcsstr(GetCommandLineW(), L"--page=spotify") != nullptr) g_page = Page::Spotify;
     if (std::wcsstr(GetCommandLineW(), L"--view=lyrics") != nullptr) g_openViewWhenReady = true;
     if (std::wcsstr(GetCommandLineW(), L"--luma-player") != nullptr) luma::launcher::spotifyengine::Start();  // (for testing)
+    if (std::wcsstr(GetCommandLineW(), L"--sp-devices") != nullptr) sp::g_drawerAsk = 1;  // (for testing: the Devices drawer)
+    if (const wchar_t* pl = std::wcsstr(GetCommandLineW(), L"--sp-playlist=")) {  // (for testing: open a playlist's page)
+        std::wstring id(pl + 14);
+        id = id.substr(0, id.find_first_of(L" \""));
+        sp::Item it;
+        it.type = sp::kPlaylist;
+        it.id = std::string(id.begin(), id.end());
+        it.uri = "spotify:playlist:" + it.id;
+        sp::Open(it);
+    }
+    if (const wchar_t* rs = std::wcsstr(GetCommandLineW(), L"--sp-radio=")) {  // (for testing: Spotify's radio of a URI)
+        std::wstring u(rs + 11);
+        u = u.substr(0, u.find_first_of(L" \""));
+        sp::Item it;
+        it.type = sp::kTrack;
+        it.uri = std::string(u.begin(), u.end());
+        it.name = "test";
+        sp::StartRadio(it);
+    }
+    if (std::wcsstr(GetCommandLineW(), L"--luma-play") != nullptr) sp::WithLumaDevice([](const std::string& id) { sp::ContinueOn(id); });  // (for testing)
     g_statusThread = std::thread(StatusThread);
     account::Init();
     updater::Start(g_autoUpdate, GetCommandLineW());
@@ -7451,7 +7726,13 @@ void AppFrame() {
         // Home while Spotify plays: for Home's shuffle, repeat and heart).
         const bool connected = SpotifyConnected();
         const bool onHome = g_page == Page::Home && track.present && IsSpotifyApp(track.app);
-        spotify::SetPlayerWanted(visible && connected && (g_page == Page::Spotify || onHome));
+        // (Luma's own player playing: the player is followed even when hidden,
+        // to tell Windows what plays: smtc_bridge.h)
+        namespace eng = luma::launcher::spotifyengine;
+        const spotify::Player spl = spotify::GetPlayer();
+        const bool lumaPlays = connected && eng::GetState() == eng::State::Ready && spl.hasDevice && spl.device.id == eng::DeviceId();
+        luma::launcher::smtc::Update(lumaPlays);
+        spotify::SetPlayerWanted((visible && connected && (g_page == Page::Spotify || onHome)) || lumaPlays);
         spotify::SetActive(visible && connected);
     }
     UpdateLyrics(track, visible);
@@ -7501,7 +7782,8 @@ void AppFrame() {
 
 void AppShutdown() {
     g_quit.store(true);
-    luma::launcher::spotifyengine::Stop();  // (closes Luma's hidden Edge player)
+    luma::launcher::spotifyengine::Stop();  // (closes Luma's own player, Soloist)
+    luma::launcher::smtc::Shutdown();
     spotify::Shutdown();
     ReleaseBlurAtlas();
     lyrics::Shutdown();

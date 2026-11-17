@@ -35,3 +35,6 @@ server/.wrangler/
 
 # El código del servidor es privado: no se publica en GitHub.
 server/
+
+# Lo que compila Rust (el reproductor de Spotify de Luma)
+launcher/player/target/

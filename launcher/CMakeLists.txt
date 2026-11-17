@@ -38,7 +38,8 @@ add_executable(LumaLauncher WIN32
     src/net.cpp          # pedidos HTTPS (WinHTTP)
     src/signature.cpp    # comprobar la firma de las actualizaciones
     src/updater.cpp      # actualizaciones automáticas desde GitHub
-    src/spotify_engine.cpp  # Luma's own Spotify player (a hidden Edge with Spotify's Web Playback SDK)
+    src/spotify_engine.cpp  # Luma's own Spotify player (Spotify Soloist, downloaded from Spotify)
+    src/smtc_bridge.cpp     # tells Windows what Luma's own player plays
     # The music, with the SAME code as the game (what's playing, its art,
     # and how the sound moves): the launcher shows what Luma shows.
     ${PROJECT_SOURCE_DIR}/client/core/media.cpp
@@ -70,6 +71,23 @@ file(GENERATE
 )
 target_sources(LumaLauncher PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/luma_dll.rc)
 add_dependencies(LumaLauncher Luma)
+
+# Luma's own Spotify player (launcher/player, Rust on librespot): built with
+# Cargo (Rust's tool) and copied next to the launcher as luma-spotify.exe.
+# Without Rust installed, the launcher still builds (the player just isn't there).
+find_program(LUMA_CARGO cargo HINTS "$ENV{USERPROFILE}/.cargo/bin")
+if(LUMA_CARGO)
+    add_custom_target(luma_spotify_player ALL
+        COMMAND ${LUMA_CARGO} build --release --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/player/Cargo.toml"
+                --target-dir "${CMAKE_BINARY_DIR}/player-target"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_BINARY_DIR}/player-target/release/luma-spotify.exe"
+                "$<TARGET_FILE_DIR:LumaLauncher>/luma-spotify.exe"
+        COMMENT "Building Luma's Spotify player (Rust)"
+        USES_TERMINAL)
+    add_dependencies(LumaLauncher luma_spotify_player)
+else()
+    message(STATUS "Rust (cargo) not found: luma-spotify.exe won't be built")
+endif()
 
 # Compilación OFICIAL (la hace GitHub Actions con -DLUMA_OFFICIAL_BUILD=ON).
 # Solo esas se reemplazan solas con las actualizaciones: tus compilaciones

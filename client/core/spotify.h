@@ -104,6 +104,7 @@ struct Player {
     int progressMs = 0, durationMs = 0;
     std::chrono::steady_clock::time_point at;  // when progressMs was true (it moves on while playing)
     std::string trackId, title, artist, album;
+    std::string trackUri, contextUri;  // the song and what it plays from (album, playlist...), to continue it elsewhere
     std::wstring artPath;        // its album art, downloaded (empty = none yet)
     bool liked = false, likedKnown = false;  // in your Liked songs
     Device device;               // where it plays

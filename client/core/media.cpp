@@ -103,7 +103,7 @@ void AppName(char* out, std::size_t size, const winrt::hstring& id) {
         const char* name;
     };
     static const Known kKnown[] = {
-        {L"spotif", "Spotify"},{L"chrome", "Chrome"},       {L"msedge", "Edge"},
+        {L"spotif", "Spotify"},{L"lumalauncher", "Luma"},{L"chrome", "Chrome"},       {L"msedge", "Edge"},
         {L"firefox", "Firefox"},       {L"opera", "Opera"},         {L"brave", "Brave"},
         {L"applemusic", "Apple Music"}, {L"itunes", "iTunes"},       {L"zunemusic", "Media Player"},
         {L"hkamori.liner", "Liner"}, {L"vlc", "VLC"},             {L"deezer", "Deezer"},       {L"tidal", "TIDAL"},

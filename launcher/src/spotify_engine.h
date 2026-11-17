@@ -1,41 +1,55 @@
 // =============================================================================
-//  spotify_engine.h - LUMA'S OWN SPOTIFY PLAYER (music that plays from Luma)
+//  spotify_engine.h - LUMA'S OWN SPOTIFY PLAYER (luma-spotify.exe)
 // =============================================================================
-//  Spotify lets other programs PLAY its music in only one official way: its
-//  Web Playback SDK, a player that runs inside a web browser (it needs the
-//  browser's content protection, "Widevine", and a Premium account).
-//
-//  The browser Windows programs can embed (WebView2) doesn't have that
-//  protection, so Luma does this instead:
-//    1. A tiny web server inside the launcher, ONLY on this PC
-//       (http://127.0.0.1:43822), gives a minimal page with Spotify's player.
-//    2. Microsoft Edge (it comes with Windows) opens that page, hidden and
-//       with its own profile in %APPDATA%\Luma\edge (your own Edge isn't
-//       touched), and allowed to play sound without a click.
-//    3. The page asks the launcher for your access pass (only through
-//       127.0.0.1, with a random key made each time) and connects: a device
-//       called "Luma" appears in your Spotify, like your PC or your phone.
-//    4. Playing there = the music comes out of Luma. Closing the launcher
-//       closes that Edge too.
+//  A small program of Luma's (launcher/player, written in Rust on librespot,
+//  the same engine as Spotifast's built-in player) that becomes a Spotify
+//  Connect device called "Luma" and plays through Windows' sound, without the
+//  Spotify app.
+//    - The first time it opens Spotify's page in your browser: you approve
+//      there, once. It keeps its pass in %APPDATA%\Luma\spotify-player.
+//    - Luma runs it hidden (no window), inside Luma: it closes with Luma.
+//  librespot is not made by Spotify (it speaks Spotify's protocol): it's what
+//  Spotifast and other players use; Spotify's terms don't allow it.
 // =============================================================================
 #pragma once
 
+#include <memory>
 #include <string>
+
+#include <nlohmann/json_fwd.hpp>
 
 namespace luma::launcher::spotifyengine {
 
 enum class State {
-    Off,        // not started
-    Starting,   // Edge opening, the player connecting
-    Ready,      // the "Luma" device exists
-    NoEdge,     // Microsoft Edge wasn't found
-    Error,      // something failed (see Error())
+    NoProgram,  // luma-spotify.exe isn't next to the launcher
+    Off,        // not running
+    Login,      // waiting for you to approve in the browser (first time)
+    Starting,   // connecting
+    Ready,      // the "Luma" device is in your Spotify
+    Error,      // see Error()
 };
 
-void Start();  // (does nothing if it's already on)
+constexpr const char* kDeviceName = "Luma";
+
+void Start();      // run it (hidden); it becomes Ready when Spotify lists the device
 void Stop();
-State GetState();
-std::string DeviceId();  // the "Luma" device's id, once Ready
+void SignOut();    // forget its pass (the next start asks in the browser again)
+State GetState();  // (call each frame: it also notices when the device appears)
+// A direct command to the player (no trip through Spotify's servers):
+//   "load <context-uri> <track-uri or -> <position-ms>", "tracks <index> <position-ms> <uri>...",
+//   "play", "pause", "next", "prev"
+void Command(const std::string& line);
+void SetVolume(int percent);  // (0..100: Windows' volume of the player's sound, instant; remembered)
+int Volume();
+// The songs of a playlist through the player (Spotify's internal channel):
+// for other people's playlists, which the public Web API no longer gives to
+// apps. Starts the player if needed (it only connects). 0 = asked, 1 = here
+// (in "out", like the Web API's playlist: {"items": {"items": [{"item": track}]}}), 2 = failed.
+int PlaylistSongs(const std::string& playlistId, std::shared_ptr<const nlohmann::json>& out);
+// Any question to the player: "playlist <id>", "radio <uri>" ({"uri": Spotify's
+// radio playlist}), "artist_top <id>". "again": ask anew (a new radio...).
+int Ask(const std::string& question, std::shared_ptr<const nlohmann::json>& out, bool again = false);
+std::string DeviceId();
 std::string Error();
 
 }  // namespace luma::launcher::spotifyengine

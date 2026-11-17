@@ -567,7 +567,8 @@ std::wstring DownloadArt(const nlohmann::json& images) {
 void FetchLiked(const std::string& trackId) {
     if (trackId.empty()) return;
     std::string body;
-    const int status = Api(L"GET", "/v1/me/tracks/contains?ids=" + trackId, {}, body);
+    // (Spotify's API since 2026: "library", by URI; ".../tracks/contains" answers 403)
+    const int status = Api(L"GET", "/v1/me/library/contains?uris=spotify:track:" + trackId, {}, body);
     if (status != 200) return;
     const auto j = nlohmann::json::parse(body, nullptr, false);
     if (!j.is_array() || j.empty() || !j[0].is_boolean()) return;
@@ -624,6 +625,11 @@ void FetchPlayer() {
     const auto item = j.find("item");
     if (item != j.end() && item->is_object()) {
         p.trackId = item->value("id", std::string());
+        p.trackUri = item->contains("uri") && (*item)["uri"].is_string() ? (*item)["uri"].get<std::string>() : std::string();
+        p.contextUri.clear();
+        if (j.contains("context") && j["context"].is_object() && j["context"].contains("uri") && j["context"]["uri"].is_string()) {
+            p.contextUri = j["context"]["uri"].get<std::string>();
+        }
         p.title = item->value("name", std::string());
         p.durationMs = item->value("duration_ms", 0);
         p.artist = ArtistsOf(*item);
@@ -709,7 +715,7 @@ void RunCommand(const Command& c) {
             break;
         }
         case Command::Like:
-            status = Api(c.value ? L"PUT" : L"DELETE", "/v1/me/tracks?ids=" + c.text, {}, body);
+            status = Api(c.value ? L"PUT" : L"DELETE", "/v1/me/library?uris=spotify:track:" + c.text, {}, body);
             break;
         case Command::Raw: {
             const std::wstring method = Widen(c.method);

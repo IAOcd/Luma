@@ -493,6 +493,10 @@ ImVec2 NowPlaying::OnRenderHud(const HudFrame& frame) {
         textW = std::max(textW, rh::TextSize(m, lines[i]).x);
     }
     textW = std::min(maxText, std::max(textW, 40.0f * u));
+    // (the progress row needs room too: a short title must not cut "1:29 / 3:05")
+    if ((style == 1 || style == 4) && t.duration > 0.0 && time[0] != '\0') {
+        textW = std::max(textW, rh::TextSize(m, time).x + gap + 30.0f * u);
+    }
     const float textH = lineH * static_cast<float>(count) - 4.0f * u;
 
     // --- Card: big art on top, text under it ---

@@ -2308,12 +2308,16 @@ void DrawMusicPage() {
     const float startY = ImGui::GetCursorPosY();
 
     // --- Left: the art, the song and the controls ---
+    // (it all fits in the window, never scrolls: on a short window the art
+    // gets smaller, centered, so the controls stay in sight)
+    const float availH = ImGui::GetContentRegionAvail().y;
+    const float artSize = std::floor(std::clamp(availH - fs * 15.5f, fs * 7.0f, leftW));
     float y = origin.y;
-    const ImVec2 artMin(origin.x, y);
-    const ImVec2 artMax(origin.x + leftW, y + leftW);
+    const ImVec2 artMin(origin.x + (leftW - artSize) * 0.5f, y);
+    const ImVec2 artMax(artMin.x + artSize, y + artSize);
     music::DrawArt(draw, artMin, artMax, s.artShape, s.artShape == 2 && s.spinArt ? music::SpinAngle() : 0.0f,
                    ImGui::GetStyle().Alpha);
-    y += leftW + fs * 0.8f;
+    y += artSize + fs * 0.8f;
     ImFont* title = theme::GetFonts().title;
     ImFont* medium = theme::GetFonts().medium;
     if (t.present && t.title[0] != '\0') {
@@ -3319,8 +3323,10 @@ void Draw(const RenderInfo& info) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, appear * pageT);
         ImGui::BeginChild("##main", ImVec2(end.x - mainMin.x, height), ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse |
-                              (g_page == Page::Modules ? ImGuiWindowFlags_NoScrollbar : 0));
-        if (g_page != Page::Modules) SmoothScroll();
+                              (g_page == Page::Modules || g_page == Page::Music ? ImGuiWindowFlags_NoScrollbar : 0));
+        // (Music doesn't move as a whole: the song stays still and only its
+        // right side scrolls, the lyrics or what's there)
+        if (g_page != Page::Modules && g_page != Page::Music) SmoothScroll();
         switch (g_page) {
             case Page::Theme:       g_settingsTab = 1; g_page = Page::Settings; DrawSettingsHub(info); break;
             case Page::Profiles:    g_settingsTab = 2; g_page = Page::Settings; DrawSettingsHub(info); break;

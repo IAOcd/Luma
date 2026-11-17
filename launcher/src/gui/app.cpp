@@ -5120,6 +5120,107 @@ struct Page {
 std::vector<Page> g_stack = {Page{}};  // the bottom one is a tab
 int g_libraryFilter = 0;               // 0 playlists, 1 albums, 2 artists, 3 podcasts
 
+// --- What you searched, and what you opened from it ------------------------------------------------
+// Kept in %APPDATA%\Luma\spotify-search.json (only on this PC). With the box
+// empty, the search shows them: your last searches (click = search it again)
+// and the last results you opened or played (click = again).
+std::vector<std::string> g_recentQueries;  // newest first
+std::vector<Item> g_recentPicks;           // newest first
+bool g_historyLoaded = false;
+bool g_recordPicks = false;  // (while drawing the search's results: a click is remembered)
+bool g_hasPick = false;
+Item g_pick;
+
+fs::path SearchHistoryFile() {
+    return DataDir() / L"spotify-search.json";
+}
+
+void LoadSearchHistory() {
+    if (g_historyLoaded) return;
+    g_historyLoaded = true;
+    const nlohmann::json j = ReadJson(SearchHistoryFile());
+    if (!j.is_object()) return;
+    if (j.contains("queries") && j["queries"].is_array()) {
+        for (const auto& q : j["queries"]) {
+            if (q.is_string()) g_recentQueries.push_back(q.get<std::string>());
+        }
+    }
+    if (j.contains("picks") && j["picks"].is_array()) {
+        for (const auto& o : j["picks"]) {
+            if (!o.is_object()) continue;
+            Item it;
+            it.type = o.value("type", static_cast<int>(kTrack));
+            it.id = o.value("id", std::string());
+            it.uri = o.value("uri", std::string());
+            it.name = o.value("name", std::string());
+            it.sub = o.value("sub", std::string());
+            it.image = o.value("image", std::string());
+            it.ms = o.value("ms", 0);
+            it.albumId = o.value("albumId", std::string());
+            it.albumName = o.value("albumName", std::string());
+            it.ownerId = o.value("ownerId", std::string());
+            if (o.contains("artists") && o["artists"].is_array()) {
+                for (const auto& a : o["artists"]) {
+                    if (a.is_array() && a.size() == 2 && a[0].is_string() && a[1].is_string()) {
+                        it.artists.emplace_back(a[0].get<std::string>(), a[1].get<std::string>());
+                    }
+                }
+            }
+            if (!it.id.empty()) g_recentPicks.push_back(std::move(it));
+        }
+    }
+}
+
+void SaveSearchHistory() {
+    nlohmann::json j;
+    j["queries"] = g_recentQueries;
+    nlohmann::json picks = nlohmann::json::array();
+    for (const Item& it : g_recentPicks) {
+        nlohmann::json o;
+        o["type"] = it.type;
+        o["id"] = it.id;
+        o["uri"] = it.uri;
+        o["name"] = it.name;
+        o["sub"] = it.sub;
+        o["image"] = it.image;
+        o["ms"] = it.ms;
+        o["albumId"] = it.albumId;
+        o["albumName"] = it.albumName;
+        o["ownerId"] = it.ownerId;
+        nlohmann::json artists = nlohmann::json::array();
+        for (const auto& [id, name] : it.artists) artists.push_back({id, name});
+        o["artists"] = artists;
+        picks.push_back(o);
+    }
+    j["picks"] = picks;
+    std::error_code ec;
+    fs::create_directories(DataDir(), ec);
+    std::ofstream(SearchHistoryFile(), std::ios::binary) << j.dump(1);
+}
+
+void RememberQuery(const std::string& q) {
+    if (q.empty()) return;
+    std::erase(g_recentQueries, q);
+    g_recentQueries.insert(g_recentQueries.begin(), q);
+    if (g_recentQueries.size() > 8) g_recentQueries.resize(8);
+    SaveSearchHistory();
+}
+
+void RememberPick(const Item& it) {
+    if (it.id.empty()) return;
+    std::erase_if(g_recentPicks, [&](const Item& o) { return o.id == it.id && o.type == it.type; });
+    g_recentPicks.insert(g_recentPicks.begin(), it);
+    if (g_recentPicks.size() > 12) g_recentPicks.resize(12);
+    SaveSearchHistory();
+}
+
+// (Tile and TrackRow call this when you open or play something)
+void NotePick(const Item& it) {
+    if (!g_recordPicks) return;
+    g_pick = it;
+    g_hasPick = true;
+}
+
 void Open(const Item& it) {
     Page p;
     p.item = it;
@@ -5519,6 +5620,7 @@ void Tile(ImDrawList* d, const char* id, const Item& it, ImVec2 pos, float w, fl
         }
     }
     if (right) OpenMenu(it);
+    if (played || clicked) NotePick(it);
     if (clicked && !played) {
         if (it.type == kTrack || it.type == kEpisode) {
             if (list != nullptr) PlayUris(*list, index);
@@ -5649,6 +5751,7 @@ void TrackRow(ImDrawList* d, const char* id, const Item& it, int number, ImVec2 
     if (menu) {
         OpenMenu(it);
     } else if (clicked) {
+        NotePick(it);
         play();
     }
 }
@@ -6129,43 +6232,139 @@ void OpenSearch() {
     g_searchFocus = true;
 }
 
+// With the box empty: your last searches and what you opened. Returns its height.
+float DrawSearchHistory(ImDrawList* d, float x0, float y, float w) {
+    const Palette& p = P();
+    const float y0 = y;
+    if (g_recentQueries.empty() && g_recentPicks.empty()) {
+        Text(d, g_fonts.semibold, ImVec2(x0, y + S(10.0f)), C(p.textDim), T("sp.search_empty"));
+        return S(40.0f);
+    }
+    // the header, with "Clear"
+    auto header = [&](const char* title, const char* id, bool queries) {
+        Text(d, g_fonts.title, ImVec2(x0, y), C(p.text), title);
+        const char* clear = T("sp.clear_history");
+        const ImVec2 cs = TextSize(g_fonts.semibold, clear);
+        const ImVec2 a(x0 + w - cs.x - S(24.0f), y + S(2.0f)), b(x0 + w, y + S(2.0f) + cs.y + S(10.0f));
+        float hover = 0.0f;
+        if (Hit(id, a, b, &hover)) {
+            if (queries) {
+                g_recentQueries.clear();
+            } else {
+                g_recentPicks.clear();
+            }
+            SaveSearchHistory();
+        }
+        d->AddRectFilled(a, b, C(p.text, 0.08f * hover), (b.y - a.y) * 0.5f);
+        Text(d, g_fonts.semibold, ImVec2(a.x + S(12.0f), a.y + S(5.0f)), C(p.textDim, 0.8f + 0.2f * hover), clear);
+        y += g_fonts.title->FontSize + S(16.0f);
+    };
+    // your last searches: pills (click = search it again)
+    if (!g_recentQueries.empty()) {
+        header(T("sp.recent_searches"), "##sh_clear_q", true);
+        const float h = S(38.0f);
+        float x = x0;
+        for (std::size_t i = 0; i < g_recentQueries.size(); ++i) {
+            const std::string& q = g_recentQueries[i];
+            const float pw = TextSize(g_fonts.semibold, q.c_str()).x + S(54.0f);
+            if (x + pw > x0 + w && x > x0) {
+                x = x0;
+                y += h + S(10.0f);
+            }
+            const ImVec2 a(x, y), b(x + pw, y + h);
+            char id[32];
+            std::snprintf(id, sizeof(id), "##sh_q%zu", i);
+            float hover = 0.0f;
+            if (Hit(id, a, b, &hover)) {
+                std::snprintf(g_searchText, sizeof(g_searchText), "%s", q.c_str());
+                g_searchQuery = q;
+                g_searchTarget = 0.0f;
+                g_searchFocus = true;
+            }
+            d->AddRectFilled(a, b, C(p.text, 0.07f + 0.07f * hover), h * 0.5f);
+            d->AddRect(a, b, C(ImVec4(1, 1, 1, 1), 0.10f), h * 0.5f);
+            icons::Draw(d, icons::kClock, ImVec2(a.x + S(20.0f), (a.y + b.y) * 0.5f), S(15.0f), C(p.textDim), S(1.8f));
+            Text(d, g_fonts.semibold, ImVec2(a.x + S(36.0f), (a.y + b.y - g_fonts.semibold->FontSize) * 0.5f), C(p.text), q.c_str());
+            x += pw + S(10.0f);
+        }
+        y += h + S(30.0f);
+    }
+    // what you opened or played from the search: tiles (click = again)
+    if (!g_recentPicks.empty()) {
+        header(T("sp.recent_picks"), "##sh_clear_p", false);
+        const float tw = S(150.0f), gap = S(22.0f);
+        const int perRow = std::max(1, static_cast<int>((w + gap) / (tw + gap)));
+        const float th = tw + g_fonts.semibold->FontSize + g_fonts.tiny->FontSize + S(14.0f);
+        for (std::size_t i = 0; i < g_recentPicks.size(); ++i) {
+            const int col = static_cast<int>(i) % perRow, row = static_cast<int>(i) / perRow;
+            const ImVec2 pos(x0 + col * (tw + gap), y + row * (th + S(18.0f)));
+            char id[32];
+            std::snprintf(id, sizeof(id), "##sh_p%zu", i);
+            const Item it = g_recentPicks[i];  // (a copy: a click moves it to the front)
+            const std::vector<Item> one{it};   // (a song plays in its album, as everywhere)
+            Tile(d, id, it, pos, tw, 1.0f, &one, 0);
+        }
+        const int rows = (static_cast<int>(g_recentPicks.size()) + perRow - 1) / perRow;
+        y += rows * (th + S(18.0f));
+    }
+    return y - y0;
+}
+
 void SearchLayer(ImDrawList* d, ImVec2 display) {
     g_searchAnim += ((g_searchOpen ? 1.0f : 0.0f) - g_searchAnim) * std::min(1.0f, Dt() * 14.0f);
     if (g_searchAnim < 0.01f) return;
+    LoadSearchHistory();
     const Palette& p = P();
     const float e = EaseOutCubic(g_searchAnim);
     const int start = d->VtxBuffer.Size;
-    d->AddRectFilled(ImVec2(0, 0), display, C(ImVec4(0.02f, 0.01f, 0.02f, 1), 0.62f));
+    // (a soft shade over the album's colors: the page behind is faded away)
+    d->AddRectFilled(ImVec2(0, 0), display, C(Mix(p.background, ImVec4(0, 0, 0, 1), 0.4f), 0.35f));
     const float w = std::min(display.x - S(160.0f), S(1100.0f));
     const float x0 = (display.x - w) * 0.5f;
-    // the box
-    const ImVec2 ba(x0, S(70.0f)), bb(x0 + w, S(70.0f) + S(52.0f));
-    d->AddRectFilled(ba, bb, C(Mix(p.card, ImVec4(1, 1, 1, 1), 0.06f), 0.95f), S(26.0f));
-    d->AddRect(ba, bb, C(kSpotifyGreen, 0.6f), S(26.0f), 0, S(1.5f));
-    icons::Draw(d, icons::kSearch, ImVec2(ba.x + S(28.0f), (ba.y + bb.y) * 0.5f), S(18.0f), C(p.text), S(2.0f));
-    ImGui::SetCursorScreenPos(ImVec2(ba.x + S(52.0f), (ba.y + bb.y - g_fonts.title->FontSize) * 0.5f - S(3.0f)));
-    ImGui::PushFont(g_fonts.title);
+    // the box: a glass pill, centered, with a soft light of the album's color
+    const float bw = std::min(w, S(720.0f));
+    const ImVec2 ba(x0 + (w - bw) * 0.5f, S(66.0f)), bb(ba.x + bw, S(66.0f) + S(50.0f));
+    const float bcy = (ba.y + bb.y) * 0.5f;
+    SoftLightOval(d, ImVec2((ba.x + bb.x) * 0.5f, bcy), bw * 0.55f, S(46.0f), p.accent, 0.35f);
+    d->AddRectFilled(ba, bb, C(Mix(p.card, ImVec4(1, 1, 1, 1), 0.05f), 0.92f), S(25.0f));
+    d->AddRect(ba, bb, C(ImVec4(1, 1, 1, 1), 0.14f), S(25.0f));
+    icons::Draw(d, icons::kSearch, ImVec2(ba.x + S(26.0f), bcy), S(17.0f), C(p.text, 0.8f), S(2.0f));
+    // the X: clears what you typed (Esc or a click outside close the search)
+    if (g_searchText[0] != '\0') {
+        const ImVec2 xc(bb.x - S(25.0f), bcy);
+        float hover = 0.0f;
+        if (Hit("##sp_search_x", ImVec2(xc.x - S(16.0f), xc.y - S(16.0f)), ImVec2(xc.x + S(16.0f), xc.y + S(16.0f)), &hover)) {
+            g_searchText[0] = '\0';
+            g_searchQuery.clear();
+            g_searchTarget = 0.0f;
+            g_searchFocus = true;
+        }
+        d->AddCircleFilled(xc, S(15.0f), C(p.text, 0.06f + 0.10f * hover), 32);
+        icons::Draw(d, icons::kClose, xc, S(14.0f), C(p.text, 0.7f + 0.3f * hover), S(2.0f));
+    }
+    ImGui::SetCursorScreenPos(ImVec2(ba.x + S(48.0f), bcy - g_fonts.line->FontSize * 0.5f - S(3.0f)));
+    ImGui::PushFont(g_fonts.line);
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_Text, p.text);
     ImGui::PushStyleColor(ImGuiCol_TextDisabled, p.textDim);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, S(3.0f)));
-    ImGui::SetNextItemWidth(w - S(120.0f));
+    ImGui::SetNextItemWidth(bw - S(100.0f));
     if (g_searchFocus) {
         ImGui::SetKeyboardFocusHere();
         g_searchFocus = false;
     }
     if (ImGui::InputTextWithHint("##sp_search", T("sp.search_hint"), g_searchText, sizeof(g_searchText))) g_searchTypedAt = ImGui::GetTime();
+    const bool enter = ImGui::IsItemFocused() && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter));
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(3);
     ImGui::PopFont();
-    Text(d, g_fonts.tiny, ImVec2(bb.x - S(44.0f), (ba.y + bb.y - g_fonts.tiny->FontSize) * 0.5f), C(p.textDim), "Esc");
     if (ImGui::GetTime() - g_searchTypedAt > 0.35 && g_searchQuery != g_searchText) {
         g_searchQuery = g_searchText;
         g_searchTarget = 0.0f;
     }
     // the filters
     const char* filters[5] = {T("sp.all"), T("sp.songs"), T("sp.artists"), T("sp.albums"), T("sp.playlists")};
-    Segmented("##sp_search_filter", ImVec2(x0, bb.y + S(16.0f)), filters, 5, &g_searchFilter);
+    Segmented("##sp_search_filter", ImVec2(x0 + (w - SegmentedWidth(filters, 5)) * 0.5f, bb.y + S(16.0f)), filters, 5, &g_searchFilter);
     // the results
     const ImVec2 rmin(x0, bb.y + S(72.0f)), rmax(x0 + w, display.y - S(20.0f));
     const ImVec2 savedMin = g_viewMin, savedMax = g_viewMax;
@@ -6176,8 +6375,10 @@ void SearchLayer(ImDrawList* d, ImVec2 display) {
     std::string q;
     for (char c : g_searchQuery) q += c;
     while (!q.empty() && q.back() == ' ') q.pop_back();
+    g_recordPicks = true;
+    g_hasPick = false;
     if (q.empty()) {
-        Text(d, g_fonts.semibold, ImVec2(x0, y + S(10.0f)), C(p.textDim), T("sp.search_empty"));
+        g_searchH = DrawSearchHistory(d, x0, y, w);
     } else {
         const std::string path = "/v1/search?q=" + UrlEncode(q) + "&type=track,artist,album,playlist&limit=10";
         int state = 0;
@@ -6235,6 +6436,15 @@ void SearchLayer(ImDrawList* d, ImVec2 display) {
         }
     }
     d->PopClipRect();
+    g_recordPicks = false;
+    // (a result you opened or played, and what you had searched, are remembered)
+    if (g_hasPick) {
+        RememberPick(g_pick);
+        RememberQuery(q);
+        g_hasPick = false;
+    } else if (enter) {
+        RememberQuery(q);
+    }
     g_viewMin = savedMin;
     g_viewMax = savedMax;
     // scrolling the results
@@ -6249,6 +6459,10 @@ void SearchLayer(ImDrawList* d, ImVec2 display) {
         if (g_searchOpen && g_stack.size() > 1) g_searchOpen = false;
     }
     if (g_searchOpen && ImGui::IsKeyPressed(ImGuiKey_Escape) && !g_menu.open) g_searchOpen = false;
+    // a click on nothing (outside the box and the results) closes it
+    if (g_searchOpen && g_searchAnim > 0.9f && !g_menu.open && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered()) {
+        g_searchOpen = false;
+    }
     AnimateSince(d, start, e, ImVec2(0.0f, (1.0f - e) * S(-12.0f)));
 }
 
@@ -6433,11 +6647,21 @@ void DrawSpotifySection(ImDrawList* d, ImVec2 min, ImVec2 max, ImVec2 display, c
     }
     g_drawerAnim += ((g_drawer >= 0 ? 1.0f : 0.0f) - g_drawerAnim) * std::min(1.0f, Dt() * 12.0f);
     const float de = EaseOutCubic(g_drawerAnim);
+    // (while searching, the page behind fades away and can't be
+    // touched: the results stand alone on the album's colors)
+    const bool savedBlock = g_blockInput;
+    if (g_searchOpen) g_blockInput = true;
+    const int pageStart = d->VtxBuffer.Size;
     TopBar(d, min, max.x - min.x, st);
     const float top = min.y + S(100.0f);
     const float contentRight = max.x - (drawerW + S(24.0f)) * de;
     Content(d, ImVec2(min.x, top), ImVec2(contentRight - S(14.0f), max.y));
     Drawer(d, ImVec2(max.x - drawerW, top), ImVec2(max.x, max.y), 1.0f);
+    if (g_searchAnim > 0.01f) {
+        const float se = EaseOutCubic(g_searchAnim);
+        AnimateSince(d, pageStart, 1.0f - se, ImVec2(0.0f, se * S(10.0f)));
+    }
+    g_blockInput = savedBlock;
     if (const char* err = SpotifyErrorText(spotify::PlayerError())) {
         const ImVec2 es = TextSize(g_fonts.tiny, err);
         const ImVec2 a(min.x + (max.x - min.x - es.x) * 0.5f - S(14.0f), max.y - S(30.0f)), b(a.x + es.x + S(28.0f), max.y - S(4.0f));
@@ -8203,6 +8427,7 @@ void AppInit(HWND hwnd, float scale) {
     if (std::wcsstr(GetCommandLineW(), L"--view=lyrics") != nullptr) g_openViewWhenReady = true;
     if (std::wcsstr(GetCommandLineW(), L"--luma-player") != nullptr) luma::launcher::spotifyengine::Start();  // (for testing)
     if (std::wcsstr(GetCommandLineW(), L"--sp-devices") != nullptr) sp::g_drawerAsk = 1;  // (for testing: the Devices drawer)
+    if (std::wcsstr(GetCommandLineW(), L"--sp-search") != nullptr) sp::OpenSearch();  // (for testing: the search, open)
     if (const wchar_t* pl = std::wcsstr(GetCommandLineW(), L"--sp-playlist=")) {  // (for testing: open a playlist's page)
         std::wstring id(pl + 14);
         id = id.substr(0, id.find_first_of(L" \""));

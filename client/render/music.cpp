@@ -751,10 +751,23 @@ void DrawLyrics(ImVec2 min, ImVec2 max) {
         static float scroll = 0.0f;
         static float scrollSpeed = 0.0f;
         static std::uint32_t lastTrack = 0;
-        const float target = static_cast<float>(std::max(0, current));
+        // YOUR SCROLL: the mouse wheel moves the lyrics (in lines) away from
+        // the one being sung; 3.5 s after you stop, they glide back to it.
+        static float userLines = 0.0f;
+        static double userAt = -100.0;
+        const double now = ImGui::GetTime();
+        if (ImGui::IsMouseHoveringRect(min, max) && ImGui::GetIO().MouseWheel != 0.0f) {
+            userLines -= ImGui::GetIO().MouseWheel * 1.5f;
+            userAt = now;
+        }
+        if (now - userAt > 3.5) userLines = 0.0f;
+        const float sung = static_cast<float>(std::max(0, current));
+        userLines = std::clamp(userLines, -sung, static_cast<float>(std::max(0, n - 1)) - sung);
+        const float target = sung + userLines;
         if (lastTrack != t.trackId) {
             lastTrack = t.trackId;
-            scroll = target;
+            userLines = 0.0f;
+            scroll = sung;
             scrollSpeed = 0.0f;
         }
         {

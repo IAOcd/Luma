@@ -121,9 +121,9 @@ ISimpleAudioVolume* FindSession(DWORD pid) {
 
 void ApplyVolume() {
     if (g_session == nullptr || g_volume < 0) return;
-    // (a curve: the ear hears volume in "steps"; 50% on the bar sounds like half)
-    const float x = static_cast<float>(g_volume) / 100.0f;
-    g_session->SetMasterVolume(x * x, nullptr);
+    // (straight, 0..1: the same scale the game's music volume uses, so both
+    // bars show the same value and move each other)
+    g_session->SetMasterVolume(static_cast<float>(g_volume) / 100.0f, nullptr);
     g_volumeApplied = true;
 }
 
@@ -400,6 +400,18 @@ void SetVolume(int percent) {
 
 int Volume() {
     if (g_volume < 0) g_volume = LoadVolume();
+    // the real one, from Windows: the game (or Windows' own mixer) may have moved it
+    if (g_session != nullptr && Now() - g_volumeChangedAt > 0.5) {
+        float v = 0.0f;
+        if (SUCCEEDED(g_session->GetMasterVolume(&v))) {
+            const int real = static_cast<int>(v * 100.0f + 0.5f);
+            if (real != g_volume) {
+                g_volume = real;
+                g_volumeDirty = true;
+                g_volumeChangedAt = Now() - 0.6;  // (saved a moment later, like any change)
+            }
+        }
+    }
     return g_volume;
 }
 

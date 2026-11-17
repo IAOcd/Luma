@@ -257,6 +257,10 @@ std::wstring Lower(std::wstring s) {
 std::vector<std::wstring> NameTokens(const std::wstring& appId) {
     std::vector<std::wstring> tokens;
     std::wstring id = Lower(appId);
+    // Luma's own Spotify player: Windows shows the LAUNCHER as the app (it
+    // tells Windows what plays), but the sound comes out of luma-spotify.exe:
+    // its volume is that one's (the same one the launcher's bar moves).
+    if (id.find(L"lumalauncher") != std::wstring::npos) return {L"luma-spotify"};
     const std::size_t bang = id.find(L'!');
     if (bang != std::wstring::npos) id = id.substr(0, bang);
     if (id.size() > 4 && id.compare(id.size() - 4, 4, L".exe") == 0) id.resize(id.size() - 4);

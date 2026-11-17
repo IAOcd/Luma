@@ -1,0 +1,46 @@
+{
+  "notes": {
+    "en": [
+      {
+        "title": "A better Spotify search",
+        "body": "The search now stands alone over the album's colors, with a cleaner bar. The X clears what you typed, and a click outside (or Esc) closes it. With the bar empty you see your recent searches and what you opened from them, ready to open again."
+      },
+      {
+        "title": "Scroll the lyrics in the game",
+        "body": "On the Music page, the mouse wheel now moves the synced lyrics, and a few seconds later they glide back to the line being sung. The song, the cover and the controls stay still: only the lyrics side moves."
+      },
+      {
+        "title": "Fixes",
+        "body": "The music HUD no longer cuts the progress bar and the time when the song's name is short."
+      }
+    ],
+    "es": [
+      {
+        "title": "Un buscador de Spotify mejor",
+        "body": "El buscador ahora queda solo sobre los colores del álbum, con una barra más limpia. La X borra lo que escribiste, y un clic afuera (o Esc) lo cierra. Con la barra vacía ves tus búsquedas recientes y lo que abriste desde ellas, listo para abrir otra vez."
+      },
+      {
+        "title": "Desplaza la letra en el juego",
+        "body": "En la página Música, la rueda del mouse ahora mueve la letra sincronizada, y a los pocos segundos vuelve sola a la línea que se canta. La canción, la carátula y los controles se quedan quietos: solo se mueve el lado de la letra."
+      },
+      {
+        "title": "Arreglos",
+        "body": "El HUD de música ya no corta la barra de progreso ni el tiempo cuando el nombre de la canción es corto."
+      }
+    ],
+    "pt": [
+      {
+        "title": "Uma busca do Spotify melhor",
+        "body": "A busca agora fica sozinha sobre as cores do álbum, com uma barra mais limpa. O X apaga o que você digitou, e um clique fora (ou Esc) fecha. Com a barra vazia você vê suas buscas recentes e o que abriu a partir delas, pronto para abrir de novo."
+      },
+      {
+        "title": "Role a letra no jogo",
+        "body": "Na página Música, a roda do mouse agora move a letra sincronizada, e poucos segundos depois ela volta sozinha para a linha cantada. A música, a capa e os controles ficam parados: só o lado da letra se move."
+      },
+      {
+        "title": "Correções",
+        "body": "O HUD de música não corta mais a barra de progresso e o tempo quando o nome da música é curto."
+      }
+    ]
+  }
+}

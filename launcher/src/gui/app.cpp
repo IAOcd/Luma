@@ -298,6 +298,135 @@ void TextFit(ImDrawList* d, ImFont* font, ImVec2 pos, ImU32 color, const char* t
     }
 }
 
+// Fades and moves what was drawn since vertex "start" (menus that open,
+// cards that come in): every point of it gets "alpha" times its own, moved by "offset".
+void AnimateSince(ImDrawList* d, int start, float alpha, ImVec2 offset) {
+    if (alpha >= 0.999f && offset.x == 0.0f && offset.y == 0.0f) return;
+    for (int i = start; i < d->VtxBuffer.Size; ++i) {
+        ImDrawVert& v = d->VtxBuffer[i];
+        v.pos.x += offset.x;
+        v.pos.y += offset.y;
+        const unsigned a = static_cast<unsigned>(static_cast<float>((v.col >> IM_COL32_A_SHIFT) & 0xFF) * std::clamp(alpha, 0.0f, 1.0f));
+        v.col = (v.col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
+    }
+}
+
+// THE BLURRED LETTERS. Real blur, cheap: when the fonts are built, the picture
+// that holds every letter (the "atlas") is copied twice and blurred on the CPU
+// (once a little, once more). Drawing a text with one of those copies instead
+// of the sharp one gives blurred letters, at the cost of normal text. The
+// letters are kept apart in the atlas (padding) so their blur doesn't touch.
+// Used for the far lines of the lyrics and for the glow of the sung words.
+constexpr int kAtlasPadding = 24;
+ID3D11ShaderResourceView* g_blurAtlas[2] = {nullptr, nullptr};
+bool g_blurAtlasDirty = true;
+
+void ReleaseBlurAtlas() {
+    for (auto*& v : g_blurAtlas) {
+        if (v != nullptr) v->Release();
+        v = nullptr;
+    }
+}
+
+// A blur of "radius" pixels on one alpha picture: three box blurs one way
+// then the other (looks like a gaussian). "rx" and "ry" can differ (the atlas
+// is twice as fine horizontally for most fonts).
+void BlurAlpha(std::vector<float>& img, int w, int h, int rx, int ry) {
+    std::vector<float> tmp(img.size());
+    auto pass = [&](int r, bool horizontal) {
+        if (r <= 0) return;
+        const float inv = 1.0f / static_cast<float>(2 * r + 1);
+        const int lines = horizontal ? h : w, len = horizontal ? w : h;
+        for (int l = 0; l < lines; ++l) {
+            auto at = [&](int i) -> float& { return horizontal ? img[static_cast<std::size_t>(l * w + i)] : img[static_cast<std::size_t>(i * w + l)]; };
+            auto out = [&](int i) -> float& { return horizontal ? tmp[static_cast<std::size_t>(l * w + i)] : tmp[static_cast<std::size_t>(i * w + l)]; };
+            float sum = 0.0f;
+            for (int i = -r; i <= r; ++i) sum += at(std::clamp(i, 0, len - 1));
+            for (int i = 0; i < len; ++i) {
+                out(i) = sum * inv;
+                sum += at(std::min(i + r + 1, len - 1)) - at(std::max(i - r, 0));
+            }
+        }
+        img.swap(tmp);
+    };
+    for (int k = 0; k < 3; ++k) pass(rx, true);
+    for (int k = 0; k < 3; ++k) pass(ry, false);
+}
+
+void BuildBlurAtlas() {
+    g_blurAtlasDirty = false;
+    ReleaseBlurAtlas();
+    if (g_device == nullptr) return;
+    unsigned char* pixels = nullptr;
+    int w = 0, h = 0;
+    ImGui::GetIO().Fonts->GetTexDataAsAlpha8(&pixels, &w, &h);
+    if (pixels == nullptr || w <= 0 || h <= 0) return;
+    // (horizontal, vertical) per level: a little, more. Three box passes spread
+    // about 3x the radius: it must stay inside the padding, or a neighbor letter's
+    // blur shows as the edge of a box.
+    const int radii[2][2] = {{2, 1}, {3, 3}};
+    for (int level = 0; level < 2; ++level) {
+        std::vector<float> img(static_cast<std::size_t>(w) * h);
+        for (std::size_t i = 0; i < img.size(); ++i) img[i] = pixels[i] / 255.0f;
+        BlurAlpha(img, w, h, radii[level][0], radii[level][1]);
+        std::vector<std::uint8_t> rgba(img.size() * 4, 255);
+        for (std::size_t i = 0; i < img.size(); ++i) rgba[i * 4 + 3] = static_cast<std::uint8_t>(std::clamp(img[i] * 1.4f, 0.0f, 1.0f) * 255.0f);
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = static_cast<UINT>(w);
+        desc.Height = static_cast<UINT>(h);
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_IMMUTABLE;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA init{rgba.data(), static_cast<UINT>(w * 4), 0};
+        ID3D11Texture2D* texture = nullptr;
+        if (SUCCEEDED(g_device->CreateTexture2D(&desc, &init, &texture))) {
+            g_device->CreateShaderResourceView(texture, nullptr, &g_blurAtlas[level]);
+            texture->Release();
+        }
+    }
+}
+
+// A line of text with blurred letters (level 0 = a little, 1 = more). Each
+// letter's square is drawn a bit bigger than usual, so its blur isn't cut.
+void BlurText(ImDrawList* d, ImFont* font, float size, ImVec2 pos, ImU32 color, const char* text, const char* textEnd, int level) {
+    ID3D11ShaderResourceView* tex = g_blurAtlas[std::clamp(level, 0, 1)];
+    if (tex == nullptr || ((color >> IM_COL32_A_SHIFT) & 0xFF) == 0) return;
+    if (textEnd == nullptr) textEnd = text + std::strlen(text);
+    const ImFontAtlas* atlas = font->ContainerAtlas;
+    const float scale = size / font->FontSize;
+    // (half the gap: the other half belongs to the neighbor letter)
+    const float pad = static_cast<float>(kAtlasPadding / 2) - 1.0f;
+    d->PushTextureID(reinterpret_cast<ImTextureID>(tex));
+    float x = pos.x;
+    for (const char* s = text; s < textEnd;) {
+        unsigned int c = 0;
+        const int n = ImTextCharFromUtf8(&c, s, textEnd);
+        if (n <= 0) break;
+        s += n;
+        const ImFontGlyph* g = font->FindGlyph(static_cast<ImWchar>(c));
+        if (g == nullptr) continue;
+        if (g->Visible && g->U1 > g->U0 && g->V1 > g->V0) {
+            const float gw = (g->X1 - g->X0) * scale, gh = (g->Y1 - g->Y0) * scale;
+            const float tw = (g->U1 - g->U0) * static_cast<float>(atlas->TexWidth), th = (g->V1 - g->V0) * static_cast<float>(atlas->TexHeight);
+            const float px = gw / tw * pad, py = gh / th * pad;  // the padding, in screen pixels
+            const float pu = pad / static_cast<float>(atlas->TexWidth), pv = pad / static_cast<float>(atlas->TexHeight);
+            const ImVec2 a(x + g->X0 * scale - px, pos.y + g->Y0 * scale - py), b(x + g->X1 * scale + px, pos.y + g->Y1 * scale + py);
+            d->PrimReserve(6, 4);
+            d->PrimRectUV(a, b, ImVec2(g->U0 - pu, g->V0 - pv), ImVec2(g->U1 + pu, g->V1 + pv), color);
+        }
+        x += g->AdvanceX * scale;
+    }
+    d->PopTextureID();
+}
+
+// How tall a wrapped text is (without drawing it).
+float TextWrapHeight(ImFont* font, const char* text, float width) {
+    return font->CalcTextSizeA(font->FontSize, FLT_MAX, width, text).y;
+}
+
 // Texto en varias líneas (corta por palabras). Devuelve la altura usada.
 float TextWrap(ImDrawList* d, ImFont* font, ImVec2 pos, ImU32 color, const char* text, float width) {
     d->AddText(font, font->FontSize, pos, color, text, nullptr, width);
@@ -416,6 +545,28 @@ bool Segmented(const char* id, ImVec2 pos, const char* const* labels, int count,
     d->AddRectFilled(pos, ImVec2(pos.x + total, pos.y + h), C(p.background), S(10.0f));
     d->AddRect(pos, ImVec2(pos.x + total, pos.y + h), C(p.border), S(10.0f));
     bool changed = false;
+    // the chosen one: a pill that slides to it (and stretches to its width)
+    {
+        float tx = pos.x + S(3.0f), tw = widths[0];
+        for (int i = 0; i < count; ++i) {
+            if (i == *index) {
+                tw = widths[i];
+                break;
+            }
+            tx += widths[i];
+        }
+        const ImGuiID sid = ImGui::GetID(id);
+        float& px = *ImGui::GetStateStorage()->GetFloatRef(sid + 31, -1.0f);
+        float& pw = *ImGui::GetStateStorage()->GetFloatRef(sid + 32, -1.0f);
+        if (px < 0.0f || std::fabs(px - tx) > S(600.0f)) {
+            px = tx;
+            pw = tw;
+        }
+        const float k = std::min(1.0f, Dt() * 14.0f);
+        px += (tx - px) * k;
+        pw += (tw - pw) * k;
+        d->AddRectFilled(ImVec2(px, pos.y + S(3.0f)), ImVec2(px + pw, pos.y + h - S(3.0f)), C(p.accent), S(8.0f));
+    }
     float x = pos.x + S(3.0f);
     for (int i = 0; i < count; ++i) {
         char itemId[64];
@@ -428,7 +579,6 @@ bool Segmented(const char* id, ImVec2 pos, const char* const* labels, int count,
             changed = true;
         }
         const float on = Anim(ImGui::GetID(itemId) + 7, *index == i, 12.0f);
-        if (on > 0.0f) d->AddRectFilled(min, max, C(p.accent, on), S(8.0f));
         if (hover > 0.0f && on < 1.0f) d->AddRectFilled(min, max, C(p.text, 0.05f * hover * (1.0f - on)), S(8.0f));
         const ImVec2 ts = TextSize(g_fonts.semibold, labels[i]);
         Text(d, g_fonts.semibold, ImVec2(min.x + (widths[i] - ts.x) * 0.5f, min.y + (max.y - min.y - ts.y) * 0.5f),
@@ -1070,7 +1220,23 @@ void DragToRotate(const char* id, ImVec2 min, ImVec2 max, float& yaw) {
 bool g_playMenuOpen = false;
 ImVec2 g_playMenuAnchor{0, 0};  // esquina superior izquierda de la flechita
 
+void DrawPlayMenuBody(ImDrawList* d);
+
+// (it opens and closes with a short fade and slide)
 void DrawPlayMenu(ImDrawList* d) {
+    static float anim = 0.0f;
+    anim += ((g_playMenuOpen ? 1.0f : 0.0f) - anim) * std::min(1.0f, Dt() * 16.0f);
+    if (anim < 0.01f) return;
+    const bool wasOpen = g_playMenuOpen;
+    g_playMenuOpen = true;  // (drawn while it closes too)
+    const int start = d->VtxBuffer.Size;
+    DrawPlayMenuBody(d);
+    if (!wasOpen) g_playMenuOpen = false;
+    const float e = 1.0f - (1.0f - anim) * (1.0f - anim) * (1.0f - anim);
+    AnimateSince(d, start, e, ImVec2(0.0f, (1.0f - e) * S(10.0f)));
+}
+
+void DrawPlayMenuBody(ImDrawList* d) {
     if (!g_playMenuOpen) {
         return;
     }
@@ -1751,10 +1917,14 @@ void SoftLight(ImDrawList* d, ImVec2 center, float radius, const ImVec4& color, 
 // GPU's smooth stretching does the rest.
 ArtTexture g_blur;
 ArtTexture g_blurOld;
+ArtTexture g_blobs;     // the art a little less blurred: the shapes that turn (Liner style)
+ArtTexture g_blobsOld;
 float g_ambient = 0.0f;  // 0..1: the ambient on (there's music)
 
-ID3D11ShaderResourceView* MakeBlur(const std::vector<std::uint8_t>& rgba) {
-    constexpr int kSmall = 24;
+// (shrinkTo = how many pixels it's shrunk to, passes = how many softening passes:
+// 24 and 3 for the calm base; fewer for the "blobs" that turn, with more shape)
+ID3D11ShaderResourceView* MakeBlur(const std::vector<std::uint8_t>& rgba, int shrinkTo = 24, int passes = 3) {
+    const int kSmall = shrinkTo;
     const int n = media::kArtSize;
     if (g_device == nullptr || rgba.size() < static_cast<std::size_t>(n) * n * 4) return nullptr;
     std::vector<float> pix(kSmall * kSmall * 3, 0.0f);
@@ -1776,7 +1946,7 @@ ID3D11ShaderResourceView* MakeBlur(const std::vector<std::uint8_t>& rgba) {
     }
     // Softer still: three passes of "each pixel = the average of its neighbors".
     std::vector<float> tmp(pix.size());
-    for (int pass = 0; pass < 3; ++pass) {
+    for (int pass = 0; pass < passes; ++pass) {
         for (int y = 0; y < kSmall; ++y) {
             for (int x = 0; x < kSmall; ++x) {
                 for (int c = 0; c < 3; ++c) {
@@ -1831,21 +2001,47 @@ void DrawAmbient(ImDrawList* d, ImVec2 display, const media::Track& t) {
     if (g_ambient < 0.01f) return;
     const float now = static_cast<float>(ImGui::GetTime());
     const float big = std::max(display.x, display.y);
-    // 1. The blurred art, covering the window, slowly drifting and breathing.
+    // 1. The blurred art, covering the window, and ALIVE (like Liner or Apple
+    // Music): over it, three more huge copies of the blurred art turn slowly,
+    // each around its own center, at its own speed and the other way, so the
+    // album's colors flow into each other all the time (also when paused; a
+    // little brighter with the bass). Only the background moves: the art, the
+    // words and the buttons stay still. The copies are so big their edges
+    // never enter the window.
     {
-        const float half = big * 0.5f * 1.25f;
         const ImVec2 c(display.x * 0.5f, display.y * 0.5f);
-        const ImVec2 a(c.x - half, c.y - half), b(c.x + half, c.y + half);
-        auto draw = [&](ID3D11ShaderResourceView* view, float alpha) {
-            if (view != nullptr && alpha > 0.0f) {
-                d->AddImage(reinterpret_cast<ImTextureID>(view), a, b, ImVec2(0, 0), ImVec2(1, 1), Col(ImVec4(1, 1, 1, 1), alpha));
-            }
+        auto layer = [&](ID3D11ShaderResourceView* view, float alpha, float size, float angle, ImVec2 center) {
+            if (view == nullptr || alpha <= 0.0f) return;
+            const float h = size * 0.5f, ca = std::cos(angle) * h, sa = std::sin(angle) * h;
+            const ImVec2 p1(center.x - ca + sa, center.y - sa - ca), p2(center.x + ca + sa, center.y + sa - ca);
+            const ImVec2 p3(center.x + ca - sa, center.y + sa + ca), p4(center.x - ca - sa, center.y - sa + ca);
+            d->AddImageQuad(reinterpret_cast<ImTextureID>(view), p1, p2, p3, p4, ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1),
+                            Col(ImVec4(1, 1, 1, 1), alpha));
         };
         if (g_blur.view == nullptr) {
             d->AddRectFilled(ImVec2(0, 0), display, Col(p.accent, 0.35f * g_ambient));
         }
-        draw(g_blurOld.view, g_ambient * (1.0f - g_artFade));
-        draw(g_blur.view, g_ambient * (g_blurOld.view != nullptr ? g_artFade : 1.0f));
+        struct Spin {
+            float size, speed, orbit, orbitSpeed, phase, alpha;
+        };
+        static const Spin kSpins[3] = {
+            {2.0f, 0.045f, 0.10f, 0.060f, 0.0f, 0.65f},
+            {1.8f, -0.060f, 0.14f, -0.045f, 2.1f, 0.50f},
+            {1.7f, 0.075f, 0.12f, 0.050f, 4.2f, 0.40f},
+        };
+        const float glow = 1.0f + 0.10f * g_bassSmooth;
+        auto all = [&](ID3D11ShaderResourceView* view, ID3D11ShaderResourceView* blobs, float alpha) {
+            if (view == nullptr || alpha <= 0.0f) return;
+            layer(view, alpha, big * 2.2f, 0.0f, c);  // (the still base)
+            if (blobs != nullptr) view = blobs;
+            for (const Spin& sp : kSpins) {
+                const float orbitA = now * sp.orbitSpeed + sp.phase;
+                const ImVec2 oc(c.x + std::cos(orbitA) * big * sp.orbit, c.y + std::sin(orbitA) * big * sp.orbit * 0.7f);
+                layer(view, std::min(1.0f, alpha * sp.alpha * glow), big * sp.size, now * sp.speed + sp.phase, oc);
+            }
+        };
+        all(g_blurOld.view, g_blobsOld.view, g_ambient * (1.0f - g_artFade));
+        all(g_blur.view, g_blobs.view, g_ambient * (g_blurOld.view != nullptr ? g_artFade : 1.0f));
     }
     // 2. Its colors, as big soft lights resting in the corners (they glow a
     // little brighter with the bass; they don't move).
@@ -1884,6 +2080,9 @@ void UpdateMusic(const media::Track& t, bool visible) {
             ReleaseArt(g_blurOld);
             g_blurOld = g_blur;
             g_blur.view = MakeBlur(g_artPixels);
+            ReleaseArt(g_blobsOld);
+            g_blobsOld = g_blobs;
+            g_blobs.view = MakeBlur(g_artPixels, 10, 1);
             g_artFade = 0.0f;
         }
     }
@@ -1895,6 +2094,9 @@ void UpdateMusic(const media::Track& t, bool visible) {
             ReleaseArt(g_blurOld);
             g_blurOld = g_blur;
             g_blur = ArtTexture{};
+            ReleaseArt(g_blobsOld);
+            g_blobsOld = g_blobs;
+            g_blobs = ArtTexture{};
             g_artFade = 0.0f;
             g_artVersion = 0;
         }
@@ -1903,6 +2105,7 @@ void UpdateMusic(const media::Track& t, bool visible) {
     if (g_artFade >= 1.0f) {
         ReleaseArt(g_artOld);
         ReleaseArt(g_blurOld);
+        ReleaseArt(g_blobsOld);
     }
     // A new song: its name comes in.
     if (t.trackId != g_shownTrack) {
@@ -2623,7 +2826,7 @@ void UpdateLyrics(const media::Track& t, bool visible) {
             g_lyricLine = line;
         }
     }
-    g_lyricScroll = std::min(1.0f, g_lyricScroll + Dt() * 3.5f);
+    g_lyricScroll = std::min(1.0f, g_lyricScroll + Dt() * 1.9f);
     // (the music stopped for a while, not just between two songs: back to the song)
     static double absentSince = -1.0;
     if (t.present) {
@@ -2681,6 +2884,138 @@ void FillText(ImDrawList* d, ImFont* font, float size, ImVec2 pos, float height,
     }
 }
 
+float EaseOutBack(float x) {  // (a soft overshoot: it arrives, goes a hair past, settles)
+    x = std::clamp(x, 0.0f, 1.0f);
+    const float c1 = 1.15f, c3 = c1 + 1.0f;
+    return 1.0f + c3 * (x - 1.0f) * (x - 1.0f) * (x - 1.0f) + c1 * (x - 1.0f) * (x - 1.0f);
+}
+
+// THE LINE BEING SUNG, with soul. Word by word:
+//   - each word fills with a soft edge while it's sung;
+//   - it rises a little when it starts (and stays up: the sung part floats);
+//   - the long ones (held notes, a second or more) grow a touch and get a
+//     light in the album's color in the shape of their own letters, breathing
+//     with the bass, and it fades when the note ends.
+// Lines without word times: all bright.
+void DrawSungLine(ImDrawList* d, ImFont* font, float size, ImVec2 pos, float height, const lyrics::Line& line, int lineEnd, int ms,
+                  float alpha, float lift) {
+    const Palette& p = P();
+    if (line.words.empty()) {
+        d->AddText(font, size, pos, C(p.text, alpha), line.text.c_str());
+        return;
+    }
+    const float feather = size * 0.9f;
+    float x = pos.x;
+    for (std::size_t w = 0; w < line.words.size(); ++w) {
+        const lyrics::Word& word = line.words[w];
+        const char* text = word.text.c_str();
+        const float ww = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text).x;
+        int end = w + 1 < line.words.size() ? line.words[w + 1].ms : std::min(lineEnd, word.ms + 1500);
+        end = std::max(end, word.ms + 1);
+        const float dur = static_cast<float>(end - word.ms);
+        const float f = std::clamp(static_cast<float>(ms - word.ms) / dur, 0.0f, 1.0f);
+        const float up = EaseOutCubic(std::clamp(static_cast<float>(ms - word.ms) / 320.0f, 0.0f, 1.0f));
+        const float dy = -lift * up;
+        float held = 0.0f;  // the held note's light (0..1)
+        if (dur >= 1000.0f && ms >= word.ms) {
+            held = ms < end ? std::clamp(f * 4.0f, 0.0f, 1.0f) : std::clamp(1.0f - static_cast<float>(ms - end) / 450.0f, 0.0f, 1.0f);
+        }
+        // THE GLOW: the sung word's own letters, blurred, in a light tint of the
+        // album's color, under the sharp ones (real blur: BlurText). It comes
+        // in as the word starts, rests soft, and on held notes it's stronger
+        // and breathes with the bass.
+        if (f > 0.0f) {
+            const float glow = (0.30f + 0.55f * held + 0.20f * g_bassSmooth * held) * std::clamp(f * 4.0f, 0.0f, 1.0f);
+            const ImVec4 tint = Mix(p.accent, ImVec4(1, 1, 1, 1), 0.35f);
+            d->PushClipRect(ImVec2(x - size, pos.y - size), ImVec2(x + (ww + feather) * f + size * 0.5f, pos.y + height + size), true);
+            BlurText(d, font, size, ImVec2(x, pos.y + dy), C(tint, glow * alpha), text, nullptr, 1);
+            d->PopClipRect();
+        }
+        if (held > 0.01f) {
+            // A HELD NOTE: the letters stay sharp (never scaled: that blurs
+            // them). Each letter rises in turn, a wave that goes through the
+            // word as the note goes on, and a shine (the album's color, light)
+            // rides on the wave's top.
+            const ImVec4 shine = Mix(p.accent, ImVec4(1, 1, 1, 1), 0.55f);
+            const char* end8 = text + word.text.size();
+            int letters = 0;
+            for (const char* c = text; c < end8;) {
+                unsigned int ch = 0;
+                const int n = ImTextCharFromUtf8(&ch, c, end8);
+                if (n <= 0) break;
+                c += n;
+                ++letters;
+            }
+            const float crest = f * 1.5f - 0.25f;  // where the wave is (0..1 across the word)
+            float lx = x;
+            int i = 0;
+            for (const char* c = text; c < end8; ++i) {
+                unsigned int ch = 0;
+                const int n = ImTextCharFromUtf8(&ch, c, end8);
+                if (n <= 0) break;
+                const float cw = font->CalcTextSizeA(size, FLT_MAX, 0.0f, c, c + n).x;
+                const float at = (static_cast<float>(i) + 0.5f) / static_cast<float>(std::max(1, letters));
+                const float bump = std::exp(-((at - crest) * (at - crest)) / 0.035f) * held;
+                const ImVec2 lp(lx, std::round(pos.y + dy - S(4.0f) * bump));
+                const float lf = std::clamp((ww * f - (lx - x)) / std::max(1.0f, cw), 0.0f, 1.0f);
+                char one[8] = {};
+                std::memcpy(one, c, static_cast<std::size_t>(std::min(n, 7)));
+                FillText(d, font, size, lp, height, one, p.text, alpha, 0.40f, (cw + cw * 0.8f) * lf, cw * 0.8f);
+                if (bump > 0.02f && lf > 0.0f) d->AddText(font, size, lp, C(shine, 0.85f * bump * alpha), one);
+                lx += cw;
+                c += n;
+            }
+        } else {
+            FillText(d, font, size, ImVec2(x, pos.y + dy), height, text, p.text, alpha, 0.40f, (ww + feather) * f, feather);
+        }
+        x += ww;
+    }
+}
+
+// THE PAUSES (before the first line, or a long instrumental part): three dots
+// that light up one by one as it goes, breathing, and shrink away at the end.
+// A music note, filled (its head, its stem, its flag).
+constexpr const char* kNoteFilled = "F M11 3.5L18.5 6V9.4L13.4 7.7V17.2A3.8 3.5 0 1 1 11 13.9Z";
+
+void DrawInterlude(ImDrawList* d, ImVec2 c, float size, float progress, float alpha) {
+    const Palette& p = P();
+    const float now = static_cast<float>(ImGui::GetTime());
+    const float out = std::clamp((1.0f - progress) / 0.06f, 0.0f, 1.0f);  // (it fades in the last moment)
+    const float in = std::clamp(progress / 0.04f, 0.0f, 1.0f);
+    const float a = alpha * EaseOutCubic(std::min(out, in));
+    const float icon = std::round(size * 1.15f);  // (a fixed size: the icon stays sharp)
+    const float breathe = 0.5f + 0.5f * std::sin(now * 2.4f);
+    // its light, breathing (and with the bass)
+    SoftLight(d, c, icon * 1.1f, p.accent, (0.25f + 0.25f * breathe + 0.3f * g_bassSmooth) * a);
+    // the note, dim, and the part already "loaded" bright, rising from the bottom
+    icons::Draw(d, kNoteFilled, c, icon, C(p.text, 0.28f * a));
+    const float top = c.y + icon * 0.5f - icon * progress;
+    d->PushClipRect(ImVec2(c.x - icon, top), ImVec2(c.x + icon, c.y + icon), true);
+    icons::Draw(d, kNoteFilled, c, icon, C(p.text, a));
+    d->PopClipRect();
+}
+
+const lyrics::Line* LineOf(int k, int* end);  // (below)
+
+// Is it a pause now? (before the first line, or an empty line between parts)
+// Gives how far it went (0..1).
+bool InterludeAt(int ms, float* progress) {
+    const int count = static_cast<int>(g_lyrics.lines.size());
+    if (count == 0) return false;
+    auto blank = [](const std::string& s) { return s.find_first_not_of(" \t\r\n") == std::string::npos; };
+    if (g_lyricLine < 0) {
+        const int first = g_lyrics.lines[0].ms;
+        if (first < 2500) return false;
+        *progress = std::clamp(static_cast<float>(ms) / static_cast<float>(first), 0.0f, 1.0f);
+        return true;
+    }
+    int end = 0;
+    const lyrics::Line* line = LineOf(g_lyricLine, &end);
+    if (line == nullptr || !blank(line->text) || end - line->ms < 2500) return false;
+    *progress = std::clamp(static_cast<float>(ms - line->ms) / static_cast<float>(end - line->ms), 0.0f, 1.0f);
+    return true;
+}
+
 // The line "k" (or nothing), with its end time.
 const lyrics::Line* LineOf(int k, int* end) {
     const int count = static_cast<int>(g_lyrics.lines.size());
@@ -2716,7 +3051,7 @@ void DrawCompactLyrics(ImDrawList* d, float x, float y, float w, const media::Tr
     if (!HasLyricLines(t)) return;
     const int ms = LyricsMs(t);
     const float move = 1.0f - EaseOutCubic(g_lyricScroll);  // 1 = just changed
-    d->PushClipRect(ImVec2(x - S(4.0f), y - S(2.0f)), ImVec2(x + w + S(4.0f), y + lineH + nextFont->FontSize + S(8.0f)), true);
+    d->PushClipRect(ImVec2(x - S(8.0f), y - S(6.0f)), ImVec2(x + w + S(8.0f), y + lineH + nextFont->FontSize + S(8.0f)), true);
     // the line that just ended, going up and away
     int end = 0;
     if (move > 0.0f) {
@@ -2725,18 +3060,20 @@ void DrawCompactLyrics(ImDrawList* d, float x, float y, float w, const media::Tr
             d->AddText(big, size, ImVec2(x, y - lineH * (1.0f - move)), C(p.text, alpha * move * 0.8f), old->text.c_str());
         }
     }
-    // the line being sung (before the first one: nothing yet, the next one waits below)
-    if (const lyrics::Line* line = LineOf(g_lyricLine, &end)) {
+    // the line being sung (or, in a pause, the three dots)
+    float pause = 0.0f;
+    if (InterludeAt(ms, &pause)) {
+        DrawInterlude(d, ImVec2(x + big->FontSize * 0.55f, y + lineH * 0.5f), big->FontSize, pause, alpha);
+    } else if (const lyrics::Line* line = LineOf(g_lyricLine, &end)) {
         float size = big->FontSize;
         ImVec2 ts = big->CalcTextSizeA(size, FLT_MAX, 0.0f, line->text.c_str());
-        if (ts.x > w) {  // too long: smaller, so it fits
-            size *= w / ts.x;
+        if (ts.x > w - S(8.0f)) {  // too long: smaller, so it fits (with room to grow a held note)
+            size *= (w - S(8.0f)) / ts.x;
             ts = big->CalcTextSizeA(size, FLT_MAX, 0.0f, line->text.c_str());
         }
-        const float ly = y + (lineH * 0.7f) * move;
-        const float sweep = LineSweep(*line, end, ms, big, size, ts.x);
-        FillText(d, big, size, ImVec2(x, ly + (big->FontSize - size) * 0.5f), ts.y, line->text.c_str(), p.text,
-                 alpha * (1.0f - 0.6f * move), 0.40f, sweep, size * 1.6f);
+        const float ly = y + S(2.0f) + (lineH * 0.7f) * move;
+        DrawSungLine(d, big, size, ImVec2(x, ly + (big->FontSize - size) * 0.5f), ts.y, *line, end, ms, alpha * (1.0f - 0.6f * move),
+                     S(2.0f));
     }
     // the next one
     if (const lyrics::Line* next = LineOf(g_lyricLine + 1, nullptr)) {
@@ -2774,28 +3111,49 @@ void DrawLyricsLines(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& 
     const int ms = LyricsMs(t);
     const float big = font->FontSize;
     const float step = big * 1.55f;
-    const float scroll = 1.0f - EaseOutCubic(g_lyricScroll);  // 1 = still where the old line was
     d->PushClipRect(min, max, true);
+    // the pause dots, in the current line's place
+    {
+        float pause = 0.0f;
+        if (InterludeAt(ms, &pause)) {
+            const float in = EaseOutBack(g_lyricScroll);
+            DrawInterlude(d, ImVec2(cx, cy + (1.0f - in) * step), big, pause, alpha);
+        }
+    }
     for (int k = g_lyricLine - 3; k <= g_lyricLine + 4; ++k) {
         int end = 0;
         const lyrics::Line* line = LineOf(k, &end);
-        if (line == nullptr || line->text.empty()) continue;
+        if (line == nullptr || line->text.find_first_not_of(" ") == std::string::npos) continue;
+        // (each line follows a moment after the one above: a soft cascade)
+        const float delay = 0.07f * static_cast<float>(std::clamp(k - g_lyricLine + 1, 0, 5));
+        const float local = std::clamp((g_lyricScroll - delay) / 0.65f, 0.0f, 1.0f);
+        const float scroll = 1.0f - EaseOutBack(local);  // 1 = still where the old line was
         const float r = static_cast<float>(k - g_lyricLine) + scroll;  // 0 = the current one's place
         const float near1 = std::clamp(1.0f - std::fabs(r), 0.0f, 1.0f);
         float size = big * (0.72f + 0.28f * near1);
         const float a = alpha * std::clamp(1.0f - (std::fabs(r) - 1.0f) * 0.35f, 0.0f, 1.0f);
         if (a < 0.01f) continue;
         ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, line->text.c_str());
-        if (ts.x > W) {
-            size *= W / ts.x;
+        if (ts.x > W * 0.94f) {
+            size *= W * 0.94f / ts.x;
             ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, line->text.c_str());
         }
         const ImVec2 pos(cx - ts.x * 0.5f, cy + r * step - ts.y * 0.5f);
         if (k == g_lyricLine) {
-            FillText(d, font, size, pos, ts.y, line->text.c_str(), p.text, a, 0.38f, LineSweep(*line, end, ms, font, size, ts.x),
-                     size * 1.6f);
+            DrawSungLine(d, font, size, pos, ts.y, *line, end, ms, a, S(4.0f));
         } else {
-            d->AddText(font, size, pos, C(p.text, (k < g_lyricLine ? 0.30f : 0.42f) * a), line->text.c_str());
+            // the farther from the line being sung, the more blurred (like a
+            // camera focused on it): sharp -> a little blur -> more blur
+            const float base = (k < g_lyricLine ? 0.30f : 0.42f) * a;
+            const float blur = std::clamp(std::fabs(r) - 0.6f, 0.0f, 2.0f);
+            const char* tx = line->text.c_str();
+            if (blur < 1.0f) {
+                if (blur < 0.99f) d->AddText(font, size, pos, C(p.text, base * (1.0f - blur)), tx);
+                BlurText(d, font, size, pos, C(p.text, base * blur), tx, nullptr, 0);
+            } else {
+                BlurText(d, font, size, pos, C(p.text, base * (2.0f - blur)), tx, nullptr, 0);
+                BlurText(d, font, size, pos, C(p.text, base * (blur - 1.0f) * 1.2f), tx, nullptr, 1);
+            }
         }
     }
     d->PopClipRect();
@@ -2875,12 +3233,102 @@ bool IconToggle(ImDrawList* d, const char* id, ImVec2 c, const char* icon, float
     const float r = size * 0.95f;
     float hover = 0.0f;
     const bool clicked = Hit(id, ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), &hover, enabled);
-    if (hover > 0.0f) d->AddCircleFilled(c, r, C(ImVec4(1, 1, 1, 1), 0.10f * hover), 32);
+    const float lit = Anim(ImGui::GetID(id) + 9, on, 10.0f);
+    const float press = Anim(ImGui::GetID(id) + 10, ImGui::IsItemActive() && enabled, 22.0f);
+    if (hover > 0.0f) d->AddCircleFilled(c, r * (1.0f - 0.08f * press), C(ImVec4(1, 1, 1, 1), 0.10f * hover), 32);
     const float a = enabled ? 1.0f : 0.3f;
-    const ImVec4 col = on ? p.accent : Mix(p.text, p.text, 0.0f);
-    icons::Draw(d, icon, c, size, C(col, a * (on ? 1.0f : 0.70f + 0.30f * hover)), S(1.8f));
-    if (on) d->AddCircleFilled(ImVec2(c.x, c.y + size * 0.85f), S(2.0f), C(p.accent, a), 12);  // the little dot under it
+    icons::Draw(d, icon, c, size, C(Mix(p.text, p.accent, lit), a * (0.70f + 0.30f * std::max(hover, lit))), S(1.8f));
+    if (lit > 0.01f) d->AddCircleFilled(ImVec2(c.x, c.y + size * 0.85f), S(2.0f) * lit, C(p.accent, a * lit), 12);  // the little dot under it
     return clicked && enabled;
+}
+
+// THE PROGRESS BAR: it grows when the mouse is near and its knob appears; the
+// filled part glides (no jumps); click or drag it: while dragging, a bubble
+// shows the time, and the song moves there when you let go.
+void SeekBar(ImDrawList* d, const char* id, float x0, float x1, float y, const media::Track& t, float alpha, bool times) {
+    const Palette& p = P();
+    if (t.duration <= 0.0) return;
+    const float w = std::max(1.0f, x1 - x0);
+    float hover = 0.0f;
+    Hit(id, ImVec2(x0 - S(6.0f), y - S(12.0f)), ImVec2(x1 + S(6.0f), y + S(12.0f)), &hover, t.canSeek);
+    const bool active = ImGui::IsItemActive() && t.canSeek;
+    const ImGuiID gid = ImGui::GetID(id);
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    float& shown = *st->GetFloatRef(gid + 21, -1.0f);
+    float& wasActive = *st->GetFloatRef(gid + 22, 0.0f);
+    float& holdUntil = *st->GetFloatRef(gid + 23, 0.0f);  // (after a seek: wait for the app to get there)
+    const float real = static_cast<float>(std::clamp(t.position / t.duration, 0.0, 1.0));
+    const float mouse = std::clamp((ImGui::GetIO().MousePos.x - x0) / w, 0.0f, 1.0f);
+    const float now = static_cast<float>(ImGui::GetTime());
+    if (active) {
+        shown = mouse;
+    } else {
+        if (wasActive > 0.5f) {
+            media::Seek(t.duration * shown);
+            holdUntil = now + 0.8f;
+        }
+        if (shown < 0.0f) shown = real;
+        if (now > holdUntil || std::fabs(real - shown) < 0.01f) shown += (real - shown) * std::min(1.0f, Dt() * 10.0f);
+    }
+    wasActive = active ? 1.0f : 0.0f;
+    const float press = Anim(gid + 5, active, 16.0f);
+    const float grow = std::max(hover, press);
+    const float th = S(4.0f) + S(3.0f) * grow;
+    d->AddRectFilled(ImVec2(x0, y - th * 0.5f), ImVec2(x1, y + th * 0.5f), C(ImVec4(1, 1, 1, 1), 0.16f * alpha), th * 0.5f);
+    // where the mouse points (a lighter part, while hovering)
+    if (hover > 0.01f && !active) {
+        d->AddRectFilled(ImVec2(x0, y - th * 0.5f), ImVec2(x0 + w * mouse, y + th * 0.5f), C(ImVec4(1, 1, 1, 1), 0.10f * hover * alpha), th * 0.5f);
+    }
+    const float fx = x0 + w * shown;
+    d->AddRectFilled(ImVec2(x0, y - th * 1.4f), ImVec2(fx, y + th * 1.4f), C(p.accent, 0.12f * alpha), th);
+    d->AddRectFilled(ImVec2(x0, y - th * 0.5f), ImVec2(fx, y + th * 0.5f), C(p.accent, alpha), th * 0.5f);
+    const float knob = S(3.0f) + S(4.0f) * grow + S(2.0f) * press;
+    if (press > 0.01f) d->AddCircleFilled(ImVec2(fx, y), knob + S(7.0f) * press, C(p.accent, 0.20f * press * alpha), 24);
+    d->AddCircleFilled(ImVec2(fx, y), knob, C(p.text, alpha), 24);
+    char a[16], b[16];
+    FormatTime(t.duration * shown, a, sizeof(a));
+    FormatTime(t.duration, b, sizeof(b));
+    if (press > 0.01f) {  // the time bubble above the knob
+        const ImVec2 ts = TextSize(g_fonts.semibold, a);
+        const float bw = ts.x + S(18.0f), bh = ts.y + S(8.0f);
+        const float rise = S(6.0f) * (1.0f - press);
+        const ImVec2 bmin(fx - bw * 0.5f, y - S(16.0f) - bh + rise), bmax(fx + bw * 0.5f, y - S(16.0f) + rise);
+        d->AddRectFilled(bmin, bmax, C(Mix(p.card, ImVec4(0, 0, 0, 1), 0.2f), 0.92f * press * alpha), bh * 0.5f);
+        Text(d, g_fonts.semibold, ImVec2(bmin.x + S(9.0f), bmin.y + S(4.0f)), C(p.text, press * alpha), a);
+    }
+    if (times) {
+        Text(d, g_fonts.tiny, ImVec2(x0, y + S(10.0f)), C(p.text, 0.6f * alpha), a);
+        Text(d, g_fonts.tiny, ImVec2(x1 - TextSize(g_fonts.tiny, b).x, y + S(10.0f)), C(p.text, 0.6f * alpha), b);
+    }
+}
+
+// The lyrics view's progress: a thin line that looks as it always did; click
+// or drag it to move the song (it seeks when you let go).
+void ThinSeek(ImDrawList* d, const char* id, float x0, float x1, float y, const media::Track& t, float alpha) {
+    const Palette& p = P();
+    if (t.duration <= 0.0) return;
+    const float w = std::max(1.0f, x1 - x0);
+    Hit(id, ImVec2(x0 - S(4.0f), y - S(9.0f)), ImVec2(x1 + S(4.0f), y + S(9.0f)), nullptr, t.canSeek);
+    const bool active = ImGui::IsItemActive() && t.canSeek;
+    const ImGuiID gid = ImGui::GetID(id);
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    float& dragged = *st->GetFloatRef(gid + 21, -1.0f);  // where it's being dragged (-1 = it isn't)
+    float& seekedAt = *st->GetFloatRef(gid + 23, 0.0f);  // when it was let go (0 = not yet)
+    const float now = static_cast<float>(ImGui::GetTime());
+    float frac = static_cast<float>(std::clamp(t.position / t.duration, 0.0, 1.0));
+    if (active) {
+        dragged = std::clamp((ImGui::GetIO().MousePos.x - x0) / w, 0.0f, 1.0f);
+        seekedAt = 0.0f;
+    } else if (dragged >= 0.0f && seekedAt == 0.0f) {
+        media::Seek(t.duration * dragged);  // let go: the song moves there
+        seekedAt = now;
+    } else if (seekedAt > 0.0f && now - seekedAt > 0.8f) {
+        dragged = -1.0f;  // (by now the app is there: back to its real position)
+        seekedAt = 0.0f;
+    }
+    if (dragged >= 0.0f) frac = dragged;
+    d->AddRectFilled(ImVec2(x0, y - S(1.5f)), ImVec2(x1, y + S(1.5f)), C(ImVec4(1, 1, 1, 1), 0.15f * alpha), S(1.5f));
+    d->AddRectFilled(ImVec2(x0, y - S(1.5f)), ImVec2(x0 + w * frac, y + S(1.5f)), C(p.accent, alpha), S(1.5f));
 }
 
 // The app's volume: an icon and a thin bar you drag.
@@ -2892,13 +3340,17 @@ void VolumeBar(ImDrawList* d, ImVec2 left, float width, const media::Track& t, f
     float hover = 0.0f;
     Hit("##volume", ImVec2(x0 - S(6.0f), left.y - S(10.0f)), ImVec2(x1 + S(6.0f), left.y + S(10.0f)), &hover);
     static float shown = -1.0f;
+    const float press = Anim(ImGui::GetID("##volume") + 4, ImGui::IsItemActive(), 16.0f);
     if (ImGui::IsItemActive()) {
         const float v = std::clamp((ImGui::GetIO().MousePos.x - x0) / std::max(1.0f, width), 0.0f, 1.0f);
         if (std::fabs(v - shown) > 0.005f) media::SetVolume(v);
         shown = v;
-    } else {
+    } else if (shown < 0.0f) {
         shown = t.volume;
+    } else {
+        shown += (t.volume - shown) * std::min(1.0f, Dt() * 12.0f);  // (changed elsewhere, or by the keys: it glides)
     }
+    hover = std::max(hover, press);
     const float th = S(4.0f) + S(2.0f) * hover;
     d->AddRectFilled(ImVec2(x0, left.y - th * 0.5f), ImVec2(x1, left.y + th * 0.5f), C(ImVec4(1, 1, 1, 1), 0.16f * alpha), th);
     d->AddRectFilled(ImVec2(x0, left.y - th * 0.5f), ImVec2(x0 + width * shown, left.y + th * 0.5f), C(p.text, 0.85f * alpha), th);
@@ -2911,18 +3363,28 @@ bool g_optionsOpen = false;
 ImVec2 g_optionsAnchor;  // the "..." button's center (it opens above it)
 float g_copiedAt = -10.0f;
 
+float g_optionsAnim = 0.0f;  // 0..1: the menu opening
+
+void DrawOptionsMenuBody(ImDrawList* d, const media::Track& t);
+
 void DrawOptionsMenu(ImDrawList* d, const media::Track& t) {
-    if (!g_optionsOpen) return;
-    if (!t.present) {
-        g_optionsOpen = false;
-        return;
-    }
+    if (!t.present) g_optionsOpen = false;
+    g_optionsAnim += ((g_optionsOpen ? 1.0f : 0.0f) - g_optionsAnim) * std::min(1.0f, Dt() * 16.0f);
+    if (g_optionsAnim < 0.01f) return;
+    const int start = d->VtxBuffer.Size;
+    DrawOptionsMenuBody(d, t);
+    const float e = EaseOutCubic(g_optionsAnim);
+    AnimateSince(d, start, e, ImVec2(0.0f, (1.0f - e) * S(10.0f)));
+}
+
+void DrawOptionsMenuBody(ImDrawList* d, const media::Track& t) {
     const Palette& p = P();
     const bool spotify = std::strstr(t.app, "Spotify") != nullptr;
     const float itemH = S(40.0f);
     const int rows = 2 + (spotify ? 1 : 0);
-    const float width = S(270.0f);
-    const float height = itemH * static_cast<float>(rows) + S(12.0f);
+    const float width = S(300.0f);
+    const float keysH = TextWrapHeight(g_fonts.tiny, T("key.help"), width - S(28.0f)) + S(16.0f);
+    const float height = itemH * static_cast<float>(rows) + S(12.0f) + keysH;
     const ImVec2 max(g_optionsAnchor.x + S(18.0f), g_optionsAnchor.y - S(24.0f));
     const ImVec2 min(max.x - width, max.y - height);
     d->AddRectFilled(ImVec2(min.x, min.y + S(6.0f)), ImVec2(max.x, max.y + S(8.0f)), Col(ImVec4(0, 0, 0, 1), 0.25f), S(14.0f));
@@ -2971,6 +3433,8 @@ void DrawOptionsMenu(ImDrawList* d, const media::Track& t) {
         ShellExecuteW(nullptr, L"open", L"spotify:", nullptr, nullptr, SW_SHOWNORMAL);
         done = true;
     }
+    d->AddLine(ImVec2(min.x + S(14.0f), y + S(4.0f)), ImVec2(max.x - S(14.0f), y + S(4.0f)), Col(ImVec4(1, 1, 1, 1), 0.08f));
+    TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(14.0f), y + S(10.0f)), Col(p.textDim), T("key.help"), width - S(28.0f));
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     const bool inside = mouse.x >= min.x && mouse.x < max.x && mouse.y >= min.y && mouse.y < max.y;
     if (done || (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !inside && !ImGui::IsAnyItemHovered()) ||
@@ -3353,6 +3817,13 @@ void DrawLyricsPage(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data
     const float ch = std::max(S(120.0f), (max.y - y - footer - gap) * 0.5f);
     const float dim = s.on ? 1.0f : 0.55f;  // (off: they're still chosen, just dimmer)
     for (int i = 0; i < luma::flowstyles::kCount; ++i) {
+        const int cardStart = d->VtxBuffer.Size;
+        struct CardIn {  // (each card rises in a moment after the one before)
+            ImDrawList* d;
+            int start;
+            float in;
+            ~CardIn() { AnimateSince(d, start, in, ImVec2(0.0f, (1.0f - in) * S(18.0f))); }
+        } cardIn{d, cardStart, EaseOutCubic(std::clamp(g_sheet * 2.2f - 0.35f - static_cast<float>(i) * 0.12f, 0.0f, 1.0f))};
         const int col = i % 3, row = i / 3;
         const ImVec2 cmin(min.x + col * (cw + gap), y + row * (ch + gap));
         const ImVec2 cmax(cmin.x + cw, cmin.y + ch);
@@ -3520,24 +3991,7 @@ void DrawStageSong(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t,
     // the lyrics: the line being sung and the next one
     DrawCompactLyrics(d, x, y, w, t, alpha);
     y += lyricsH + S(10.0f);
-    if (t.duration > 0.0) {
-        const float frac = static_cast<float>(std::clamp(t.position / t.duration, 0.0, 1.0));
-        float hover = 0.0f;
-        if (Hit("##seek", ImVec2(x, y - S(10.0f)), ImVec2(x + w, y + S(10.0f)), &hover, t.canSeek)) {
-            media::Seek(t.duration * std::clamp((ImGui::GetIO().MousePos.x - x) / std::max(1.0f, w), 0.0f, 1.0f));
-        }
-        const float th = S(5.0f) + S(3.0f) * hover;
-        d->AddRectFilled(ImVec2(x, y - th * 0.5f), ImVec2(x + w, y + th * 0.5f), C(ImVec4(1, 1, 1, 1), 0.16f * alpha), th * 0.5f);
-        // the filled part glows a little
-        d->AddRectFilled(ImVec2(x, y - th * 1.4f), ImVec2(x + w * frac, y + th * 1.4f), C(p.accent, 0.12f * alpha), th);
-        d->AddRectFilled(ImVec2(x, y - th * 0.5f), ImVec2(x + w * frac, y + th * 0.5f), C(p.accent, alpha), th * 0.5f);
-        d->AddCircleFilled(ImVec2(x + w * frac, y), S(4.0f) + S(4.0f) * hover, C(p.text, alpha), 20);
-        char a[16], b[16];
-        FormatTime(t.position, a, sizeof(a));
-        FormatTime(t.duration, b, sizeof(b));
-        Text(d, g_fonts.tiny, ImVec2(x, y + S(10.0f)), C(p.text, 0.6f * alpha), a);
-        Text(d, g_fonts.tiny, ImVec2(x + w - TextSize(g_fonts.tiny, b).x, y + S(10.0f)), C(p.text, 0.6f * alpha), b);
-    }
+    SeekBar(d, "##seek", x, x + w, y, t, alpha, true);
     y += S(58.0f);
     const float savedFade = g_fade;
     g_fade *= alpha;
@@ -3796,13 +4250,75 @@ void DrawLyricsView(ImDrawList* d, ImVec2 display, const media::Track& t, float 
     }
     if (RoundButton(d, "##lv_next", ImVec2(cx + S(64.0f), cy), S(20.0f), icons::kSkipForwardFilled, S(15.0f), false, t.canNext)) media::Next();
     if (IconToggle(d, "##lv_close", ImVec2(cx + S(124.0f), cy), icons::kMicVocal, S(18.0f), true)) g_lyricsView = false;
-    if (t.duration > 0.0) {  // a thin progress line under them
-        const float frac = static_cast<float>(std::clamp(t.position / t.duration, 0.0, 1.0));
-        const float bw = S(260.0f), by = cy + S(38.0f);
-        d->AddRectFilled(ImVec2(cx - bw * 0.5f, by - S(1.5f)), ImVec2(cx + bw * 0.5f, by + S(1.5f)), C(ImVec4(1, 1, 1, 1), 0.15f), S(1.5f));
-        d->AddRectFilled(ImVec2(cx - bw * 0.5f, by - S(1.5f)), ImVec2(cx - bw * 0.5f + bw * frac, by + S(1.5f)), C(p.accent), S(1.5f));
-    }
+    // a thin progress line under them (as before), that can be clicked or dragged
+    ThinSeek(d, "##lv_seek", cx - S(130.0f), cx + S(130.0f), cy + S(38.0f), t, g_fade);
     g_fade = savedFade;
+}
+
+// THE KEYS (on Home, not while typing): Space = play / pause, Left / Right =
+// 5 seconds back / forward (hold it to keep going), Ctrl + Left / Right = the
+// previous / next song, Up / Down = the volume. Each one shows a small pill.
+const char* g_flashIcon = nullptr;
+char g_flashText[64] = "";
+double g_flashAt = -10.0;
+
+void Flash(const char* icon, const char* text) {
+    g_flashIcon = icon;
+    std::snprintf(g_flashText, sizeof(g_flashText), "%s", text);
+    g_flashAt = ImGui::GetTime();
+}
+
+void HandleMusicKeys(const media::Track& t) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (g_page != Page::Home || io.WantTextInput || !t.present) return;
+    if (ImGui::IsKeyPressed(ImGuiKey_Space, false) && t.canPlayPause) {
+        media::PlayPause();
+        Flash(t.playing ? icons::kPauseFilled : icons::kPlayFilled, t.playing ? T("music.paused") : T("key.play"));
+    }
+    const bool left = ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true), right = ImGui::IsKeyPressed(ImGuiKey_RightArrow, true);
+    if (io.KeyCtrl) {
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) && t.canPrevious) {
+            media::Previous();
+            Flash(icons::kSkipBackFilled, T("key.previous"));
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) && t.canNext) {
+            media::Next();
+            Flash(icons::kSkipForwardFilled, T("key.next"));
+        }
+    } else if ((left || right) && t.canSeek && t.duration > 0.0) {
+        const double to = std::clamp(t.position + (right ? 5.0 : -5.0), 0.0, t.duration);
+        media::Seek(to);
+        char text[32];
+        FormatTime(to, text, sizeof(text));
+        char label[64];
+        std::snprintf(label, sizeof(label), "%s 5 s  ·  %s", right ? "+" : "-", text);
+        Flash(right ? icons::kSkipForward : icons::kSkipBack, label);
+    }
+    const bool upKey = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true), downKey = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+    if ((upKey || downKey) && t.volume >= 0.0f) {
+        const float v = std::clamp(t.volume + (upKey ? 0.05f : -0.05f), 0.0f, 1.0f);
+        media::SetVolume(v);
+        char label[64];
+        std::snprintf(label, sizeof(label), T("key.volume"), static_cast<int>(std::lround(v * 100.0f)));
+        Flash(icons::kVolume, label);
+    }
+}
+
+// The pill of the last key: under the game's pill, it fades away.
+void DrawFlash(ImDrawList* d, ImVec2 display) {
+    const float age = static_cast<float>(ImGui::GetTime() - g_flashAt);
+    if (age > 1.1f || g_flashIcon == nullptr) return;
+    const Palette& p = P();
+    const float a = std::clamp((1.1f - age) / 0.35f, 0.0f, 1.0f) * EaseOutCubic(std::min(1.0f, age * 8.0f));
+    const float pop = 0.92f + 0.08f * EaseOutBack(std::min(1.0f, age * 6.0f));
+    const ImVec2 ts = TextSize(g_fonts.semibold, g_flashText);
+    const float w = (ts.x + S(56.0f)) * pop, h = S(40.0f) * pop;
+    const ImVec2 c(display.x * 0.5f, S(78.0f));
+    const ImVec2 a0(c.x - w * 0.5f, c.y - h * 0.5f), b0(c.x + w * 0.5f, c.y + h * 0.5f);
+    d->AddRectFilled(a0, b0, Col(Mix(p.card, ImVec4(0, 0, 0, 1), 0.2f), 0.85f * a), h * 0.5f);
+    d->AddRect(a0, b0, Col(ImVec4(1, 1, 1, 1), 0.12f * a), h * 0.5f);
+    icons::Draw(d, g_flashIcon, ImVec2(a0.x + S(22.0f), c.y), S(16.0f), Col(p.accent, a), S(1.8f));
+    Text(d, g_fonts.semibold, ImVec2(a0.x + S(40.0f), c.y - ts.y * 0.5f), Col(p.text, a), g_flashText);
 }
 
 // The whole stage (Home, with the sheet over it for the other sections).
@@ -3829,6 +4345,8 @@ void DrawStage(ImDrawList* d, ImVec2 display, const media::Track& t, const Local
     DrawDock(d, display);
     DrawOrb(d, display, data);
     DrawOptionsMenu(d, t);  // (over everything)
+    HandleMusicKeys(t);
+    DrawFlash(d, display);
     (void)name;
 }
 
@@ -4634,6 +5152,8 @@ void AppRebuildFonts() {
     g_fontsDirty = false;
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
+    io.Fonts->TexGlyphPadding = kAtlasPadding;  // (room for the blurred copies: BlurText)
+    g_blurAtlasDirty = true;
     wchar_t windowsDir[MAX_PATH];
     GetWindowsDirectoryW(windowsDir, MAX_PATH);
     const fs::path dir = fs::path(windowsDir) / L"Fonts";
@@ -4698,6 +5218,7 @@ void AppRebuildFonts() {
 }
 
 void AppFrame() {
+    if (g_blurAtlasDirty) BuildBlurAtlas();
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     const Palette& p = P();
 
@@ -4772,12 +5293,15 @@ void AppFrame() {
 
 void AppShutdown() {
     g_quit.store(true);
+    ReleaseBlurAtlas();
     lyrics::Shutdown();
     audioviz::Shutdown();
     media::Shutdown();
     ReleaseArt(g_art);
     ReleaseArt(g_artOld);
     ReleaseArt(g_blur);
+    ReleaseArt(g_blobs);
+    ReleaseArt(g_blobsOld);
     ReleaseArt(g_blurOld);
     if (g_lightTex != nullptr) {
         g_lightTex->Release();

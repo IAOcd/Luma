@@ -41,6 +41,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <functional>
 #include <thread>
 #include <type_traits>
 #include <vector>
@@ -48,6 +49,7 @@
 #include <nlohmann/json.hpp>
 
 #include "account.h"
+#include "spotify_engine.h"
 #include "core/audio_viz.h"
 #include "core/lyrics.h"
 #include "core/spotify.h"
@@ -472,7 +474,16 @@ void Spinner(ImDrawList* d, ImVec2 center, float radius, ImU32 color) {
 }
 
 // Botón invisible en un rectángulo: devuelve si se hizo clic; "hover" sale 0..1 animado.
+// While a section covers the stage, what's behind it can't be touched.
+bool g_blockInput = false;
+
 bool Hit(const char* id, ImVec2 min, ImVec2 max, float* hover, bool enabled = true) {
+    if (g_blockInput) {
+        ImGui::SetCursorScreenPos(min);
+        ImGui::Dummy(ImVec2(std::max(1.0f, max.x - min.x), std::max(1.0f, max.y - min.y)));  // (an item that does nothing)
+        if (hover != nullptr) *hover = Anim(ImGui::GetID(id), false);
+        return false;
+    }
     ImGui::SetCursorScreenPos(min);
     const bool clicked = ImGui::InvisibleButton(id, ImVec2(std::max(1.0f, max.x - min.x), std::max(1.0f, max.y - min.y)));
     const bool hovered = enabled && ImGui::IsItemHovered();
@@ -535,7 +546,8 @@ float SegmentedWidth(const char* const* labels, int count) {
 bool Segmented(const char* id, ImVec2 pos, const char* const* labels, int count, int* index, float* outWidth = nullptr) {
     const Palette& p = P();
     ImDrawList* d = ImGui::GetWindowDrawList();
-    float widths[4]{};
+    float widths[8]{};
+    count = std::min(count, 8);
     float total = S(6.0f);
     for (int i = 0; i < count; ++i) {
         widths[i] = TextSize(g_fonts.semibold, labels[i]).x + S(28.0f);
@@ -2783,6 +2795,16 @@ void ApplyStyle(int i) {
 //  The karaoke fill has no hard edge: the sung part is bright, and the edge
 //  fades over a few letters, so it glides word by word.
 
+bool SpotifyDrivesHome(const media::Track& t, spotify::Player& out);  // (with the Spotify section, below)
+
+// Is this app Spotify? (Luma's own Spotify player plays inside a hidden Edge:
+// Windows calls it "Edge")
+bool IsSpotifyApp(const char* app) {
+    if (std::strstr(app, "Spotify") != nullptr) return true;
+    namespace eng = luma::launcher::spotifyengine;
+    return eng::GetState() == eng::State::Ready && (std::strstr(app, "Edge") != nullptr || std::strstr(app, "msedge") != nullptr);
+}
+
 lyrics::Result g_lyrics;
 std::uint32_t g_lyricsVersion = 0;
 int g_lyricLine = -1;        // the line being sung
@@ -3249,7 +3271,8 @@ bool IconToggle(ImDrawList* d, const char* id, ImVec2 c, const char* icon, float
 // THE PROGRESS BAR: it grows when the mouse is near and its knob appears; the
 // filled part glides (no jumps); click or drag it: while dragging, a bubble
 // shows the time, and the song moves there when you let go.
-void SeekBar(ImDrawList* d, const char* id, float x0, float x1, float y, const media::Track& t, float alpha, bool times) {
+void SeekBar(ImDrawList* d, const char* id, float x0, float x1, float y, const media::Track& t, float alpha, bool times,
+             void (*seekFn)(double) = nullptr) {
     const Palette& p = P();
     if (t.duration <= 0.0) return;
     const float w = std::max(1.0f, x1 - x0);
@@ -3268,7 +3291,7 @@ void SeekBar(ImDrawList* d, const char* id, float x0, float x1, float y, const m
         shown = mouse;
     } else {
         if (wasActive > 0.5f) {
-            media::Seek(t.duration * shown);
+            (seekFn != nullptr ? seekFn : media::Seek)(t.duration * shown);
             holdUntil = now + 0.8f;
         }
         if (shown < 0.0f) shown = real;
@@ -3308,7 +3331,8 @@ void SeekBar(ImDrawList* d, const char* id, float x0, float x1, float y, const m
 
 // The lyrics view's progress: a thin line that looks as it always did; click
 // or drag it to move the song (it seeks when you let go).
-void ThinSeek(ImDrawList* d, const char* id, float x0, float x1, float y, const media::Track& t, float alpha) {
+void ThinSeek(ImDrawList* d, const char* id, float x0, float x1, float y, const media::Track& t, float alpha,
+              void (*seekFn)(double) = nullptr) {
     const Palette& p = P();
     if (t.duration <= 0.0) return;
     const float w = std::max(1.0f, x1 - x0);
@@ -3324,7 +3348,7 @@ void ThinSeek(ImDrawList* d, const char* id, float x0, float x1, float y, const 
         dragged = std::clamp((ImGui::GetIO().MousePos.x - x0) / w, 0.0f, 1.0f);
         seekedAt = 0.0f;
     } else if (dragged >= 0.0f && seekedAt == 0.0f) {
-        media::Seek(t.duration * dragged);  // let go: the song moves there
+        (seekFn != nullptr ? seekFn : media::Seek)(t.duration * dragged);  // let go: the song moves there
         seekedAt = now;
     } else if (seekedAt > 0.0f && now - seekedAt > 0.8f) {
         dragged = -1.0f;  // (by now the app is there: back to its real position)
@@ -3455,17 +3479,25 @@ void DrawArtHeart(ImDrawList* d, ImVec2 artC, float artSize, const media::Track&
     const float r = S(19.0f);
     const ImVec2 c(artC.x + half - r - S(10.0f), artC.y + half - r - S(10.0f));
     float hover = 0.0f;
-    const bool fav = FindFavorite(t) >= 0;
+    // (when Spotify is connected and plays this song: your Liked songs on
+    // Spotify, in Spotify's green; otherwise Luma's own favorites)
+    spotify::Player sp;
+    const bool viaSpotify = SpotifyDrivesHome(t, sp) && sp.likedKnown;
+    const bool fav = viaSpotify ? sp.liked : FindFavorite(t) >= 0;
     static float pop = 0.0f;
     if (Hit("##heart", ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), &hover)) {
-        ToggleFavorite(t);
+        if (viaSpotify) {
+            spotify::PlayerLike(!sp.liked);
+        } else {
+            ToggleFavorite(t);
+        }
         pop = 1.0f;
     }
     pop = std::max(0.0f, pop - Dt() * 4.0f);
     const float grow = 1.0f + 0.25f * std::sin(pop * 3.14159f);
     d->AddCircleFilled(c, r * (1.0f + 0.06f * hover), C(ImVec4(0.05f, 0.05f, 0.06f, 1.0f), (0.45f + 0.2f * hover) * alpha), 32);
     d->AddCircle(c, r * (1.0f + 0.06f * hover), C(ImVec4(1, 1, 1, 1), 0.15f * alpha), 32, 1.0f);
-    const ImVec4 red(1.0f, 0.36f, 0.42f, 1.0f);
+    const ImVec4 red = viaSpotify ? ImVec4(0.118f, 0.843f, 0.376f, 1.0f) : ImVec4(1.0f, 0.36f, 0.42f, 1.0f);
     icons::Draw(d, fav ? icons::kHeartFilled : icons::kHeart, c, S(18.0f) * grow, C(fav ? red : ImVec4(1, 1, 1, 1), alpha), S(1.8f));
 }
 
@@ -3972,11 +4004,13 @@ void DrawStageSong(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t,
             d->AddRectFilled(ImVec2(bx, by - bh), ImVec2(bx + S(3.0f), by), C(p.accent, alpha), S(1.5f));
         }
         if (t.app[0] != '\0') {
+            // (Luma's own Spotify player: "Spotify · Luma", not "Edge")
+            const char* app = IsSpotifyApp(t.app) && std::strstr(t.app, "Spotify") == nullptr ? "Spotify  ·  Luma" : t.app;
             const float ax = lx + S(32.0f);
-            const ImVec2 as = TextSize(g_fonts.tiny, t.app);
+            const ImVec2 as = TextSize(g_fonts.tiny, app);
             d->AddRectFilled(ImVec2(ax, y - S(3.0f)), ImVec2(ax + as.x + S(18.0f), y + as.y + S(3.0f)), C(ImVec4(1, 1, 1, 1), 0.10f * alpha),
                              S(12.0f));
-            Text(d, g_fonts.tiny, ImVec2(ax + S(9.0f), y), C(p.text, 0.8f * alpha), t.app);
+            Text(d, g_fonts.tiny, ImVec2(ax + S(9.0f), y), C(p.text, 0.8f * alpha), app);
         }
     }
     y += g_fonts.tiny->FontSize + S(12.0f);
@@ -4000,7 +4034,18 @@ void DrawStageSong(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t,
     const float savedFade = g_fade;
     g_fade *= alpha;
     // shuffle, previous, play, next, repeat
-    if (IconToggle(d, "##shuffle", ImVec2(x + S(14.0f), y), icons::kShuffle, S(18.0f), t.shuffle, t.canShuffle)) media::SetShuffle(!t.shuffle);
+    spotify::Player sp;
+    const bool viaSpotify = SpotifyDrivesHome(t, sp);  // (Windows doesn't pass these from Spotify: its Web API does)
+    {
+        const bool on = viaSpotify ? sp.shuffle : t.shuffle;
+        if (IconToggle(d, "##shuffle", ImVec2(x + S(14.0f), y), icons::kShuffle, S(18.0f), on, viaSpotify || t.canShuffle)) {
+            if (viaSpotify) {
+                spotify::PlayerShuffle(!on);
+            } else {
+                media::SetShuffle(!on);
+            }
+        }
+    }
     if (RoundButton(d, "##prev", ImVec2(x + S(66.0f), y), S(24.0f), icons::kSkipBackFilled, S(18.0f), false, t.canPrevious)) media::Previous();
     {
         const ImVec2 c(x + S(138.0f), y);
@@ -4013,10 +4058,15 @@ void DrawStageSong(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t,
     if (RoundButton(d, "##next", ImVec2(x + S(210.0f), y), S(24.0f), icons::kSkipForwardFilled, S(18.0f), false, t.canNext)) media::Next();
     {
         // off -> the whole list -> this song -> off
-        const int nextMode = t.repeat == 0 ? 2 : (t.repeat == 2 ? 1 : 0);
-        if (IconToggle(d, "##repeat", ImVec2(x + S(262.0f), y), t.repeat == 1 ? icons::kRepeat1 : icons::kRepeat, S(18.0f), t.repeat != 0,
-                       t.canRepeat)) {
-            media::SetRepeat(nextMode);
+        const int mode = viaSpotify ? sp.repeat : t.repeat;
+        const int nextMode = mode == 0 ? 2 : (mode == 2 ? 1 : 0);
+        if (IconToggle(d, "##repeat", ImVec2(x + S(262.0f), y), mode == 1 ? icons::kRepeat1 : icons::kRepeat, S(18.0f), mode != 0,
+                       viaSpotify || t.canRepeat)) {
+            if (viaSpotify) {
+                spotify::PlayerRepeat(nextMode);
+            } else {
+                media::SetRepeat(nextMode);
+            }
         }
     }
     // at the right: the volume, the lyrics view, the options
@@ -4118,11 +4168,1844 @@ bool SmallPill(ImDrawList* d, const char* id, ImVec2 pos, const char* icon, cons
     return clicked;
 }
 
+// --- THE PLAYER (part S2) ---------------------------------------------------------------------
+//  What plays in your Spotify, on any device, controlled by Spotify's Web API:
+//  the art, the song, the progress, shuffle / previous / play / next / repeat,
+//  the device's volume, the device it plays on (and the others), what comes
+//  next, and the heart = your Liked songs on Spotify.
+
+// Is Spotify connected? (then the player can be used)
+bool SpotifyConnected() {
+    return spotify::GetStatus().state == spotify::State::Connected;
+}
+
+// Is the song on Home the one Spotify plays? Then Home's shuffle, repeat and
+// heart use Spotify (Windows doesn't pass them from Spotify).
+bool SpotifyDrivesHome(const media::Track& t, spotify::Player& out) {
+    if (!t.present || !IsSpotifyApp(t.app) || !SpotifyConnected()) return false;
+    out = spotify::GetPlayer();
+    return out.valid && out.hasDevice && !out.title.empty() && out.title == t.title;
+}
+
+std::string g_spotifyNotice;  // (shown under the controls for a while)
+
+const char* SpotifyErrorText(const std::string& e) {
+    if (e == "premium") return T("spotify.err_premium");
+    if (e == "no_device") return T("spotify.err_no_device");
+    if (e == "busy") return T("spotify.err_busy");
+    return nullptr;
+}
+
+// The list of your devices (a small glass menu above "anchor").
+bool g_devicesOpen = false;
+float g_devicesAnim = 0.0f;
+ImVec2 g_devicesAnchor;
+std::vector<spotify::Device> g_deviceList;
+std::uint32_t g_deviceListVersion = 0;
+
+const char* DeviceIcon(const std::string& type) {
+    if (type == "Computer") return icons::kAppWindow;
+    if (type == "Smartphone" || type == "Tablet") return icons::kSquare;
+    if (type == "Speaker" || type == "AVR" || type == "STB" || type == "TV") return icons::kVolume;
+    return icons::kMusic2;
+}
+
+void DrawDevicesMenu(ImDrawList* d) {
+    g_devicesAnim += ((g_devicesOpen ? 1.0f : 0.0f) - g_devicesAnim) * std::min(1.0f, Dt() * 16.0f);
+    if (g_devicesAnim < 0.01f) return;
+    std::uint32_t version = g_deviceListVersion;
+    if (spotify::Devices(g_deviceListVersion, g_deviceList, version)) g_deviceListVersion = version;
+    const Palette& p = P();
+    const int start = d->VtxBuffer.Size;
+    const float itemH = S(44.0f), width = S(300.0f);
+    const int rows = std::max(1, static_cast<int>(g_deviceList.size()));
+    const float height = S(40.0f) + itemH * static_cast<float>(rows) + S(10.0f);
+    const ImVec2 max(g_devicesAnchor.x + width * 0.5f, g_devicesAnchor.y - S(22.0f));
+    const ImVec2 min(max.x - width, max.y - height);
+    d->AddRectFilled(ImVec2(min.x, min.y + S(6.0f)), ImVec2(max.x, max.y + S(8.0f)), Col(ImVec4(0, 0, 0, 1), 0.25f), S(14.0f));
+    d->AddRectFilled(min, max, Col(Mix(p.card, ImVec4(1, 1, 1, 1), 0.04f), 0.97f), S(14.0f));
+    d->AddRect(min, max, Col(ImVec4(1, 1, 1, 1), 0.12f), S(14.0f));
+    Text(d, g_fonts.semibold, ImVec2(min.x + S(16.0f), min.y + S(12.0f)), Col(p.text), T("spotify.devices"));
+    float y = min.y + S(40.0f);
+    bool done = false;
+    if (g_deviceList.empty()) {
+        Text(d, g_fonts.tiny, ImVec2(min.x + S(16.0f), y + S(12.0f)), Col(p.textDim), T("spotify.no_devices"));
+    }
+    for (std::size_t i = 0; i < g_deviceList.size(); ++i) {
+        const spotify::Device& dv = g_deviceList[i];
+        const ImVec2 imin(min.x + S(6.0f), y), imax(max.x - S(6.0f), y + itemH);
+        char id[32];
+        std::snprintf(id, sizeof(id), "##dev%zu", i);
+        float hover = 0.0f;
+        if (Hit(id, imin, imax, &hover) && !dv.active) {
+            spotify::PlayerTransfer(dv.id);
+            done = true;
+        }
+        d->AddRectFilled(imin, imax, Col(p.text, 0.07f * hover), S(9.0f));
+        const ImVec4 col = dv.active ? kSpotifyGreen : p.text;
+        icons::Draw(d, DeviceIcon(dv.type), ImVec2(imin.x + S(20.0f), (imin.y + imax.y) * 0.5f), S(17.0f), Col(col), S(1.6f));
+        TextFit(d, g_fonts.semibold, ImVec2(imin.x + S(42.0f), imin.y + S(5.0f)), Col(col), dv.name.c_str(), imax.x - imin.x - S(80.0f));
+        Text(d, g_fonts.tiny, ImVec2(imin.x + S(42.0f), imin.y + S(5.0f) + g_fonts.semibold->FontSize), Col(p.textDim),
+             dv.active ? T("spotify.playing_here") : dv.type.c_str());
+        if (dv.active) icons::Draw(d, kIconCheck, ImVec2(imax.x - S(18.0f), (imin.y + imax.y) * 0.5f), S(14.0f), Col(kSpotifyGreen), S(2.2f));
+        y += itemH;
+    }
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const bool inside = mouse.x >= min.x && mouse.x < max.x && mouse.y >= min.y && mouse.y < max.y;
+    if (g_devicesOpen && (done || (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !inside && !ImGui::IsAnyItemHovered()) ||
+                          ImGui::IsKeyPressed(ImGuiKey_Escape))) {
+        g_devicesOpen = false;
+    }
+    const float e = EaseOutCubic(g_devicesAnim);
+    AnimateSince(d, start, e, ImVec2(0.0f, (1.0f - e) * S(10.0f)));
+}
+
+// The device's volume (Spotify's), like Home's bar.
+void SpotifyVolumeBar(ImDrawList* d, ImVec2 left, float width, const spotify::Player& pl, float alpha) {
+    const Palette& p = P();
+    if (pl.device.volume < 0 || !pl.device.canVolume) return;
+    icons::Draw(d, icons::kVolume, left, S(17.0f), C(p.text, 0.75f * alpha), S(1.7f));
+    const float x0 = left.x + S(18.0f), x1 = x0 + width;
+    float hover = 0.0f;
+    Hit("##sp_volume", ImVec2(x0 - S(6.0f), left.y - S(10.0f)), ImVec2(x1 + S(6.0f), left.y + S(10.0f)), &hover);
+    static float shown = -1.0f;
+    static int sent = -1;
+    const float press = Anim(ImGui::GetID("##sp_volume") + 4, ImGui::IsItemActive(), 16.0f);
+    const float real = static_cast<float>(pl.device.volume) / 100.0f;
+    if (ImGui::IsItemActive()) {
+        shown = std::clamp((ImGui::GetIO().MousePos.x - x0) / std::max(1.0f, width), 0.0f, 1.0f);
+        const int v = static_cast<int>(std::lround(shown * 100.0f));
+        if (v != sent) {
+            spotify::PlayerVolume(v);
+            sent = v;
+        }
+    } else {
+        sent = -1;
+        shown = shown < 0.0f ? real : shown + (real - shown) * std::min(1.0f, Dt() * 12.0f);
+    }
+    hover = std::max(hover, press);
+    const float th = S(4.0f) + S(2.0f) * hover;
+    d->AddRectFilled(ImVec2(x0, left.y - th * 0.5f), ImVec2(x1, left.y + th * 0.5f), C(ImVec4(1, 1, 1, 1), 0.16f * alpha), th);
+    d->AddRectFilled(ImVec2(x0, left.y - th * 0.5f), ImVec2(x0 + width * shown, left.y + th * 0.5f), C(p.text, 0.85f * alpha), th);
+    if (hover > 0.0f) d->AddCircleFilled(ImVec2(x0 + width * shown, left.y), S(5.0f) * hover, C(p.text, alpha), 16);
+}
+
+void SpotifySeekTo(double seconds) {
+    spotify::PlayerSeek(seconds);
+}
+
+// "Up next": the queue (the same list the game shows).
+std::vector<spotify::QueueItem> g_spQueue;
+std::uint32_t g_spQueueVersion = 0;
+
+void DrawSpotifyPlayer(ImDrawList* d, ImVec2 min, ImVec2 max, const spotify::Status& st) {
+    const Palette& p = P();
+    const spotify::Player pl = spotify::GetPlayer();
+    const float W = max.x - min.x, H = max.y - min.y;
+    const float now = static_cast<float>(ImGui::GetTime());
+    {
+        std::uint32_t version = g_spQueueVersion;
+        if (spotify::Queue(g_spQueueVersion, g_spQueue, version)) g_spQueueVersion = version;
+    }
+    // Nothing playing anywhere: say so, and offer your devices.
+    if (pl.valid && !pl.hasDevice) {
+        const ImVec2 c(min.x + W * 0.5f, min.y + H * 0.36f);
+        DrawSpotifyLogo(d, c, S(64.0f), g_fade * (0.75f + 0.25f * std::sin(now * 1.6f)));
+        const char* title = T("spotify.nothing_title");
+        const ImVec2 ts = TextSize(g_fonts.title, title);
+        Text(d, g_fonts.title, ImVec2(c.x - ts.x * 0.5f, c.y + S(52.0f)), C(p.text), title);
+        const char* text = T("spotify.nothing_text");
+        const float tw = std::min(W * 0.6f, S(520.0f));
+        const ImVec2 xs = g_fonts.regular->CalcTextSizeA(g_fonts.regular->FontSize, FLT_MAX, tw, text);
+        TextWrap(d, g_fonts.regular, ImVec2(c.x - std::min(xs.x, tw) * 0.5f, c.y + S(60.0f) + ts.y), C(p.textDim), text, tw);
+        float bw = 0.0f;
+        const char* label = T("spotify.choose_device");
+        const float lw = TextSize(g_fonts.semibold, label).x + S(44.0f);
+        const ImVec2 bp(c.x - lw * 0.5f, c.y + S(76.0f) + ts.y + xs.y);
+        if (SmallPill(d, "##sp_choose", bp, icons::kAppWindow, label, true, &bw)) {
+            spotify::RequestDevices();
+            g_devicesOpen = !g_devicesOpen;
+            g_devicesAnchor = ImVec2(bp.x + bw * 0.5f, bp.y);
+        }
+        return;
+    }
+    if (!pl.valid) {
+        Spinner(d, ImVec2(min.x + W * 0.5f, min.y + H * 0.4f), S(16.0f), C(kSpotifyGreen));
+        return;
+    }
+    // --- Left: the art, the song, the progress, the controls -------------------------------------
+    const float artSize = std::clamp(std::min(H - S(230.0f), W * 0.32f), S(180.0f), S(330.0f));
+    const float colW = std::max(artSize, S(360.0f));
+    const float lx = min.x + S(8.0f);
+    const ImVec2 artMin(lx + (colW - artSize) * 0.5f, min.y), artMax(artMin.x + artSize, min.y + artSize);
+    const ImVec2 artC((artMin.x + artMax.x) * 0.5f, (artMin.y + artMax.y) * 0.5f);
+    SoftLight(d, artC, artSize * 0.95f, p.accent, (0.55f + 0.35f * g_bassSmooth) * g_fade);
+    SoftLightOval(d, ImVec2(artC.x, artC.y + artSize * 0.08f), artSize * 0.70f, artSize * 0.62f, ImVec4(0, 0, 0, 1), 0.9f * g_fade);
+    {
+        const textures::Texture* tex = pl.artPath.empty() ? nullptr : textures::Get(pl.artPath);
+        if (tex != nullptr) {
+            d->AddImageRounded(tex->id, artMin, artMax, ImVec2(0, 0), ImVec2(1, 1), C(ImVec4(1, 1, 1, 1)), S(16.0f));
+        } else {
+            d->AddRectFilled(artMin, artMax, C(p.card), S(16.0f));
+            DrawSpotifyLogo(d, artC, artSize * 0.3f, 0.5f * g_fade);
+        }
+        d->AddRect(artMin, artMax, C(ImVec4(1, 1, 1, 1), 0.08f), S(16.0f));
+    }
+    // the heart: your Liked songs, on Spotify
+    {
+        const float r = S(19.0f);
+        const ImVec2 c(artMax.x - r - S(10.0f), artMax.y - r - S(10.0f));
+        float hover = 0.0f;
+        static float pop = 0.0f;
+        if (Hit("##sp_heart", ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), &hover, pl.likedKnown && !pl.trackId.empty())) {
+            spotify::PlayerLike(!pl.liked);
+            pop = 1.0f;
+        }
+        pop = std::max(0.0f, pop - Dt() * 4.0f);
+        const float grow = 1.0f + 0.25f * std::sin(pop * 3.14159f);
+        d->AddCircleFilled(c, r * (1.0f + 0.06f * hover), C(ImVec4(0.05f, 0.05f, 0.06f, 1.0f), 0.55f + 0.2f * hover), 32);
+        icons::Draw(d, pl.liked ? icons::kHeartFilled : icons::kHeart, c, std::round(S(18.0f) * grow),
+                    C(pl.liked ? kSpotifyGreen : ImVec4(1, 1, 1, 1), pl.likedKnown ? 1.0f : 0.4f), S(1.8f));
+    }
+    float y = artMax.y + S(18.0f);
+    TextFit(d, g_fonts.title, ImVec2(lx, y), C(p.text), pl.title.c_str(), colW);
+    y += g_fonts.title->FontSize + S(2.0f);
+    {
+        const std::string line = pl.album.empty() ? pl.artist : pl.artist + "  ·  " + pl.album;
+        TextFit(d, g_fonts.regular, ImVec2(lx, y), C(p.textDim), line.c_str(), colW);
+    }
+    y += g_fonts.regular->FontSize + S(22.0f);
+    // the progress (Spotify's)
+    {
+        media::Track fake;
+        fake.present = true;
+        fake.position = spotify::PositionSeconds(pl);
+        fake.duration = pl.durationMs / 1000.0;
+        fake.canSeek = true;
+        SeekBar(d, "##sp_seek", lx, lx + colW, y, fake, 1.0f, true, SpotifySeekTo);
+    }
+    y += S(58.0f);
+    // shuffle, previous, play, next, repeat
+    {
+        const float cx = lx + colW * 0.5f;
+        if (IconToggle(d, "##sp_shuffle", ImVec2(cx - S(124.0f), y), icons::kShuffle, S(18.0f), pl.shuffle)) spotify::PlayerShuffle(!pl.shuffle);
+        if (RoundButton(d, "##sp_prev", ImVec2(cx - S(72.0f), y), S(24.0f), icons::kSkipBackFilled, S(18.0f), false)) spotify::PlayerPrevious();
+        {
+            const ImVec2 c(cx, y);
+            if (pl.playing) d->AddCircleFilled(c, S(32.0f) + S(10.0f) * g_bassSmooth, C(kSpotifyGreen, 0.18f + 0.2f * g_bassSmooth), 48);
+            if (RoundButton(d, "##sp_play", c, S(32.0f), pl.playing ? icons::kPauseFilled : icons::kPlayFilled, S(22.0f), true)) {
+                spotify::PlayerPlay(!pl.playing);
+            }
+        }
+        if (RoundButton(d, "##sp_next", ImVec2(cx + S(72.0f), y), S(24.0f), icons::kSkipForwardFilled, S(18.0f), false)) spotify::PlayerNext();
+        {
+            const int nextMode = pl.repeat == 0 ? 2 : (pl.repeat == 2 ? 1 : 0);  // off -> the list -> this song -> off
+            if (IconToggle(d, "##sp_repeat", ImVec2(cx + S(124.0f), y), pl.repeat == 1 ? icons::kRepeat1 : icons::kRepeat, S(18.0f), pl.repeat != 0)) {
+                spotify::PlayerRepeat(nextMode);
+            }
+        }
+    }
+    y += S(52.0f);
+    // the volume and the device
+    {
+        SpotifyVolumeBar(d, ImVec2(lx + S(10.0f), y), S(130.0f), pl, 1.0f);
+        const std::string dev = pl.device.name.empty() ? std::string(T("spotify.devices")) : pl.device.name;
+        const ImVec2 ds = TextSize(g_fonts.tiny, dev.c_str());
+        const float dw = std::min(ds.x + S(46.0f), colW - S(180.0f));
+        const ImVec2 a(lx + colW - dw, y - S(15.0f)), b(lx + colW, y + S(15.0f));
+        float hover = 0.0f;
+        if (Hit("##sp_device", a, b, &hover)) {
+            spotify::RequestDevices();
+            g_devicesOpen = !g_devicesOpen;
+            g_devicesAnchor = ImVec2((a.x + b.x) * 0.5f, a.y);
+        }
+        d->AddRectFilled(a, b, C(kSpotifyGreen, 0.14f + 0.10f * hover), S(15.0f));
+        icons::Draw(d, DeviceIcon(pl.device.type), ImVec2(a.x + S(16.0f), y), S(14.0f), C(kSpotifyGreen), S(1.7f));
+        TextFit(d, g_fonts.tiny, ImVec2(a.x + S(30.0f), y - ds.y * 0.5f), C(kSpotifyGreen), dev.c_str(), dw - S(40.0f));
+    }
+    y += S(26.0f);
+    // why a button didn't work
+    if (const char* err = SpotifyErrorText(spotify::PlayerError())) {
+        TextWrap(d, g_fonts.tiny, ImVec2(lx, y), C(p.warning), err, colW);
+    }
+
+    // --- Right: up next ------------------------------------------------------------------------------
+    const float rx = lx + colW + S(48.0f);
+    const float rw = max.x - rx;
+    if (rw < S(220.0f)) return;
+    Text(d, g_fonts.semibold, ImVec2(rx, min.y), C(p.text), T("spotify.up_next"));
+    float qy = min.y + g_fonts.semibold->FontSize + S(14.0f);
+    if (g_spQueue.empty()) {
+        Text(d, g_fonts.tiny, ImVec2(rx, qy), C(p.textDim), T("spotify.queue_empty"));
+    }
+    const float rowH = S(50.0f);
+    for (std::size_t i = 0; i < g_spQueue.size() && qy + rowH <= max.y; ++i) {
+        const auto& q = g_spQueue[i];
+        const int rowStart = d->VtxBuffer.Size;
+        const ImVec2 a(rx, qy), b(rx + rw, qy + rowH - S(6.0f));
+        d->AddRectFilled(a, b, C(p.text, i == 0 ? 0.06f : 0.03f), S(10.0f));
+        char num[8];
+        std::snprintf(num, sizeof(num), "%zu", i + 1);
+        const ImVec2 ns = TextSize(g_fonts.semibold, num);
+        Text(d, g_fonts.semibold, ImVec2(a.x + S(20.0f) - ns.x * 0.5f, (a.y + b.y - ns.y) * 0.5f), C(p.textDim), num);
+        TextFit(d, g_fonts.semibold, ImVec2(a.x + S(40.0f), a.y + S(5.0f)), C(p.text), q.title.c_str(), rw - S(110.0f));
+        TextFit(d, g_fonts.tiny, ImVec2(a.x + S(40.0f), a.y + S(7.0f) + g_fonts.semibold->FontSize), C(p.textDim), q.artist.c_str(), rw - S(110.0f));
+        if (q.seconds > 0) {
+            char len[16];
+            FormatTime(q.seconds, len, sizeof(len));
+            const ImVec2 ls = TextSize(g_fonts.tiny, len);
+            Text(d, g_fonts.tiny, ImVec2(b.x - ls.x - S(12.0f), (a.y + b.y - ls.y) * 0.5f), C(p.textDim), len);
+        }
+        // (each row comes in a moment after the one above)
+        const float in = EaseOutCubic(std::clamp(g_sheet * 2.2f - 0.4f - static_cast<float>(i) * 0.08f, 0.0f, 1.0f));
+        AnimateSince(d, rowStart, in, ImVec2(S(16.0f) * (1.0f - in), 0.0f));
+        qy += rowH;
+    }
+    (void)st;
+}
+
+void Flash(const char* icon, const char* text);  // (with the keys, below)
+
+// =============================================================================
+//  SPOTIFY, THE WHOLE SECTION (part S3: C1 + C3)
+// =============================================================================
+//  A full section (not a window): over the album's living background.
+//    - Top: what plays (art, song, controls, heart), Search, and the buttons
+//      of the drawer.
+//    - Tabs: Home (rows: played lately, your playlists, your favorite
+//      artists and songs, saved albums) and Library (everything of yours).
+//    - Pages: a playlist, an album, an artist, your Liked songs, "see all";
+//      the arrow goes back.
+//    - The drawer (right): the queue, your devices, the lyrics.
+//    - Search: a layer over everything (Ctrl+K), with what you type.
+//    - Options (right click or "..."): play, add to the queue, Luma's radio,
+//      go to the artist / album, add to a playlist, Liked songs, copy the
+//      link, open in Spotify.
+//  Everything comes from Spotify's Web API through core/spotify.cpp (in the
+//  background: the screen never waits).
+// =============================================================================
+
+namespace sp {
+
+enum Type { kTrack, kAlbum, kArtist, kPlaylist, kShow, kEpisode, kLiked };
+
+struct Item {
+    int type = kTrack;
+    std::string id, uri, name, sub, image;
+    int ms = 0;
+    std::vector<std::pair<std::string, std::string>> artists;  // (id, name)
+    std::string albumId, albumName;
+    std::string ownerId;
+    int total = 0;  // songs in a playlist / album
+};
+
+// --- Reading Spotify's answers ------------------------------------------------------------------
+
+std::string Str(const nlohmann::json& j, const char* key) {
+    const auto it = j.find(key);
+    return it != j.end() && it->is_string() ? it->get<std::string>() : std::string();
+}
+
+// The picture closest to "want" pixels.
+std::string PickImage(const nlohmann::json& j, int want = 300) {
+    const auto images = j.find("images");
+    if (images == j.end() || !images->is_array() || images->empty()) return {};
+    std::string best;
+    int bestDiff = 1 << 30;
+    for (const auto& im : *images) {
+        if (!im.is_object()) continue;
+        const std::string url = Str(im, "url");
+        const int w = im.contains("width") && im["width"].is_number() ? im["width"].get<int>() : want;
+        const int diff = w >= want ? w - want : (want - w) * 4;  // (bigger is fine, smaller looks blurry)
+        if (!url.empty() && diff < bestDiff) {
+            best = url;
+            bestDiff = diff;
+        }
+    }
+    return best;
+}
+
+std::string JoinArtists(const Item& it) {
+    std::string out;
+    for (const auto& a : it.artists) {
+        if (!out.empty()) out += ", ";
+        out += a.second;
+    }
+    return out;
+}
+
+void ReadArtists(const nlohmann::json& j, Item& it) {
+    const auto a = j.find("artists");
+    if (a == j.end() || !a->is_array()) return;
+    for (const auto& x : *a) {
+        if (x.is_object()) it.artists.emplace_back(Str(x, "id"), Str(x, "name"));
+    }
+}
+
+bool Parse(const nlohmann::json& j, Item& it) {
+    if (!j.is_object()) return false;
+    const std::string type = Str(j, "type");
+    it.id = Str(j, "id");
+    it.uri = Str(j, "uri");
+    it.name = Str(j, "name");
+    render::fontfallback::Need(it.name.c_str());  // (Japanese, Korean... names: their letters are added)
+    if (type == "track") {
+        it.type = kTrack;
+        it.ms = j.contains("duration_ms") && j["duration_ms"].is_number() ? j["duration_ms"].get<int>() : 0;
+        ReadArtists(j, it);
+        it.sub = JoinArtists(it);
+        render::fontfallback::Need(it.sub.c_str());
+        if (j.contains("album") && j["album"].is_object()) {
+            it.albumId = Str(j["album"], "id");
+            it.albumName = Str(j["album"], "name");
+            it.image = PickImage(j["album"], 300);  // (tiles are big: the 64 px one looked blurry)
+        }
+    } else if (type == "album") {
+        it.type = kAlbum;
+        ReadArtists(j, it);
+        it.sub = JoinArtists(it);
+        it.image = PickImage(j);
+        it.total = j.value("total_tracks", 0);
+    } else if (type == "artist") {
+        it.type = kArtist;
+        it.image = PickImage(j);
+        it.sub = T("sp.artist");
+    } else if (type == "playlist") {
+        it.type = kPlaylist;
+        it.image = PickImage(j);
+        if (j.contains("owner") && j["owner"].is_object()) {
+            it.ownerId = Str(j["owner"], "id");
+            it.sub = Str(j["owner"], "display_name");
+        }
+        render::fontfallback::Need(it.sub.c_str());
+        const auto tr = j.find("tracks");
+        if (tr != j.end() && tr->is_object()) it.total = tr->value("total", 0);
+        const auto items = j.find("items");  // (newer answers call it "items")
+        if (it.total == 0 && items != j.end() && items->is_object()) it.total = items->value("total", 0);
+    } else if (type == "show") {
+        it.type = kShow;
+        it.image = PickImage(j);
+        it.sub = Str(j, "publisher");
+    } else if (type == "episode") {
+        it.type = kEpisode;
+        it.image = PickImage(j, 300);
+        it.ms = j.value("duration_ms", 0);
+        it.sub = Str(j, "release_date");
+    } else {
+        return false;
+    }
+    return !it.uri.empty();
+}
+
+// A list of items from an answer: "items" (or "artists.items"...), each one
+// the item itself or {"track": item} / {"album": item} / {"show": item}.
+std::vector<Item> ParseList(const nlohmann::json& j, const char* key = "items") {
+    std::vector<Item> out;
+    const nlohmann::json* list = nullptr;
+    if (j.is_object() && j.contains(key) && j[key].is_array()) {
+        list = &j[key];
+    } else if (j.is_object() && j.contains(key) && j[key].is_object() && j[key].contains("items") && j[key]["items"].is_array()) {
+        list = &j[key]["items"];
+    } else if (j.is_array()) {
+        list = &j;
+    }
+    if (list == nullptr) return out;
+    for (const auto& e : *list) {
+        Item it;
+        const nlohmann::json* x = &e;
+        for (const char* wrap : {"track", "item", "album", "show"}) {
+            if (e.is_object() && e.contains(wrap) && e[wrap].is_object() && !e.contains("uri")) {
+                x = &e[wrap];
+                break;
+            }
+        }
+        if (Parse(*x, it)) out.push_back(std::move(it));
+    }
+    return out;
+}
+
+// --- Asking (cached parsed lists, per address) ----------------------------------------------------
+
+struct Parsed {
+    std::shared_ptr<const nlohmann::json> src;
+    std::vector<Item> items;
+};
+std::map<std::string, Parsed> g_parsed;
+
+// The items at "path" ("key": where the list is in the answer). Returns the
+// state (0 coming, 1 here, 2 failed) and fills "out" with a pointer to them.
+int Items(const std::string& path, const std::vector<Item>*& out, const char* key = "items", int maxAge = 300) {
+    std::shared_ptr<const nlohmann::json> j;
+    const int state = spotify::Browse(path, j, maxAge);
+    Parsed& p = g_parsed[path];
+    if (j && j != p.src) {
+        p.src = j;
+        p.items = ParseList(*j, key);
+    }
+    out = &p.items;
+    return p.src ? 1 : state;
+}
+
+std::shared_ptr<const nlohmann::json> Json(const std::string& path, int* state = nullptr, int maxAge = 300) {
+    std::shared_ptr<const nlohmann::json> j;
+    const int s = spotify::Browse(path, j, maxAge);
+    if (state != nullptr) *state = j ? 1 : s;
+    return j;
+}
+
+std::string MyId() {
+    const auto me = Json("/v1/me", nullptr, 3600);
+    return me ? Str(*me, "id") : std::string();
+}
+
+std::string UrlEncode(const std::string& s) {
+    std::string out;
+    char hex[4];
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            std::snprintf(hex, sizeof(hex), "%%%02X", c);
+            out += hex;
+        }
+    }
+    return out;
+}
+
+// --- Playing ------------------------------------------------------------------------------------
+
+// LUMA AS THE PLAYER: when nothing is open to play on, Luma opens its own
+// player (spotify_engine.h) and, once its "Luma" device exists, does what
+// was asked there.
+std::function<void(const std::string&)> g_whenLumaReady;
+
+void WithLumaDevice(std::function<void(const std::string&)> then) {
+    namespace eng = luma::launcher::spotifyengine;
+    if (eng::GetState() == eng::State::Ready && !eng::DeviceId().empty()) {
+        then(eng::DeviceId());
+        return;
+    }
+    g_whenLumaReady = std::move(then);
+    eng::Start();
+}
+
+// (each frame) runs what was waiting for Luma's player
+void LumaPlayerTick() {
+    namespace eng = luma::launcher::spotifyengine;
+    if (!g_whenLumaReady) return;
+    const eng::State st = eng::GetState();
+    if (st == eng::State::Ready && !eng::DeviceId().empty()) {
+        auto then = std::move(g_whenLumaReady);
+        g_whenLumaReady = nullptr;
+        then(eng::DeviceId());
+    } else if (st == eng::State::Error || st == eng::State::NoEdge || st == eng::State::Off) {
+        g_whenLumaReady = nullptr;
+    }
+}
+
+// "?device_id=..." when nothing plays now (Spotify needs to know where).
+std::string DeviceParam() {
+    const spotify::Player pl = spotify::GetPlayer();
+    if (pl.hasDevice) return {};
+    std::vector<spotify::Device> list;
+    std::uint32_t v = 0;
+    spotify::Devices(0, list, v);
+    for (const auto& d : list) {
+        if (d.type == "Computer") return "?device_id=" + d.id;
+    }
+    return list.empty() ? std::string() : "?device_id=" + list.front().id;
+}
+
+// Plays "body" ({"context_uri"...} or {"uris"...}): where it plays now, or
+// (nothing open anywhere) in Luma's own player.
+void PlayBody(const std::string& body) {
+    const spotify::Player pl = spotify::GetPlayer();
+    if (pl.hasDevice) {
+        spotify::Send("PUT", "/v1/me/player/play", body);
+        return;
+    }
+    WithLumaDevice([body](const std::string& id) { spotify::Send("PUT", "/v1/me/player/play?device_id=" + id, body); });
+}
+
+void PlayContext(const std::string& contextUri, const std::string& trackUri = {}) {
+    nlohmann::json j = {{"context_uri", contextUri}};
+    if (!trackUri.empty()) j["offset"] = {{"uri", trackUri}};
+    PlayBody(j.dump());
+}
+
+void PlayUris(const std::vector<Item>& list, std::size_t index) {
+    nlohmann::json uris = nlohmann::json::array();
+    for (std::size_t i = 0; i < list.size() && uris.size() < 100; ++i) {
+        if (list[i].type == kTrack || list[i].type == kEpisode) uris.push_back(list[i].uri);
+    }
+    if (uris.empty()) return;
+    const nlohmann::json j = {{"uris", uris}, {"offset", {{"position", static_cast<int>(std::min<std::size_t>(index, uris.size() - 1))}}}};
+    PlayBody(j.dump());
+}
+
+std::string LikedUri() {
+    const std::string me = MyId();
+    return me.empty() ? std::string() : "spotify:user:" + me + ":collection";
+}
+
+// Plays an album / playlist / artist / show (or your Liked songs) from the start.
+void PlayItem(const Item& it, bool shuffle = false) {
+    if (shuffle) spotify::PlayerShuffle(true);
+    if (it.type == kLiked) {
+        PlayContext(LikedUri());
+    } else if (it.type == kTrack || it.type == kEpisode) {
+        PlayUris({it}, 0);
+    } else {
+        PlayContext(it.uri);
+    }
+}
+
+// The web link of an item (to share).
+std::string WebLink(const Item& it) {
+    const char* kinds[] = {"track", "album", "artist", "playlist", "show", "episode", "collection"};
+    if (it.type == kLiked) return "https://open.spotify.com/collection/tracks";
+    return "https://open.spotify.com/" + std::string(kinds[it.type]) + "/" + it.id;
+}
+
+// --- Navigation ---------------------------------------------------------------------------------
+
+enum PageKind { kTabHome, kTabLibrary, kPagePlaylist, kPageAlbum, kPageArtist, kPageLiked, kPageShow, kPageAll };
+
+struct Page {
+    int kind = kTabHome;
+    Item item;          // what the page shows (a playlist, album...)
+    std::string path;   // "see all": the address of the list
+    std::string key = "items";
+    std::string title;
+    bool round = false;
+    float scroll = 0.0f, target = 0.0f, contentH = 0.0f;
+    int more = 1;       // how many pages of songs are loaded ("Load more")
+    float in = 0.0f;    // 0..1: it comes in
+};
+std::vector<Page> g_stack = {Page{}};  // the bottom one is a tab
+int g_libraryFilter = 0;               // 0 playlists, 1 albums, 2 artists, 3 podcasts
+
+void Open(const Item& it) {
+    Page p;
+    p.item = it;
+    switch (it.type) {
+        case kPlaylist: p.kind = kPagePlaylist; break;
+        case kAlbum: p.kind = kPageAlbum; break;
+        case kArtist: p.kind = kPageArtist; break;
+        case kLiked: p.kind = kPageLiked; break;
+        case kShow: p.kind = kPageShow; break;
+        default: return;
+    }
+    g_stack.push_back(std::move(p));
+}
+
+void OpenAll(const std::string& title, const std::string& path, const char* key, bool round) {
+    Page p;
+    p.kind = kPageAll;
+    p.title = title;
+    p.path = path;
+    p.key = key;
+    p.round = round;
+    g_stack.push_back(std::move(p));
+}
+
+void OpenArtist(const std::string& id, const std::string& name) {
+    Item a;
+    a.type = kArtist;
+    a.id = id;
+    a.uri = "spotify:artist:" + id;
+    a.name = name;
+    Open(a);
+}
+
+void OpenAlbum(const std::string& id, const std::string& name) {
+    Item a;
+    a.type = kAlbum;
+    a.id = id;
+    a.uri = "spotify:album:" + id;
+    a.name = name;
+    Open(a);
+}
+
+}  // namespace sp
+
+namespace sp {
+
+// --- Small pieces ------------------------------------------------------------------------------
+
+ImVec2 g_viewMin, g_viewMax;  // the visible part of the page (what's outside isn't drawn or touched)
+
+bool Visible(ImVec2 a, ImVec2 b) {
+    return b.y > g_viewMin.y && a.y < g_viewMax.y && b.x > g_viewMin.x && a.x < g_viewMax.x;
+}
+
+// A cover (or a placeholder while it downloads). "round" = an artist's circle.
+void Cover(ImDrawList* d, const std::string& url, ImVec2 a, ImVec2 b, float rounding, float alpha, bool round = false, int type = kAlbum) {
+    const Palette& p = P();
+    const std::wstring file = spotify::Image(url);
+    const textures::Texture* tex = file.empty() ? nullptr : textures::Get(file);
+    const float r = round ? (b.x - a.x) * 0.5f : rounding;
+    if (tex != nullptr) {
+        d->AddImageRounded(tex->id, a, b, ImVec2(0, 0), ImVec2(1, 1), C(ImVec4(1, 1, 1, 1), alpha), r);
+        return;
+    }
+    if (type == kLiked) {  // Liked songs: Spotify's purple-blue square with a heart
+        d->AddRectFilledMultiColor(a, b, C(ImVec4(0.27f, 0.17f, 0.85f, 1), alpha), C(ImVec4(0.55f, 0.75f, 0.95f, 1), alpha),
+                                   C(ImVec4(0.55f, 0.75f, 0.95f, 1), alpha), C(ImVec4(0.27f, 0.17f, 0.85f, 1), alpha));
+        icons::Draw(d, icons::kHeartFilled, ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f), std::round((b.x - a.x) * 0.36f),
+                    C(ImVec4(1, 1, 1, 1), alpha));
+        return;
+    }
+    d->AddRectFilled(a, b, C(Mix(p.card, ImVec4(1, 1, 1, 1), 0.05f), alpha), r);
+    icons::Draw(d, type == kArtist ? icons::kPerson : icons::kMusic2, ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f),
+                std::round((b.x - a.x) * 0.3f), C(p.textDim, 0.6f * alpha), S(1.5f));
+}
+
+// The green play button (on a tile, on a page's header).
+bool PlayButton(ImDrawList* d, const char* id, ImVec2 c, float r, float alpha, bool playing = false) {
+    float hover = 0.0f;
+    const bool clicked = Hit(id, ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), &hover);
+    const float press = Anim(ImGui::GetID(id) + 3, ImGui::IsItemActive(), 22.0f);
+    const float rr = r * (1.0f + 0.06f * hover - 0.06f * press);
+    d->AddCircleFilled(ImVec2(c.x, c.y + S(3.0f)), rr, C(ImVec4(0, 0, 0, 1), 0.25f * alpha), 32);
+    d->AddCircleFilled(c, rr, C(Mix(kSpotifyGreen, ImVec4(1, 1, 1, 1), 0.10f * hover), alpha), 32);
+    icons::Draw(d, playing ? icons::kPauseFilled : icons::kPlayFilled, ImVec2(c.x + (playing ? 0.0f : r * 0.06f), c.y), std::round(r * 0.9f),
+                C(ImVec4(0.02f, 0.02f, 0.02f, 1), alpha));
+    return clicked;
+}
+
+// --- The options menu (right click / "...") ---------------------------------------------------------
+
+struct Menu {
+    bool open = false;
+    float anim = 0.0f;
+    ImVec2 pos;
+    Item item;
+    int sub = 0;  // 0 the options, 1 "add to a playlist"
+    double copiedAt = -10.0;
+};
+Menu g_menu;
+
+void OpenMenu(const Item& it) {
+    g_menu.open = true;
+    g_menu.item = it;
+    g_menu.sub = 0;
+    g_menu.pos = ImGui::GetIO().MousePos;
+}
+
+// The artists of a playlist (the 5 that appear most), for its radio.
+std::vector<std::string> PlaylistArtists(const std::string& playlistId, bool* ready) {
+    const std::vector<Item>* list = nullptr;
+    const int state = Items("/v1/playlists/" + playlistId + "/tracks?limit=100", list);
+    *ready = state == 1;
+    std::map<std::string, int> count;
+    if (list != nullptr) {
+        for (const Item& t : *list) {
+            for (const auto& a : t.artists) ++count[a.first];
+        }
+    }
+    std::vector<std::pair<int, std::string>> sorted;
+    for (const auto& [id, n] : count) sorted.emplace_back(-n, id);
+    std::sort(sorted.begin(), sorted.end());
+    std::vector<std::string> out;
+    for (std::size_t i = 0; i < sorted.size() && out.size() < 5; ++i) out.push_back(sorted[i].second);
+    return out;
+}
+
+void DrawMenu(ImDrawList* d, ImVec2 display) {
+    Menu& m = g_menu;
+    m.anim += ((m.open ? 1.0f : 0.0f) - m.anim) * std::min(1.0f, Dt() * 18.0f);
+    if (m.anim < 0.01f) return;
+    const Palette& p = P();
+    const Item& it = m.item;
+    struct Opt {
+        const char* id;
+        const char* icon;
+        std::string label;
+        int action;
+        bool enabled = true;
+    };
+    std::vector<Opt> opts;
+    bool likedKnown = false, liked = false;
+    if (m.sub == 0) {
+        opts.push_back({"##m_play", icons::kPlayFilled, T("sp.play"), 1});
+        if (it.type == kTrack || it.type == kEpisode) opts.push_back({"##m_queue", icons::kList, T("sp.add_queue"), 2});
+        if (it.type == kAlbum || it.type == kPlaylist || it.type == kLiked) opts.push_back({"##m_shuffle", icons::kShuffle, T("sp.shuffle_play"), 3});
+        if (it.type == kTrack) opts.push_back({"##m_radio", icons::kSignal, T("sp.radio_song"), 4});
+        if (it.type == kArtist) opts.push_back({"##m_radio", icons::kSignal, T("sp.radio_artist"), 4});
+        if (it.type == kAlbum) opts.push_back({"##m_radio", icons::kSignal, T("sp.radio_album"), 4});
+        if (it.type == kPlaylist) {
+            bool ready = false;
+            PlaylistArtists(it.id, &ready);
+            opts.push_back({"##m_radio", icons::kSignal, ready ? T("sp.radio_playlist") : T("sp.radio_loading"), 4, ready});
+        }
+        if (it.type == kTrack || it.type == kAlbum) {
+            for (std::size_t i = 0; i < it.artists.size() && i < 2; ++i) {
+                opts.push_back({i == 0 ? "##m_artist0" : "##m_artist1", icons::kPerson, std::string(T("sp.go_artist")) + " " + it.artists[i].second,
+                                10 + static_cast<int>(i)});
+            }
+        }
+        if (it.type == kTrack && !it.albumId.empty()) opts.push_back({"##m_album", icons::kLayers, T("sp.go_album"), 5});
+        if (it.type == kTrack) {
+            opts.push_back({"##m_toplaylist", icons::kPlus, T("sp.add_playlist"), 6});
+            std::shared_ptr<const nlohmann::json> c = Json("/v1/me/tracks/contains?ids=" + it.id, nullptr, 20);
+            if (c && c->is_array() && !c->empty() && (*c)[0].is_boolean()) {
+                likedKnown = true;
+                liked = (*c)[0].get<bool>();
+            }
+            opts.push_back({"##m_like", liked ? icons::kHeartFilled : icons::kHeart, liked ? T("sp.unlike") : T("sp.like"), 7, likedKnown});
+        }
+        const bool copied = ImGui::GetTime() - m.copiedAt < 1.5;
+        opts.push_back({"##m_copy", copied ? kIconCheck : icons::kCopy, copied ? T("opt.copied") : T("sp.copy_link"), 8});
+        opts.push_back({"##m_open", icons::kAppWindow, T("sp.open_spotify"), 9});
+    } else {
+        // your own playlists (and the ones you can add to)
+        opts.push_back({"##m_back", icons::kBack, T("sp.add_playlist"), 20});
+        const std::vector<Item>* lists = nullptr;
+        Items("/v1/me/playlists?limit=50", lists);
+        const std::string me = MyId();
+        int n = 0;
+        if (lists != nullptr) {
+            for (const Item& pl : *lists) {
+                if (pl.ownerId != me || n >= 14) continue;
+                static char ids[16][24];
+                std::snprintf(ids[n], sizeof(ids[n]), "##m_pl%d", n);
+                opts.push_back({ids[n], icons::kMusic2, pl.name, 100 + n});
+                ++n;
+            }
+        }
+        if (n == 0) opts.push_back({"##m_none", icons::kInfo, T("sp.no_own_playlists"), 0, false});
+    }
+    const float itemH = S(38.0f), width = S(290.0f);
+    const float height = itemH * static_cast<float>(opts.size()) + S(12.0f);
+    ImVec2 min(m.pos.x + S(4.0f), m.pos.y + S(4.0f));
+    if (min.x + width > display.x - S(10.0f)) min.x = m.pos.x - width - S(4.0f);
+    if (min.y + height > display.y - S(10.0f)) min.y = std::max(S(10.0f), display.y - S(10.0f) - height);
+    const ImVec2 max(min.x + width, min.y + height);
+    const int start = d->VtxBuffer.Size;
+    d->AddRectFilled(ImVec2(min.x, min.y + S(6.0f)), ImVec2(max.x, max.y + S(8.0f)), Col(ImVec4(0, 0, 0, 1), 0.28f), S(14.0f));
+    d->AddRectFilled(min, max, Col(Mix(p.card, ImVec4(1, 1, 1, 1), 0.04f), 0.98f), S(14.0f));
+    d->AddRect(min, max, Col(ImVec4(1, 1, 1, 1), 0.12f), S(14.0f));
+    float y = min.y + S(6.0f);
+    int clicked = -1;
+    for (const Opt& o : opts) {
+        const ImVec2 a(min.x + S(6.0f), y), b(max.x - S(6.0f), y + itemH);
+        float hover = 0.0f;
+        if (Hit(o.id, a, b, &hover, o.enabled && m.open)) clicked = o.action;
+        d->AddRectFilled(a, b, Col(p.text, 0.07f * hover), S(9.0f));
+        const float al = o.enabled ? 1.0f : 0.4f;
+        const bool green = (o.action == 7 && liked) || o.action == 1;
+        icons::Draw(d, o.icon, ImVec2(a.x + S(18.0f), (a.y + b.y) * 0.5f), S(16.0f), Col(green ? kSpotifyGreen : p.textDim, al), S(1.6f));
+        TextFit(d, g_fonts.semibold, ImVec2(a.x + S(38.0f), (a.y + b.y - g_fonts.semibold->FontSize) * 0.5f), Col(p.text, al), o.label.c_str(),
+                b.x - a.x - S(46.0f));
+        if (o.action == 6) icons::Draw(d, icons::kChevronRight, ImVec2(b.x - S(14.0f), (a.y + b.y) * 0.5f), S(14.0f), Col(p.textDim), S(1.6f));
+        y += itemH;
+    }
+    bool close = false;
+    if (clicked >= 0) {
+        close = true;
+        if (clicked == 1) {
+            PlayItem(it);
+        } else if (clicked == 2) {
+            spotify::Send("POST", "/v1/me/player/queue?uri=" + UrlEncode(it.uri));
+            spotify::Forget("/v1/me/player/queue");
+            Flash(icons::kList, T("sp.added_queue"));
+        } else if (clicked == 3) {
+            PlayItem(it, true);
+        } else if (clicked == 4) {
+            std::vector<std::string> artists;
+            if (it.type == kArtist) {
+                artists.push_back(it.id);
+            } else if (it.type == kPlaylist) {
+                bool ready = false;
+                artists = PlaylistArtists(it.id, &ready);
+            } else {
+                for (const auto& a : it.artists) artists.push_back(a.first);
+            }
+            spotify::PlayMix(artists, it.type == kTrack ? it.uri : std::string());
+            Flash(icons::kSignal, T("sp.radio_started"));
+        } else if (clicked == 5) {
+            OpenAlbum(it.albumId, it.albumName);
+        } else if (clicked == 10 || clicked == 11) {
+            const auto& a = it.artists[static_cast<std::size_t>(clicked - 10)];
+            OpenArtist(a.first, a.second);
+        } else if (clicked == 6) {
+            m.sub = 1;
+            close = false;
+        } else if (clicked == 20) {
+            m.sub = 0;
+            close = false;
+        } else if (clicked == 7) {
+            spotify::Send(liked ? "DELETE" : "PUT", "/v1/me/tracks?ids=" + it.id);
+            spotify::Forget("/v1/me/tracks");
+            const spotify::Player pl = spotify::GetPlayer();
+            if (pl.trackId == it.id) spotify::PlayerLike(!liked);
+            Flash(liked ? icons::kHeart : icons::kHeartFilled, liked ? T("sp.unliked") : T("sp.liked"));
+        } else if (clicked == 8) {
+            ImGui::SetClipboardText(WebLink(it).c_str());
+            m.copiedAt = ImGui::GetTime();
+            close = false;
+        } else if (clicked == 9) {
+            const std::wstring uri = std::wstring(it.uri.begin(), it.uri.end());
+            ShellExecuteW(nullptr, L"open", it.type == kLiked ? L"spotify:collection:tracks" : uri.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        } else if (clicked >= 100) {
+            const std::vector<Item>* lists = nullptr;
+            Items("/v1/me/playlists?limit=50", lists);
+            const std::string me = MyId();
+            int n = 0;
+            if (lists != nullptr) {
+                for (const Item& pl : *lists) {
+                    if (pl.ownerId != me) continue;
+                    if (n++ == clicked - 100) {
+                        const nlohmann::json body = {{"uris", {it.uri}}};
+                        spotify::Send("POST", "/v1/playlists/" + pl.id + "/tracks", body.dump());
+                        spotify::Forget("/v1/playlists/" + pl.id);
+                        std::string text = std::string(T("sp.added_to")) + " " + pl.name;
+                        Flash(icons::kPlus, text.c_str());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const bool inside = mouse.x >= min.x && mouse.x < max.x && mouse.y >= min.y && mouse.y < max.y;
+    if (m.open && (close || ((ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) && !inside) ||
+                   ImGui::IsKeyPressed(ImGuiKey_Escape))) {
+        m.open = false;
+    }
+    const float e = EaseOutCubic(m.anim);
+    AnimateSince(d, start, e, ImVec2(0.0f, (1.0f - e) * S(-6.0f)));
+}
+
+// --- Tiles and rows -------------------------------------------------------------------------------
+
+// A tile (cover + name + what it is). Click = open (a song: play); right
+// click or "..." = options; the green button on hover = play.
+void Tile(ImDrawList* d, const char* id, const Item& it, ImVec2 pos, float w, float alpha, const std::vector<Item>* list = nullptr,
+          std::size_t index = 0) {
+    const Palette& p = P();
+    const bool round = it.type == kArtist;
+    const float h = w + g_fonts.semibold->FontSize + g_fonts.tiny->FontSize + S(14.0f);
+    if (!Visible(pos, ImVec2(pos.x + w, pos.y + h))) return;
+    float hover = 0.0f;
+    ImGui::SetNextItemAllowOverlap();  // (its play button, on top, can be pressed)
+    const bool clicked = Hit(id, pos, ImVec2(pos.x + w, pos.y + h), &hover);
+    // (still "hovered" while the mouse is on its play button)
+    const bool over = !g_blockInput && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
+    hover = Anim(ImGui::GetID(id) + 50, over);
+    const bool right = over && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+    const float lift = S(4.0f) * hover;
+    const ImVec2 a(pos.x, pos.y - lift), b(pos.x + w, pos.y + w - lift);
+    if (hover > 0.01f) d->AddRectFilled(ImVec2(a.x - S(8.0f), a.y - S(8.0f)), ImVec2(b.x + S(8.0f), pos.y + h + S(4.0f) - lift),
+                                        C(ImVec4(1, 1, 1, 1), 0.06f * hover * alpha), S(12.0f));
+    Cover(d, it.image, a, b, S(10.0f), alpha, round, it.type);
+    float ty = b.y + S(8.0f);
+    TextFit(d, g_fonts.semibold, ImVec2(pos.x, ty), C(p.text, alpha), it.name.c_str(), w);
+    ty += g_fonts.semibold->FontSize + S(2.0f);
+    TextFit(d, g_fonts.tiny, ImVec2(pos.x, ty), C(p.textDim, alpha), it.sub.c_str(), w);
+    // the play button, rising in on hover
+    bool played = false;
+    if (hover > 0.05f) {
+        char pid[48];
+        std::snprintf(pid, sizeof(pid), "%s_play", id);
+        const float r = S(20.0f);
+        const ImVec2 c(b.x - r - S(8.0f), b.y - r - S(8.0f) + (1.0f - hover) * S(10.0f));
+        if (PlayButton(d, pid, c, r, hover * alpha)) {
+            played = true;
+            if ((it.type == kTrack || it.type == kEpisode) && list != nullptr) {
+                PlayUris(*list, index);
+            } else {
+                PlayItem(it);
+            }
+        }
+    }
+    if (right) OpenMenu(it);
+    if (clicked && !played) {
+        if (it.type == kTrack || it.type == kEpisode) {
+            if (list != nullptr) PlayUris(*list, index);
+        } else {
+            Open(it);
+        }
+    }
+}
+
+// A row of tiles with its title; as many as fit, and "See all".
+float Row(ImDrawList* d, const char* id, const char* title, const std::vector<Item>& items, ImVec2 pos, float width, float alpha,
+          const std::string& allPath, const char* allKey, const Item* first = nullptr) {
+    const Palette& p = P();
+    if (items.empty() && first == nullptr) return 0.0f;
+    const float tile = std::clamp(width / 6.5f, S(130.0f), S(180.0f));
+    const float gap = S(18.0f);
+    const int fit = std::max(1, static_cast<int>((width + gap) / (tile + gap)));
+    Text(d, g_fonts.title, pos, C(p.text, alpha), title);
+    if (!allPath.empty()) {
+        const char* all = T("sp.see_all");
+        const ImVec2 as = TextSize(g_fonts.semibold, all);
+        const ImVec2 a(pos.x + width - as.x, pos.y + S(4.0f)), b(pos.x + width, pos.y + S(4.0f) + as.y);
+        char aid[48];
+        std::snprintf(aid, sizeof(aid), "%s_all", id);
+        float hover = 0.0f;
+        if (Visible(a, b) && Hit(aid, a, b, &hover)) OpenAll(title, allPath, allKey, items.empty() ? false : items[0].type == kArtist);
+        Text(d, g_fonts.semibold, a, C(Mix(p.textDim, p.text, hover), alpha), all);
+    }
+    const float y = pos.y + g_fonts.title->FontSize + S(14.0f);
+    int shown = 0;
+    float x = pos.x;
+    if (first != nullptr) {
+        char tid[48];
+        std::snprintf(tid, sizeof(tid), "%s_first", id);
+        Tile(d, tid, *first, ImVec2(x, y), tile, alpha);
+        x += tile + gap;
+        ++shown;
+    }
+    for (std::size_t i = 0; i < items.size() && shown < fit; ++i, ++shown) {
+        char tid[48];
+        std::snprintf(tid, sizeof(tid), "%s_%zu", id, i);
+        Tile(d, tid, items[i], ImVec2(x, y), tile, alpha, &items, i);
+        x += tile + gap;
+    }
+    return g_fonts.title->FontSize + S(14.0f) + tile + g_fonts.semibold->FontSize + g_fonts.tiny->FontSize + S(40.0f);
+}
+
+// A grid of tiles (Library, "see all").
+float Grid(ImDrawList* d, const char* id, const std::vector<Item>& items, ImVec2 pos, float width, float alpha, const Item* first = nullptr) {
+    const float tile = std::clamp(width / 6.5f, S(130.0f), S(180.0f));
+    const float gap = S(18.0f);
+    const int cols = std::max(1, static_cast<int>((width + gap) / (tile + gap)));
+    const float rowH = tile + g_fonts.semibold->FontSize + g_fonts.tiny->FontSize + S(34.0f);
+    int n = 0;
+    auto place = [&](const Item& it, const std::vector<Item>* list, std::size_t index) {
+        char tid[48];
+        std::snprintf(tid, sizeof(tid), "%s_%d", id, n);
+        Tile(d, tid, it, ImVec2(pos.x + static_cast<float>(n % cols) * (tile + gap), pos.y + static_cast<float>(n / cols) * rowH), tile, alpha, list,
+             index);
+        ++n;
+    };
+    if (first != nullptr) place(*first, nullptr, 0);
+    for (std::size_t i = 0; i < items.size(); ++i) place(items[i], &items, i);
+    return static_cast<float>((n + cols - 1) / cols) * rowH;
+}
+
+// A song in a list: number (or the equalizer when it plays), cover, name,
+// artists, album, length, and "..." on hover. Click = play it here.
+void TrackRow(ImDrawList* d, const char* id, const Item& it, int number, ImVec2 pos, float width, float alpha, bool showAlbum, bool showCover,
+              const std::function<void()>& play) {
+    const Palette& p = P();
+    const float h = S(54.0f);
+    const ImVec2 a(pos.x, pos.y), b(pos.x + width, pos.y + h - S(4.0f));
+    if (!Visible(a, b)) return;
+    float hover = 0.0f;
+    ImGui::SetNextItemAllowOverlap();  // (its "..." button, on top, can be pressed)
+    const bool clicked = Hit(id, a, b, &hover);
+    const bool over = !g_blockInput && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
+    hover = Anim(ImGui::GetID(id) + 50, over);
+    const bool right = over && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+    const spotify::Player pl = spotify::GetPlayer();
+    const bool current = !pl.trackId.empty() && pl.trackId == it.id;
+    d->AddRectFilled(a, b, C(ImVec4(1, 1, 1, 1), (0.07f * hover + (current ? 0.05f : 0.0f)) * alpha), S(10.0f));
+    const float cy = (a.y + b.y) * 0.5f;
+    // number / playing
+    if (current && pl.playing) {
+        for (int k = 0; k < 3; ++k) {
+            const float v = 0.35f + 0.65f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * (6.0f + k) + k));
+            const float bh = S(12.0f) * v;
+            const float bx = a.x + S(14.0f) + static_cast<float>(k) * S(5.0f);
+            d->AddRectFilled(ImVec2(bx, cy + S(6.0f) - bh), ImVec2(bx + S(3.0f), cy + S(6.0f)), C(kSpotifyGreen, alpha), S(1.0f));
+        }
+    } else if (hover > 0.5f) {
+        icons::Draw(d, icons::kPlayFilled, ImVec2(a.x + S(20.0f), cy), S(14.0f), C(p.text, alpha));
+    } else if (number > 0) {
+        char num[8];
+        std::snprintf(num, sizeof(num), "%d", number);
+        const ImVec2 ns = TextSize(g_fonts.semibold, num);
+        Text(d, g_fonts.semibold, ImVec2(a.x + S(20.0f) - ns.x * 0.5f, cy - ns.y * 0.5f), C(p.textDim, alpha), num);
+    }
+    float x = a.x + S(44.0f);
+    if (showCover) {
+        Cover(d, it.image, ImVec2(x, cy - S(20.0f)), ImVec2(x + S(40.0f), cy + S(20.0f)), S(6.0f), alpha, false, it.type);
+        x += S(52.0f);
+    }
+    const float right0 = b.x - S(90.0f);
+    const float albumX = showAlbum ? a.x + width * 0.58f : right0;
+    TextFit(d, g_fonts.semibold, ImVec2(x, cy - g_fonts.semibold->FontSize - S(1.0f)), C(current ? kSpotifyGreen : p.text, alpha), it.name.c_str(),
+            albumX - x - S(16.0f));
+    TextFit(d, g_fonts.tiny, ImVec2(x, cy + S(2.0f)), C(p.textDim, alpha), it.sub.c_str(), albumX - x - S(16.0f));
+    if (showAlbum) TextFit(d, g_fonts.tiny, ImVec2(albumX, cy - g_fonts.tiny->FontSize * 0.5f), C(p.textDim, alpha), it.albumName.c_str(), right0 - albumX - S(10.0f));
+    if (it.ms > 0) {
+        char len[16];
+        FormatTime(it.ms / 1000.0, len, sizeof(len));
+        const ImVec2 ls = TextSize(g_fonts.tiny, len);
+        Text(d, g_fonts.tiny, ImVec2(b.x - S(52.0f) - ls.x, cy - ls.y * 0.5f), C(p.textDim, alpha), len);
+    }
+    // "..." (on hover)
+    bool menu = right;
+    if (hover > 0.05f) {
+        char mid[48];
+        std::snprintf(mid, sizeof(mid), "%s_more", id);
+        float mh = 0.0f;
+        const ImVec2 mc(b.x - S(22.0f), cy);
+        if (Hit(mid, ImVec2(mc.x - S(14.0f), mc.y - S(14.0f)), ImVec2(mc.x + S(14.0f), mc.y + S(14.0f)), &mh)) menu = true;
+        icons::Draw(d, icons::kEllipsis, mc, S(18.0f), C(p.text, (0.6f + 0.4f * mh) * hover * alpha), S(1.8f));
+    }
+    if (menu) {
+        OpenMenu(it);
+    } else if (clicked) {
+        play();
+    }
+}
+
+}  // namespace sp
+
+namespace sp {
+
+// --- The tabs -----------------------------------------------------------------------------------
+
+Item LikedItem() {
+    Item it;
+    it.type = kLiked;
+    it.name = T("sp.liked_songs");
+    it.sub = T("sp.playlist");
+    it.uri = "liked";
+    return it;
+}
+
+float HomeTab(ImDrawList* d, ImVec2 pos, float width, float alpha) {
+    float y = pos.y;
+    const std::vector<Item>* list = nullptr;
+    // played lately (without repeats)
+    if (Items("/v1/me/player/recently-played?limit=30", list, "items", 60) == 1 && list != nullptr) {
+        static std::vector<Item> unique;
+        static const std::vector<Item>* from = nullptr;
+        static std::size_t fromSize = 0;
+        if (from != list || fromSize != list->size()) {
+            from = list;
+            fromSize = list->size();
+            unique.clear();
+            for (const Item& it : *list) {
+                bool seen = false;
+                for (const Item& u : unique) seen = seen || u.id == it.id;
+                if (!seen) unique.push_back(it);
+            }
+        }
+        y += Row(d, "##r_recent", T("sp.recent"), unique, ImVec2(pos.x, y), width, alpha, {}, nullptr);
+    }
+    if (Items("/v1/me/playlists?limit=50", list) >= 0 && list != nullptr) {
+        const Item liked = LikedItem();
+        y += Row(d, "##r_lists", T("sp.your_playlists"), *list, ImVec2(pos.x, y), width, alpha, "/v1/me/playlists?limit=50", "items", &liked);
+    }
+    if (Items("/v1/me/top/artists?limit=30&time_range=short_term", list) == 1 && list != nullptr) {
+        y += Row(d, "##r_topa", T("sp.top_artists"), *list, ImVec2(pos.x, y), width, alpha, "/v1/me/top/artists?limit=30&time_range=short_term", "items");
+    }
+    if (Items("/v1/me/top/tracks?limit=30&time_range=short_term", list) == 1 && list != nullptr) {
+        y += Row(d, "##r_topt", T("sp.top_tracks"), *list, ImVec2(pos.x, y), width, alpha, "/v1/me/top/tracks?limit=30&time_range=short_term", "items");
+    }
+    if (Items("/v1/me/albums?limit=30", list) == 1 && list != nullptr) {
+        y += Row(d, "##r_albums", T("sp.saved_albums"), *list, ImVec2(pos.x, y), width, alpha, "/v1/me/albums?limit=50", "items");
+    }
+    if (y == pos.y) Spinner(d, ImVec2(pos.x + width * 0.5f, pos.y + S(80.0f)), S(16.0f), C(kSpotifyGreen, alpha));
+    return y - pos.y;
+}
+
+float LibraryTab(ImDrawList* d, ImVec2 pos, float width, float alpha) {
+    const char* labels[4] = {T("sp.playlists"), T("sp.albums"), T("sp.artists"), T("sp.podcasts")};
+    Segmented("##sp_libfilter", pos, labels, 4, &g_libraryFilter);
+    const float y = pos.y + S(56.0f);
+    const std::vector<Item>* list = nullptr;
+    static const char* paths[4] = {"/v1/me/playlists?limit=50", "/v1/me/albums?limit=50", "/v1/me/following?type=artist&limit=50",
+                                   "/v1/me/shows?limit=50"};
+    const char* key = g_libraryFilter == 2 ? "artists" : "items";
+    const int state = Items(paths[g_libraryFilter], list, key);
+    if (state == 0 || list == nullptr) {
+        Spinner(d, ImVec2(pos.x + width * 0.5f, y + S(60.0f)), S(16.0f), C(kSpotifyGreen, alpha));
+        return S(160.0f);
+    }
+    const Item liked = LikedItem();
+    return S(56.0f) + Grid(d, "##g_lib", *list, ImVec2(pos.x, y), width, alpha, g_libraryFilter == 0 ? &liked : nullptr);
+}
+
+// --- A page with songs (playlist, album, Liked songs, a podcast) ----------------------------------
+
+float SongsPage(ImDrawList* d, Page& pg, ImVec2 pos, float width, float alpha) {
+    const Palette& p = P();
+    Item& it = pg.item;
+    // its header: the cover, what it is, the name, details, play / shuffle / radio / ...
+    std::string headPath, listPath, listKey = "items";
+    int pageSize = 100;
+    if (pg.kind == kPagePlaylist) {
+        headPath = "/v1/playlists/" + it.id + "?fields=name,description,images,owner(display_name,id),tracks(total),uri,id,type";
+        listPath = "/v1/playlists/" + it.id + "/tracks?limit=100";
+    } else if (pg.kind == kPageAlbum) {
+        headPath = "/v1/albums/" + it.id;
+        listPath = headPath;
+        listKey = "tracks";
+    } else if (pg.kind == kPageLiked) {
+        listPath = "/v1/me/tracks?limit=50";
+        pageSize = 50;
+    } else if (pg.kind == kPageShow) {
+        headPath = "/v1/shows/" + it.id;
+        listPath = "/v1/shows/" + it.id + "/episodes?limit=50";
+        pageSize = 50;
+    }
+    if (!headPath.empty()) {
+        if (auto h = Json(headPath)) {
+            Item full;
+            if (Parse(*h, full)) {
+                if (it.image.empty()) it.image = full.image;
+                if (it.name.empty()) it.name = full.name;
+                if (full.total > 0) it.total = full.total;
+                if (it.sub.empty()) it.sub = full.sub;
+                if (it.artists.empty()) it.artists = full.artists;
+                if (it.ownerId.empty()) it.ownerId = full.ownerId;
+            }
+        }
+    }
+    const float cover = S(190.0f);
+    Cover(d, it.image, pos, ImVec2(pos.x + cover, pos.y + cover), S(12.0f), alpha, false, it.type);
+    const float hx = pos.x + cover + S(28.0f);
+    const char* kinds[] = {"", T("sp.album"), "", T("sp.playlist"), T("sp.podcast"), "", T("sp.playlist")};
+    Text(d, g_fonts.tiny, ImVec2(hx, pos.y + S(40.0f)), C(p.textDim, alpha), kinds[it.type]);
+    TextFit(d, g_fonts.hero, ImVec2(hx, pos.y + S(56.0f)), C(p.text, alpha), it.name.c_str(), width - cover - S(40.0f));
+    {
+        std::string line = it.sub;
+        if (it.total > 0) {
+            char n[48];
+            std::snprintf(n, sizeof(n), T("sp.n_songs"), it.total);
+            line += line.empty() ? n : std::string("  ·  ") + n;
+        }
+        TextFit(d, g_fonts.regular, ImVec2(hx, pos.y + S(64.0f) + g_fonts.hero->FontSize), C(p.textDim, alpha), line.c_str(),
+                width - cover - S(40.0f));
+    }
+    const float by = pos.y + cover - S(26.0f);
+    const spotify::Player pl = spotify::GetPlayer();
+    if (PlayButton(d, "##sp_pg_play", ImVec2(hx + S(26.0f), by), S(26.0f), alpha)) PlayItem(it);
+    if (IconToggle(d, "##sp_pg_shuffle", ImVec2(hx + S(82.0f), by), icons::kShuffle, S(20.0f), false)) PlayItem(it, true);
+    if (it.type == kPlaylist || it.type == kAlbum) {
+        if (IconToggle(d, "##sp_pg_radio", ImVec2(hx + S(126.0f), by), icons::kSignal, S(20.0f), false)) {
+            std::vector<std::string> artists;
+            if (it.type == kPlaylist) {
+                bool ready = false;
+                artists = PlaylistArtists(it.id, &ready);
+            } else {
+                for (const auto& a : it.artists) artists.push_back(a.first);
+            }
+            spotify::PlayMix(artists, {});
+            Flash(icons::kSignal, T("sp.radio_started"));
+        }
+    }
+    if (IconToggle(d, "##sp_pg_more", ImVec2(hx + S(170.0f), by), icons::kEllipsis, S(20.0f), false)) OpenMenu(it);
+    float y = pos.y + cover + S(30.0f);
+    // the songs (more pages with "Load more")
+    std::vector<Item> songs;
+    bool loading = false, more = false;
+    for (int page = 0; page < pg.more; ++page) {
+        std::string path = listPath;
+        if (page > 0) path += (path.find('?') == std::string::npos ? "?offset=" : "&offset=") + std::to_string(page * pageSize);
+        const std::vector<Item>* list = nullptr;
+        const int state = Items(path, list, listKey.c_str());
+        if (state == 0) loading = true;
+        if (list != nullptr) {
+            for (const Item& s : *list) {
+                Item copy = s;
+                if (pg.kind == kPageAlbum) {  // (an album's songs don't carry its cover)
+                    copy.image = it.image;
+                    copy.albumId = it.id;
+                    copy.albumName = it.name;
+                }
+                songs.push_back(std::move(copy));
+            }
+            more = static_cast<int>(list->size()) >= pageSize && pg.kind != kPageAlbum;
+        }
+    }
+    const bool showAlbum = pg.kind != kPageAlbum && pg.kind != kPageShow && width > S(700.0f);
+    for (std::size_t i = 0; i < songs.size(); ++i) {
+        char rid[32];
+        std::snprintf(rid, sizeof(rid), "##sp_song%zu", i);
+        const Item& s = songs[i];
+        TrackRow(d, rid, s, static_cast<int>(i) + 1, ImVec2(pos.x, y), width, alpha, showAlbum, pg.kind != kPageAlbum, [&, i]() {
+            if (pg.kind == kPageLiked) {
+                PlayContext(LikedUri(), songs[i].uri);
+            } else if (pg.kind == kPageShow) {
+                PlayUris(songs, i);
+            } else {
+                PlayContext(it.uri, songs[i].uri);
+            }
+        });
+        y += S(54.0f);
+    }
+    if (loading) {
+        Spinner(d, ImVec2(pos.x + width * 0.5f, y + S(24.0f)), S(14.0f), C(kSpotifyGreen, alpha));
+        y += S(50.0f);
+    } else if (more) {
+        const char* label = T("sp.load_more");
+        const float lw = TextSize(g_fonts.semibold, label).x + S(28.0f);
+        float bw = 0.0f;
+        const ImVec2 bp(pos.x + width * 0.5f - lw * 0.5f, y + S(10.0f));
+        if (Visible(bp, ImVec2(bp.x + lw, bp.y + S(34.0f))) && SmallPill(d, "##sp_more", bp, nullptr, label, false, &bw)) ++pg.more;
+        y += S(60.0f);
+    }
+    (void)pl;
+    return y - pos.y;
+}
+
+float ArtistPage(ImDrawList* d, Page& pg, ImVec2 pos, float width, float alpha) {
+    const Palette& p = P();
+    Item& it = pg.item;
+    int followers = 0;
+    if (auto h = Json("/v1/artists/" + it.id)) {
+        Item full;
+        if (Parse(*h, full)) {
+            if (it.image.empty()) it.image = full.image;
+            if (it.name.empty()) it.name = full.name;
+        }
+        if (h->contains("followers") && (*h)["followers"].is_object()) followers = (*h)["followers"].value("total", 0);
+    }
+    const float cover = S(190.0f);
+    Cover(d, it.image, pos, ImVec2(pos.x + cover, pos.y + cover), 0.0f, alpha, true, kArtist);
+    const float hx = pos.x + cover + S(28.0f);
+    Text(d, g_fonts.tiny, ImVec2(hx, pos.y + S(40.0f)), C(p.textDim, alpha), T("sp.artist"));
+    TextFit(d, g_fonts.hero, ImVec2(hx, pos.y + S(56.0f)), C(p.text, alpha), it.name.c_str(), width - cover - S(40.0f));
+    if (followers > 0) {
+        char f[64];
+        std::snprintf(f, sizeof(f), T("sp.followers"), followers);
+        Text(d, g_fonts.regular, ImVec2(hx, pos.y + S(64.0f) + g_fonts.hero->FontSize), C(p.textDim, alpha), f);
+    }
+    const float by = pos.y + cover - S(26.0f);
+    if (PlayButton(d, "##sp_ar_play", ImVec2(hx + S(26.0f), by), S(26.0f), alpha)) PlayItem(it);
+    if (IconToggle(d, "##sp_ar_radio", ImVec2(hx + S(82.0f), by), icons::kSignal, S(20.0f), false)) {
+        spotify::PlayMix({it.id}, {});
+        Flash(icons::kSignal, T("sp.radio_started"));
+    }
+    if (IconToggle(d, "##sp_ar_more", ImVec2(hx + S(126.0f), by), icons::kEllipsis, S(20.0f), false)) OpenMenu(it);
+    float y = pos.y + cover + S(30.0f);
+    // popular
+    const std::vector<Item>* top = nullptr;
+    if (Items("/v1/artists/" + it.id + "/top-tracks?market=from_token", top, "tracks") == 1 && top != nullptr && !top->empty()) {
+        Text(d, g_fonts.title, ImVec2(pos.x, y), C(p.text, alpha), T("sp.popular"));
+        y += g_fonts.title->FontSize + S(12.0f);
+        for (std::size_t i = 0; i < top->size() && i < 10; ++i) {
+            char rid[32];
+            std::snprintf(rid, sizeof(rid), "##sp_top%zu", i);
+            TrackRow(d, rid, (*top)[i], static_cast<int>(i) + 1, ImVec2(pos.x, y), width, alpha, width > S(700.0f), true,
+                     [top, i]() { PlayUris(*top, i); });
+            y += S(54.0f);
+        }
+        y += S(24.0f);
+    }
+    // discography
+    const std::vector<Item>* albums = nullptr;
+    const std::string albumsPath = "/v1/artists/" + it.id + "/albums?include_groups=album,single&limit=30";
+    if (Items(albumsPath, albums) == 1 && albums != nullptr) {
+        y += Row(d, "##r_disco", T("sp.discography"), *albums, ImVec2(pos.x, y), width, alpha, albumsPath, "items");
+    }
+    return y - pos.y;
+}
+
+float AllPage(ImDrawList* d, Page& pg, ImVec2 pos, float width, float alpha) {
+    const Palette& p = P();
+    Text(d, g_fonts.hero, pos, C(p.text, alpha), pg.title.c_str());
+    const float y = pos.y + g_fonts.hero->FontSize + S(20.0f);
+    const std::vector<Item>* list = nullptr;
+    if (Items(pg.path, list, pg.key.c_str()) != 1 || list == nullptr) {
+        Spinner(d, ImVec2(pos.x + width * 0.5f, y + S(60.0f)), S(16.0f), C(kSpotifyGreen, alpha));
+        return S(200.0f);
+    }
+    if (!list->empty() && (*list)[0].type == kTrack) {  // songs: as a list
+        float ty = y;
+        for (std::size_t i = 0; i < list->size(); ++i) {
+            char rid[32];
+            std::snprintf(rid, sizeof(rid), "##sp_all%zu", i);
+            TrackRow(d, rid, (*list)[i], static_cast<int>(i) + 1, ImVec2(pos.x, ty), width, alpha, width > S(700.0f), true,
+                     [list, i]() { PlayUris(*list, i); });
+            ty += S(54.0f);
+        }
+        return ty - pos.y;
+    }
+    return y - pos.y + Grid(d, "##g_all", *list, ImVec2(pos.x, y), width, alpha);
+}
+
+// --- The drawer (right): queue, devices, lyrics ------------------------------------------------------
+
+int g_drawer = -1;        // -1 closed, 0 queue, 1 devices, 2 lyrics
+int g_drawerShown = 0;    // the tab it shows (kept while it closes)
+float g_drawerAnim = 0.0f;
+
+void Drawer(ImDrawList* d, ImVec2 min, ImVec2 max, float alpha) {
+    const Palette& p = P();
+    const float e = EaseOutCubic(g_drawerAnim);
+    const float w = max.x - min.x;
+    const ImVec2 a(min.x + (1.0f - e) * (w + S(30.0f)), min.y), b(a.x + w, max.y);
+    alpha *= e;
+    if (alpha < 0.01f) return;
+    d->AddRectFilled(a, b, C(Mix(p.card, ImVec4(0, 0, 0, 1), 0.2f), 0.55f * alpha), S(18.0f));
+    d->AddRect(a, b, C(ImVec4(1, 1, 1, 1), 0.12f * alpha), S(18.0f));
+    const char* tabs[3] = {T("spotify.up_next"), T("spotify.devices"), T("nav.lyrics")};
+    int tab = g_drawerShown;
+    const float tw = SegmentedWidth(tabs, 3);
+    if (Segmented("##sp_drawer_tabs", ImVec2(a.x + (w - tw) * 0.5f, a.y + S(12.0f)), tabs, 3, &tab)) g_drawer = g_drawerShown = tab;
+    const ImVec2 cmin(a.x + S(12.0f), a.y + S(64.0f)), cmax(b.x - S(12.0f), b.y - S(12.0f));
+    const ImVec2 savedMin = g_viewMin, savedMax = g_viewMax;
+    g_viewMin = cmin;
+    g_viewMax = cmax;
+    d->PushClipRect(cmin, cmax, true);
+    if (g_drawerShown == 0) {
+        // what plays, then what comes
+        const std::shared_ptr<const nlohmann::json> q = Json("/v1/me/player/queue", nullptr, 4);
+        float y = cmin.y;
+        if (q && q->is_object()) {
+            std::vector<Item> now;
+            if (q->contains("currently_playing") && (*q)["currently_playing"].is_object()) {
+                Item cur;
+                if (Parse((*q)["currently_playing"], cur)) now.push_back(cur);
+            }
+            static std::vector<Item> list;
+            static std::shared_ptr<const nlohmann::json> from;
+            if (from != q) {
+                from = q;
+                list = ParseList(*q, "queue");
+            }
+            if (!now.empty()) {
+                Text(d, g_fonts.tiny, ImVec2(cmin.x + S(4.0f), y), C(p.textDim, alpha), T("music.now_playing"));
+                y += g_fonts.tiny->FontSize + S(6.0f);
+                TrackRow(d, "##sp_q_now", now[0], 0, ImVec2(cmin.x, y), cmax.x - cmin.x, alpha, false, true, []() {});
+                y += S(64.0f);
+            }
+            Text(d, g_fonts.tiny, ImVec2(cmin.x + S(4.0f), y), C(p.textDim, alpha), T("spotify.up_next"));
+            y += g_fonts.tiny->FontSize + S(6.0f);
+            for (std::size_t i = 0; i < list.size() && y < cmax.y; ++i) {
+                char rid[32];
+                std::snprintf(rid, sizeof(rid), "##sp_q%zu", i);
+                // (clicking a song of the queue: skip to it)
+                TrackRow(d, rid, list[i], static_cast<int>(i) + 1, ImVec2(cmin.x, y), cmax.x - cmin.x, alpha, false, true, [i]() {
+                    for (std::size_t k = 0; k <= i; ++k) spotify::PlayerNext();
+                });
+                y += S(54.0f);
+            }
+            if (list.empty()) Text(d, g_fonts.tiny, ImVec2(cmin.x + S(4.0f), y), C(p.textDim, alpha), T("spotify.queue_empty"));
+        } else {
+            Spinner(d, ImVec2((cmin.x + cmax.x) * 0.5f, cmin.y + S(40.0f)), S(14.0f), C(kSpotifyGreen, alpha));
+        }
+    } else if (g_drawerShown == 1) {
+        // LUMA'S OWN PLAYER: the music plays from Luma (spotify_engine.h)
+        float y0 = cmin.y;
+        {
+            namespace eng = luma::launcher::spotifyengine;
+            static bool playWhenReady = false;
+            const eng::State es = eng::GetState();
+            const ImVec2 ra(cmin.x, y0), rb(cmax.x, y0 + S(92.0f));
+            d->AddRectFilled(ra, rb, C(kSpotifyGreen, 0.10f * alpha), S(14.0f));
+            d->AddRect(ra, rb, C(kSpotifyGreen, 0.35f * alpha), S(14.0f));
+            icons::Draw(d, icons::kLumaLogo, ImVec2(ra.x + S(24.0f), ra.y + S(24.0f)), S(20.0f), C(p.text, alpha));
+            Text(d, g_fonts.semibold, ImVec2(ra.x + S(44.0f), ra.y + S(14.0f)), C(p.text, alpha), T("sp.luma_player"));
+            const char* line = T("sp.luma_player_hint");
+            if (es == eng::State::Starting) line = T("sp.luma_starting");
+            if (es == eng::State::Ready) line = T("sp.luma_ready");
+            if (es == eng::State::NoEdge) line = T("sp.luma_no_edge");
+            std::string err;
+            if (es == eng::State::Error) {
+                err = std::string(T("sp.luma_error")) + " " + eng::Error();
+                line = err.c_str();
+            }
+            TextFit(d, g_fonts.tiny, ImVec2(ra.x + S(44.0f), ra.y + S(16.0f) + g_fonts.semibold->FontSize), C(es == eng::State::Error ? p.warning : p.textDim, alpha),
+                    line, rb.x - ra.x - S(56.0f));
+            float bw = 0.0f;
+            const spotify::Player pl = spotify::GetPlayer();
+            const bool here = es == eng::State::Ready && pl.device.id == eng::DeviceId();
+            if (es == eng::State::Starting) {
+                Spinner(d, ImVec2(ra.x + S(30.0f), rb.y - S(22.0f)), S(9.0f), C(kSpotifyGreen, alpha));
+            } else if (here) {
+                Text(d, g_fonts.semibold, ImVec2(ra.x + S(16.0f), rb.y - S(32.0f)), C(kSpotifyGreen, alpha), T("spotify.playing_here"));
+            } else if (SmallPill(d, "##sp_luma_play", ImVec2(ra.x + S(14.0f), rb.y - S(42.0f)), icons::kPlayFilled, T("sp.luma_listen"), true, &bw)) {
+                WithLumaDevice([](const std::string& id) { spotify::PlayerTransfer(id); });
+                (void)playWhenReady;
+            }
+            if (playWhenReady && es == eng::State::Ready && !eng::DeviceId().empty()) {
+                playWhenReady = false;
+                spotify::PlayerTransfer(eng::DeviceId());
+            }
+            if (es == eng::State::Error || es == eng::State::NoEdge) playWhenReady = false;
+            y0 = rb.y + S(16.0f);
+        }
+        std::uint32_t version = g_deviceListVersion;
+        if (spotify::Devices(g_deviceListVersion, g_deviceList, version)) g_deviceListVersion = version;
+        static double asked = -10.0;
+        if (ImGui::GetTime() - asked > 5.0) {
+            spotify::RequestDevices();
+            asked = ImGui::GetTime();
+        }
+        float y = y0;
+        if (g_deviceList.empty()) Text(d, g_fonts.tiny, ImVec2(cmin.x + S(4.0f), y), C(p.textDim, alpha), T("spotify.no_devices"));
+        for (std::size_t i = 0; i < g_deviceList.size(); ++i) {
+            const spotify::Device& dv = g_deviceList[i];
+            const ImVec2 ra(cmin.x, y), rb(cmax.x, y + S(56.0f));
+            char id[32];
+            std::snprintf(id, sizeof(id), "##sp_dev%zu", i);
+            float hover = 0.0f;
+            if (Hit(id, ra, rb, &hover) && !dv.active) spotify::PlayerTransfer(dv.id);
+            d->AddRectFilled(ra, ImVec2(rb.x, rb.y - S(6.0f)), C(dv.active ? kSpotifyGreen : p.text, (dv.active ? 0.14f : 0.04f) + 0.06f * hover), S(12.0f));
+            const ImVec4 col = dv.active ? kSpotifyGreen : p.text;
+            icons::Draw(d, DeviceIcon(dv.type), ImVec2(ra.x + S(24.0f), ra.y + S(25.0f)), S(18.0f), C(col, alpha), S(1.6f));
+            TextFit(d, g_fonts.semibold, ImVec2(ra.x + S(48.0f), ra.y + S(7.0f)), C(col, alpha), dv.name.c_str(), rb.x - ra.x - S(60.0f));
+            Text(d, g_fonts.tiny, ImVec2(ra.x + S(48.0f), ra.y + S(9.0f) + g_fonts.semibold->FontSize), C(p.textDim, alpha),
+                 dv.active ? T("spotify.playing_here") : dv.type.c_str());
+            y += S(60.0f);
+        }
+        // your account
+        const spotify::Status st = spotify::GetStatus();
+        y += S(16.0f);
+        std::string who = st.user + (st.premium == 1 ? "  ·  Premium" : (st.premium == 0 ? "  ·  Free" : ""));
+        TextFit(d, g_fonts.semibold, ImVec2(cmin.x + S(4.0f), y), C(p.text, alpha), who.c_str(), cmax.x - cmin.x);
+        y += g_fonts.semibold->FontSize + S(10.0f);
+        float bw = 0.0f;
+        if (SmallPill(d, "##sp_dr_disconnect", ImVec2(cmin.x, y), nullptr, T("spotify.disconnect"), false, &bw)) spotify::Disconnect();
+    } else {
+        // the lyrics (the same as Home's lyrics view, when the song plays on this PC)
+        const media::Track t = media::Current();
+        DrawLyricsLines(d, cmin, cmax, t, alpha);
+    }
+    d->PopClipRect();
+    g_viewMin = savedMin;
+    g_viewMax = savedMax;
+}
+
+// --- Search (a layer over everything; Ctrl+K) -----------------------------------------------------
+
+bool g_searchOpen = false;
+float g_searchAnim = 0.0f;
+char g_searchText[128] = "";
+std::string g_searchQuery;   // what was asked (after a short pause in the typing)
+double g_searchTypedAt = 0.0;
+int g_searchFilter = 0;      // 0 all, 1 songs, 2 artists, 3 albums, 4 playlists
+bool g_searchFocus = false;
+float g_searchScroll = 0.0f, g_searchTarget = 0.0f, g_searchH = 0.0f;
+
+void OpenSearch() {
+    g_searchOpen = true;
+    g_searchFocus = true;
+}
+
+void SearchLayer(ImDrawList* d, ImVec2 display) {
+    g_searchAnim += ((g_searchOpen ? 1.0f : 0.0f) - g_searchAnim) * std::min(1.0f, Dt() * 14.0f);
+    if (g_searchAnim < 0.01f) return;
+    const Palette& p = P();
+    const float e = EaseOutCubic(g_searchAnim);
+    const int start = d->VtxBuffer.Size;
+    d->AddRectFilled(ImVec2(0, 0), display, C(ImVec4(0.02f, 0.01f, 0.02f, 1), 0.62f));
+    const float w = std::min(display.x - S(160.0f), S(1100.0f));
+    const float x0 = (display.x - w) * 0.5f;
+    // the box
+    const ImVec2 ba(x0, S(70.0f)), bb(x0 + w, S(70.0f) + S(52.0f));
+    d->AddRectFilled(ba, bb, C(Mix(p.card, ImVec4(1, 1, 1, 1), 0.06f), 0.95f), S(26.0f));
+    d->AddRect(ba, bb, C(kSpotifyGreen, 0.6f), S(26.0f), 0, S(1.5f));
+    icons::Draw(d, icons::kSearch, ImVec2(ba.x + S(28.0f), (ba.y + bb.y) * 0.5f), S(18.0f), C(p.text), S(2.0f));
+    ImGui::SetCursorScreenPos(ImVec2(ba.x + S(52.0f), (ba.y + bb.y - g_fonts.title->FontSize) * 0.5f - S(3.0f)));
+    ImGui::PushFont(g_fonts.title);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_Text, p.text);
+    ImGui::PushStyleColor(ImGuiCol_TextDisabled, p.textDim);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, S(3.0f)));
+    ImGui::SetNextItemWidth(w - S(120.0f));
+    if (g_searchFocus) {
+        ImGui::SetKeyboardFocusHere();
+        g_searchFocus = false;
+    }
+    if (ImGui::InputTextWithHint("##sp_search", T("sp.search_hint"), g_searchText, sizeof(g_searchText))) g_searchTypedAt = ImGui::GetTime();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(3);
+    ImGui::PopFont();
+    Text(d, g_fonts.tiny, ImVec2(bb.x - S(44.0f), (ba.y + bb.y - g_fonts.tiny->FontSize) * 0.5f), C(p.textDim), "Esc");
+    if (ImGui::GetTime() - g_searchTypedAt > 0.35 && g_searchQuery != g_searchText) {
+        g_searchQuery = g_searchText;
+        g_searchTarget = 0.0f;
+    }
+    // the filters
+    const char* filters[5] = {T("sp.all"), T("sp.songs"), T("sp.artists"), T("sp.albums"), T("sp.playlists")};
+    Segmented("##sp_search_filter", ImVec2(x0, bb.y + S(16.0f)), filters, 5, &g_searchFilter);
+    // the results
+    const ImVec2 rmin(x0, bb.y + S(72.0f)), rmax(x0 + w, display.y - S(20.0f));
+    const ImVec2 savedMin = g_viewMin, savedMax = g_viewMax;
+    g_viewMin = rmin;
+    g_viewMax = rmax;
+    d->PushClipRect(rmin, rmax, true);
+    float y = rmin.y - g_searchScroll;
+    std::string q;
+    for (char c : g_searchQuery) q += c;
+    while (!q.empty() && q.back() == ' ') q.pop_back();
+    if (q.empty()) {
+        Text(d, g_fonts.semibold, ImVec2(x0, y + S(10.0f)), C(p.textDim), T("sp.search_empty"));
+    } else {
+        const std::string path = "/v1/search?q=" + UrlEncode(q) + "&type=track,artist,album,playlist&limit=10";
+        int state = 0;
+        const auto j = Json(path, &state, 120);
+        if (!j) {
+            if (state == 2) {
+                Text(d, g_fonts.semibold, ImVec2(x0, y + S(10.0f)), C(p.warning), T("sp.search_failed"));
+            } else {
+                Spinner(d, ImVec2(x0 + w * 0.5f, y + S(50.0f)), S(16.0f), C(kSpotifyGreen));
+            }
+        } else {
+            static std::shared_ptr<const nlohmann::json> from;
+            static std::vector<Item> tracks, artists, albums, lists;
+            if (from != j) {
+                from = j;
+                tracks = ParseList(*j, "tracks");
+                artists = ParseList(*j, "artists");
+                albums = ParseList(*j, "albums");
+                lists = ParseList(*j, "playlists");
+            }
+            const float y0 = y;
+            if (g_searchFilter == 0) {
+                // the best match (the first artist, big) and the songs
+                if (!artists.empty()) {
+                    const float cw = std::min(S(300.0f), w * 0.3f);
+                    Text(d, g_fonts.title, ImVec2(x0, y), C(p.text), T("sp.top_result"));
+                    Tile(d, "##s_best", artists[0], ImVec2(x0, y + g_fonts.title->FontSize + S(14.0f)), cw * 0.8f, 1.0f);
+                    float ty = y;
+                    Text(d, g_fonts.title, ImVec2(x0 + cw + S(24.0f), ty), C(p.text), T("sp.songs"));
+                    ty += g_fonts.title->FontSize + S(14.0f);
+                    for (std::size_t i = 0; i < tracks.size() && i < 5; ++i) {
+                        char rid[32];
+                        std::snprintf(rid, sizeof(rid), "##s_t%zu", i);
+                        TrackRow(d, rid, tracks[i], 0, ImVec2(x0 + cw + S(24.0f), ty), w - cw - S(24.0f), 1.0f, false, true,
+                                 [i]() { PlayUris(tracks, i); });
+                        ty += S(54.0f);
+                    }
+                    y = std::max(ty, y + g_fonts.title->FontSize + S(14.0f) + cw * 0.8f + S(60.0f)) + S(20.0f);
+                }
+                y += Row(d, "##s_ar", T("sp.artists"), artists, ImVec2(x0, y), w, 1.0f, {}, nullptr);
+                y += Row(d, "##s_al", T("sp.albums"), albums, ImVec2(x0, y), w, 1.0f, {}, nullptr);
+                y += Row(d, "##s_pl", T("sp.playlists"), lists, ImVec2(x0, y), w, 1.0f, {}, nullptr);
+            } else if (g_searchFilter == 1) {
+                for (std::size_t i = 0; i < tracks.size(); ++i) {
+                    char rid[32];
+                    std::snprintf(rid, sizeof(rid), "##s_t%zu", i);
+                    TrackRow(d, rid, tracks[i], static_cast<int>(i) + 1, ImVec2(x0, y), w, 1.0f, true, true, [i]() { PlayUris(tracks, i); });
+                    y += S(54.0f);
+                }
+            } else {
+                const std::vector<Item>& list = g_searchFilter == 2 ? artists : (g_searchFilter == 3 ? albums : lists);
+                y += Grid(d, "##s_grid", list, ImVec2(x0, y), w, 1.0f);
+            }
+            g_searchH = y - y0;
+        }
+    }
+    d->PopClipRect();
+    g_viewMin = savedMin;
+    g_viewMax = savedMax;
+    // scrolling the results
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    if (mouse.y > rmin.y && mouse.y < rmax.y) g_searchTarget -= ImGui::GetIO().MouseWheel * S(90.0f);
+    g_searchTarget = std::clamp(g_searchTarget, 0.0f, std::max(0.0f, g_searchH - (rmax.y - rmin.y) + S(40.0f)));
+    g_searchScroll += (g_searchTarget - g_searchScroll) * std::min(1.0f, Dt() * 14.0f);
+    // opening something from the results closes the search
+    static std::size_t depth = 1;
+    if (g_stack.size() != depth) {
+        depth = g_stack.size();
+        if (g_searchOpen && g_stack.size() > 1) g_searchOpen = false;
+    }
+    if (g_searchOpen && ImGui::IsKeyPressed(ImGuiKey_Escape) && !g_menu.open) g_searchOpen = false;
+    AnimateSince(d, start, e, ImVec2(0.0f, (1.0f - e) * S(-12.0f)));
+}
+
+}  // namespace sp
+
+namespace sp {
+
+// --- The top: what plays, search, the drawer's buttons ---------------------------------------------
+
+void TopBar(ImDrawList* d, ImVec2 min, float width, const spotify::Status& st) {
+    const Palette& p = P();
+    const spotify::Player pl = spotify::GetPlayer();
+    const float h = S(84.0f);
+    const float cy = min.y + h * 0.5f;
+    float x = min.x;
+    if (pl.valid && pl.hasDevice && !pl.title.empty()) {
+        const float art = S(76.0f);
+        const textures::Texture* tex = pl.artPath.empty() ? nullptr : textures::Get(pl.artPath);
+        const ImVec2 a(x, cy - art * 0.5f), b(x + art, cy + art * 0.5f);
+        SoftLight(d, ImVec2((a.x + b.x) * 0.5f, cy), art * 0.9f, p.accent, 0.4f + 0.3f * g_bassSmooth);
+        if (tex != nullptr) {
+            d->AddImageRounded(tex->id, a, b, ImVec2(0, 0), ImVec2(1, 1), C(ImVec4(1, 1, 1, 1)), S(10.0f));
+        } else {
+            d->AddRectFilled(a, b, C(p.card), S(10.0f));
+        }
+        x += art + S(16.0f);
+        const float tw = std::min(S(300.0f), width * 0.25f);
+        TextFit(d, g_fonts.title, ImVec2(x, cy - S(30.0f)), C(p.text), pl.title.c_str(), tw);
+        TextFit(d, g_fonts.regular, ImVec2(x, cy - S(2.0f)), C(p.textDim), pl.artist.c_str(), tw);
+        // the progress, thin, under the name
+        {
+            media::Track fake;
+            fake.present = true;
+            fake.position = spotify::PositionSeconds(pl);
+            fake.duration = pl.durationMs / 1000.0;
+            fake.canSeek = true;
+            ThinSeek(d, "##sp_top_seek", x, x + tw, cy + S(28.0f), fake, 1.0f, SpotifySeekTo);
+        }
+        x += tw + S(30.0f);
+        // the controls
+        const float bx = x + S(18.0f);
+        if (IconToggle(d, "##sp_t_shuffle", ImVec2(bx, cy), icons::kShuffle, S(18.0f), pl.shuffle)) spotify::PlayerShuffle(!pl.shuffle);
+        if (RoundButton(d, "##sp_t_prev", ImVec2(bx + S(48.0f), cy), S(20.0f), icons::kSkipBackFilled, S(15.0f), false)) spotify::PlayerPrevious();
+        if (RoundButton(d, "##sp_t_play", ImVec2(bx + S(104.0f), cy), S(27.0f), pl.playing ? icons::kPauseFilled : icons::kPlayFilled, S(19.0f), true)) {
+            spotify::PlayerPlay(!pl.playing);
+        }
+        if (RoundButton(d, "##sp_t_next", ImVec2(bx + S(160.0f), cy), S(20.0f), icons::kSkipForwardFilled, S(15.0f), false)) spotify::PlayerNext();
+        {
+            const int nextMode = pl.repeat == 0 ? 2 : (pl.repeat == 2 ? 1 : 0);
+            if (IconToggle(d, "##sp_t_repeat", ImVec2(bx + S(208.0f), cy), pl.repeat == 1 ? icons::kRepeat1 : icons::kRepeat, S(18.0f), pl.repeat != 0)) {
+                spotify::PlayerRepeat(nextMode);
+            }
+        }
+        if (IconToggle(d, "##sp_t_heart", ImVec2(bx + S(252.0f), cy), pl.liked ? icons::kHeartFilled : icons::kHeart, S(18.0f), pl.liked,
+                       pl.likedKnown)) {
+            spotify::PlayerLike(!pl.liked);
+        }
+        x = bx + S(290.0f);
+        if (width > S(1250.0f)) {
+            SpotifyVolumeBar(d, ImVec2(x, cy), S(90.0f), pl, 1.0f);
+        }
+    } else if (pl.valid) {
+        namespace eng = luma::launcher::spotifyengine;
+        const bool starting = eng::GetState() == eng::State::Starting || g_whenLumaReady != nullptr;
+        Text(d, g_fonts.semibold, ImVec2(x, cy - S(24.0f)), C(p.text), T("spotify.nothing_title"));
+        if (starting) {
+            Spinner(d, ImVec2(x + S(10.0f), cy + S(16.0f)), S(8.0f), C(kSpotifyGreen));
+            Text(d, g_fonts.tiny, ImVec2(x + S(26.0f), cy + S(16.0f) - g_fonts.tiny->FontSize * 0.5f), C(p.textDim), T("sp.luma_starting"));
+        } else {
+            float bw = 0.0f;
+            if (SmallPill(d, "##sp_t_luma", ImVec2(x, cy), icons::kPlayFilled, T("sp.luma_listen"), true, &bw)) {
+                WithLumaDevice([](const std::string& id) { spotify::PlayerTransfer(id); });
+            }
+        }
+    }
+    // right: search, the drawer's three buttons
+    float rx = min.x + width;
+    const char* tips[3] = {"##sp_d_queue", "##sp_d_devices", "##sp_d_lyrics"};
+    const char* dicons[3] = {icons::kList, icons::kAppWindow, icons::kMicVocal};
+    for (int i = 2; i >= 0; --i) {
+        rx -= S(40.0f);
+        if (IconToggle(d, tips[i], ImVec2(rx + S(18.0f), cy), dicons[i], S(18.0f), g_drawer == i)) {
+            g_drawer = g_drawer == i ? -1 : i;
+            if (g_drawer >= 0) g_drawerShown = g_drawer;
+        }
+    }
+    rx -= S(12.0f);
+    {
+        const char* label = T("sp.search");
+        const ImVec2 ls = TextSize(g_fonts.semibold, label);
+        const float sw = ls.x + S(88.0f);
+        const ImVec2 a(rx - sw, cy - S(19.0f)), b(rx, cy + S(19.0f));
+        float hover = 0.0f;
+        if (Hit("##sp_t_search", a, b, &hover)) OpenSearch();
+        d->AddRectFilled(a, b, C(p.text, 0.08f + 0.06f * hover), S(19.0f));
+        d->AddRect(a, b, C(ImVec4(1, 1, 1, 1), 0.12f), S(19.0f));
+        icons::Draw(d, icons::kSearch, ImVec2(a.x + S(20.0f), cy), S(16.0f), C(p.text), S(2.0f));
+        Text(d, g_fonts.semibold, ImVec2(a.x + S(38.0f), cy - ls.y * 0.5f), C(p.text), label);
+        Text(d, g_fonts.tiny, ImVec2(b.x - S(44.0f), cy - g_fonts.tiny->FontSize * 0.5f), C(p.textDim), "Ctrl+K");
+    }
+    (void)st;
+}
+
+// The page (with its scroll): the tab, or what was opened.
+void Content(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    Page& pg = g_stack.back();
+    pg.in = std::min(1.0f, pg.in + Dt() * 5.0f);
+    const float e = EaseOutCubic(pg.in);
+    // the tabs (or the arrow back)
+    float y = min.y;
+    if (g_stack.size() > 1) {
+        float hover = 0.0f;
+        const ImVec2 a(min.x, y), b(min.x + S(40.0f), y + S(40.0f));
+        if (Hit("##sp_back", a, b, &hover) || ImGui::IsMouseClicked(ImGuiMouseButton(3))) g_stack.pop_back();
+        d->AddCircleFilled(ImVec2(min.x + S(20.0f), y + S(20.0f)), S(18.0f), C(p.text, 0.08f + 0.08f * hover), 32);
+        icons::Draw(d, icons::kBack, ImVec2(min.x + S(20.0f), y + S(20.0f)), S(18.0f), C(p.text), S(2.0f));
+        if (g_stack.empty()) g_stack.push_back(Page{});
+    }
+    {
+        const char* tabs[2] = {T("nav.home"), T("sp.library")};
+        int tab = g_stack.front().kind == kTabLibrary ? 1 : 0;
+        const float tx = min.x + (g_stack.size() > 1 ? S(54.0f) : 0.0f);
+        if (Segmented("##sp_tabs", ImVec2(tx, y + S(1.0f)), tabs, 2, &tab) || (g_stack.size() > 1 && false)) {
+            g_stack.clear();
+            Page root;
+            root.kind = tab == 1 ? kTabLibrary : kTabHome;
+            g_stack.push_back(root);
+        }
+    }
+    y += S(58.0f);
+    Page& cur = g_stack.back();
+    const ImVec2 vmin(min.x, y), vmax(max.x, max.y);
+    g_viewMin = vmin;
+    g_viewMax = vmax;
+    d->PushClipRect(ImVec2(vmin.x - S(12.0f), vmin.y), ImVec2(vmax.x + S(12.0f), vmax.y), true);
+    const int start = d->VtxBuffer.Size;
+    const ImVec2 pos(vmin.x, vmin.y + S(8.0f) - cur.scroll);
+    const float width = vmax.x - vmin.x;
+    float h = 0.0f;
+    switch (cur.kind) {
+        case kTabHome: h = HomeTab(d, pos, width, 1.0f); break;
+        case kTabLibrary: h = LibraryTab(d, pos, width, 1.0f); break;
+        case kPageArtist: h = ArtistPage(d, cur, pos, width, 1.0f); break;
+        case kPageAll: h = AllPage(d, cur, pos, width, 1.0f); break;
+        default: h = SongsPage(d, cur, pos, width, 1.0f); break;
+    }
+    AnimateSince(d, start, e, ImVec2(0.0f, (1.0f - e) * S(18.0f)));
+    d->PopClipRect();
+    // (soft edges: the page fades out at the top and the bottom)
+    cur.contentH = h + S(40.0f);
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    if (!g_searchOpen && !g_menu.open && mouse.x > vmin.x && mouse.x < vmax.x && mouse.y > vmin.y && mouse.y < vmax.y) {
+        cur.target -= ImGui::GetIO().MouseWheel * S(110.0f);
+    }
+    cur.target = std::clamp(cur.target, 0.0f, std::max(0.0f, cur.contentH - (vmax.y - vmin.y)));
+    cur.scroll += (cur.target - cur.scroll) * std::min(1.0f, Dt() * 14.0f);
+    // a thin bar showing where you are
+    if (cur.contentH > vmax.y - vmin.y + S(10.0f)) {
+        const float viewH = vmax.y - vmin.y;
+        const float barH = std::max(S(40.0f), viewH * viewH / cur.contentH);
+        const float barY = vmin.y + (viewH - barH) * (cur.scroll / std::max(1.0f, cur.contentH - viewH));
+        d->AddRectFilled(ImVec2(vmax.x + S(6.0f), barY), ImVec2(vmax.x + S(9.0f), barY + barH), C(p.text, 0.18f), S(2.0f));
+    }
+}
+
+}  // namespace sp
+
+// THE WHOLE SECTION (when connected with the new permissions).
+void DrawSpotifySection(ImDrawList* d, ImVec2 min, ImVec2 max, ImVec2 display, const spotify::Status& st) {
+    using namespace sp;
+    if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) OpenSearch();
+    LumaPlayerTick();
+    const float drawerW = std::clamp((max.x - min.x) * 0.26f, S(300.0f), S(380.0f));
+    g_drawerAnim += ((g_drawer >= 0 ? 1.0f : 0.0f) - g_drawerAnim) * std::min(1.0f, Dt() * 12.0f);
+    const float de = EaseOutCubic(g_drawerAnim);
+    TopBar(d, min, max.x - min.x, st);
+    const float top = min.y + S(100.0f);
+    const float contentRight = max.x - (drawerW + S(24.0f)) * de;
+    Content(d, ImVec2(min.x, top), ImVec2(contentRight - S(14.0f), max.y));
+    Drawer(d, ImVec2(max.x - drawerW, top), ImVec2(max.x, max.y), 1.0f);
+    if (const char* err = SpotifyErrorText(spotify::PlayerError())) {
+        const ImVec2 es = TextSize(g_fonts.tiny, err);
+        const ImVec2 a(min.x + (max.x - min.x - es.x) * 0.5f - S(14.0f), max.y - S(30.0f)), b(a.x + es.x + S(28.0f), max.y - S(4.0f));
+        d->AddRectFilled(a, b, C(Mix(P().card, ImVec4(0, 0, 0, 1), 0.3f), 0.9f), S(13.0f));
+        Text(d, g_fonts.tiny, ImVec2(a.x + S(14.0f), (a.y + b.y - es.y) * 0.5f), C(P().warning), err);
+    }
+    // over everything: the device list, the options, the search
+    DrawDevicesMenu(d);
+    SearchLayer(d, display);
+    DrawMenu(d, display);
+}
+
 void DrawSpotifyPage(ImDrawList* d, ImVec2 min, ImVec2 max) {
     const Palette& p = P();
     flowcfg::Refresh();
     SyncSpotifyClientId();
     const spotify::Status st = spotify::GetStatus();
+    if (st.state == spotify::State::Connected && !st.outdated) {
+        DrawSpotifySection(d, min, max, ImGui::GetIO().DisplaySize, st);
+        return;
+    }
     const float W = max.x - min.x;
     // Header: the logo, the name, what it is
     DrawSpotifyLogo(d, ImVec2(min.x + S(22.0f), min.y + S(20.0f)), S(40.0f), g_fade);
@@ -4132,7 +6015,27 @@ void DrawSpotifyPage(ImDrawList* d, ImVec2 min, ImVec2 max) {
     float y = min.y + S(84.0f);
     const float now = static_cast<float>(ImGui::GetTime());
 
-    // --- Connected: your account ------------------------------------------------------------
+    // --- Connected (with the new permissions): your account, small, and THE PLAYER ----------
+    if (st.state == spotify::State::Connected && !st.outdated) {
+        float bw = 0.0f;
+        const char* off = T("spotify.disconnect");
+        const float offW = TextSize(g_fonts.semibold, off).x + S(28.0f);
+        if (SmallPill(d, "##sp_disconnect", ImVec2(max.x - offW, min.y + S(4.0f)), nullptr, off, false, &bw)) spotify::Disconnect();
+        std::string who = st.user;
+        if (st.premium == 1) who += "  ·  Premium";
+        if (st.premium == 0) who += "  ·  Free";
+        const ImVec2 ws = TextSize(g_fonts.semibold, who.c_str());
+        Text(d, g_fonts.semibold, ImVec2(max.x - offW - S(14.0f) - ws.x, min.y + S(4.0f) + (S(34.0f) - ws.y) * 0.5f), C(p.text, 0.85f), who.c_str());
+        if (st.premium == 0) {
+            TextWrap(d, g_fonts.tiny, ImVec2(min.x + S(4.0f), y - S(10.0f)), C(p.warning), T("spotify.free_note"), std::min(W, S(720.0f)));
+            y += S(26.0f);
+        }
+        DrawSpotifyPlayer(d, ImVec2(min.x, y), max, st);
+        DrawDevicesMenu(d);
+        return;
+    }
+
+    // --- Connected with the old permissions: your account, and "connect again" ---------------
     if (st.state == spotify::State::Connected) {
         const ImVec2 cmin(min.x, y), cmax(min.x + std::min(W, S(720.0f)), y + S(150.0f));
         Card(d, cmin, cmax);
@@ -4472,6 +6375,7 @@ void DrawStageTop(ImDrawList* d, ImVec2 display, const LocalData& data, const st
 }
 
 void DrawComingSoon(ImDrawList* d, ImVec2 min, ImVec2 max, const char* icon, const char* titleKey, const char* textKey);  // (below)
+void DrawSpotifyPage(ImDrawList* d, ImVec2 min, ImVec2 max);
 void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data);  // (below)
 
 // The other sections: a glass sheet that rises over the stage.
@@ -4481,6 +6385,17 @@ void DrawSheet(ImDrawList* d, ImVec2 display, const account::Info& acc, const Lo
     g_sheet += ((g_page != Page::Home ? 1.0f : 0.0f) - g_sheet) * std::min(1.0f, Dt() * 9.0f);
     if (g_sheet < 0.01f) return;
     const float s = EaseOutCubic(g_sheet);
+    // SPOTIFY is a whole section, not a window: right on the album's living
+    // background (the stage fades away under it).
+    if (g_sheetPage == Page::Spotify) {
+        const float rise = (1.0f - s) * S(30.0f);
+        const ImVec2 cmin(S(40.0f), S(58.0f) + rise), cmax(display.x - S(40.0f), display.y - S(kDockBottom) - S(kDockH) - S(16.0f) + rise);
+        const float saved = g_fade;
+        g_fade = s;
+        DrawSpotifyPage(d, cmin, cmax);
+        g_fade = saved;
+        return;
+    }
     // the stage dims a little behind it
     d->AddRectFilled(ImVec2(0, 0), display, Col(ImVec4(0, 0, 0, 1), 0.38f * s));
     const float top = S(56.0f) + (1.0f - s) * display.y * 0.35f;
@@ -4603,7 +6518,8 @@ void DrawFlash(ImDrawList* d, ImVec2 display) {
 
 // The whole stage (Home, with the sheet over it for the other sections).
 void DrawStage(ImDrawList* d, ImVec2 display, const media::Track& t, const LocalData& data, const std::string& name, const account::Info& acc) {
-    const float stageAlpha = 1.0f - 0.35f * EaseOutCubic(g_sheet);
+    // (under a section the stage dims; under Spotify's whole section it fades away)
+    const float stageAlpha = (1.0f - 0.35f * EaseOutCubic(g_sheet)) * (g_sheetPage == Page::Spotify ? 1.0f - EaseOutCubic(g_sheet) : 1.0f);
     const ImVec2 smin(S(40.0f), S(70.0f));
     const ImVec2 smax(display.x - S(40.0f), display.y - S(kDockBottom) - S(kDockH) - S(70.0f));
     // (it comes in when the launcher opens)
@@ -4614,12 +6530,14 @@ void DrawStage(ImDrawList* d, ImVec2 display, const media::Track& t, const Local
     g_fade = in;
     // The song, or (with the lyrics view open) the lyrics: one fades into the other.
     const float lv = EaseOutCubic(g_lyricsViewAnim);
+    g_blockInput = g_sheet > 0.02f;  // (a section is up: the stage behind it is only a picture)
     if (lv < 0.98f) {
         const float drop = lv * S(30.0f);
         DrawStageSong(d, ImVec2(smin.x, smin.y + (1.0f - in) * S(20.0f) + drop), ImVec2(smax.x, smax.y + (1.0f - in) * S(20.0f) + drop), t,
                       stageAlpha * (1.0f - lv));
     }
     if (lv > 0.02f) DrawLyricsView(d, display, t, stageAlpha * lv);
+    g_blockInput = false;
     g_fade = savedFade;
     DrawSheet(d, display, acc, data);
     DrawDock(d, display);
@@ -5368,6 +7286,7 @@ void AppInit(HWND hwnd, float scale) {
     if (std::wcsstr(GetCommandLineW(), L"--page=lyrics") != nullptr) g_page = Page::Lyrics;
     if (std::wcsstr(GetCommandLineW(), L"--page=spotify") != nullptr) g_page = Page::Spotify;
     if (std::wcsstr(GetCommandLineW(), L"--view=lyrics") != nullptr) g_openViewWhenReady = true;
+    if (std::wcsstr(GetCommandLineW(), L"--luma-player") != nullptr) luma::launcher::spotifyengine::Start();  // (for testing)
     g_statusThread = std::thread(StatusThread);
     account::Init();
     updater::Start(g_autoUpdate, GetCommandLineW());
@@ -5527,6 +7446,14 @@ void AppFrame() {
     UpdateMusic(track, visible);
     flowcfg::Refresh();  // (the lyrics' offset, the style chosen in the game)
     SyncSpotifyClientId();  // (the Spotify connection, shared with the game)
+    {
+        // Spotify's player is asked about only while it's shown (its page, or
+        // Home while Spotify plays: for Home's shuffle, repeat and heart).
+        const bool connected = SpotifyConnected();
+        const bool onHome = g_page == Page::Home && track.present && IsSpotifyApp(track.app);
+        spotify::SetPlayerWanted(visible && connected && (g_page == Page::Spotify || onHome));
+        spotify::SetActive(visible && connected);
+    }
     UpdateLyrics(track, visible);
 
     // Al terminar JUGAR con éxito: minimizar (un instante después, para que
@@ -5574,6 +7501,7 @@ void AppFrame() {
 
 void AppShutdown() {
     g_quit.store(true);
+    luma::launcher::spotifyengine::Stop();  // (closes Luma's hidden Edge player)
     spotify::Shutdown();
     ReleaseBlurAtlas();
     lyrics::Shutdown();

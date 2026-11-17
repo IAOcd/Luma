@@ -38,6 +38,7 @@ add_executable(LumaLauncher WIN32
     src/net.cpp          # pedidos HTTPS (WinHTTP)
     src/signature.cpp    # comprobar la firma de las actualizaciones
     src/updater.cpp      # actualizaciones automáticas desde GitHub
+    src/spotify_engine.cpp  # Luma's own Spotify player (a hidden Edge with Spotify's Web Playback SDK)
     # The music, with the SAME code as the game (what's playing, its art,
     # and how the sound moves): the launcher shows what Luma shows.
     ${PROJECT_SOURCE_DIR}/client/core/media.cpp

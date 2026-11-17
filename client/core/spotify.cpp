@@ -10,7 +10,11 @@
 #include <wincrypt.h>
 #include <winhttp.h>
 
+#include <algorithm>
 #include <atomic>
+#include <memory>
+#include <map>
+#include <deque>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -38,9 +42,10 @@ constexpr unsigned short kPort = 43821;
 constexpr const char* kScope =
     "user-read-playback-state user-read-currently-playing user-modify-playback-state "
     "user-library-read user-library-modify playlist-read-private playlist-read-collaborative "
-    "user-read-recently-played user-read-private";  // (private: only to know if the account is Premium)
+    "user-read-recently-played user-read-private user-top-read user-follow-read "
+    "playlist-modify-public playlist-modify-private streaming user-read-email";  // (streaming: Luma's own player)  // (private: only to know if the account is Premium)
 // The permission that the newest Luma needs (if the saved one lacks it: connect again).
-constexpr const char* kNewestScope = "user-read-private";
+constexpr const char* kNewestScope = "streaming";
 
 std::mutex g_mutex;          // protects everything below that's not atomic
 std::string g_clientId;
@@ -452,11 +457,500 @@ void FetchQueue() {
     PublishQueue(std::move(items));
 }
 
+void EnsureThread();  // (below)
+
+// --- THE PLAYER (Web API) ---------------------------------------------------------------------
+// What plays in your Spotify (on any device), asked about once a second while
+// someone wants it (the launcher's Spotify page or Home), and the commands
+// (play, pause, next...). The commands go to a small list that this thread
+// sends; the screen changes at once (it assumes they'll work) and the next
+// answer from Spotify confirms it.
+
+std::atomic<bool> g_playerWanted{false};
+Player g_player;                      // (g_mutex)
+std::vector<Device> g_devices;        // (g_mutex)
+std::uint32_t g_devicesVersion = 0;   // (g_mutex)
+std::string g_playerError;            // (g_mutex) "premium", "no_device", "" ...
+std::chrono::steady_clock::time_point g_playerErrorAt;
+std::atomic<bool> g_devicesWanted{false};
+std::chrono::steady_clock::time_point g_nextPoll;
+
+struct Command {
+    enum Kind { Play, Pause, Next, Previous, Seek, Shuffle, Repeat, Volume, Transfer, Like, Raw, Mix } kind;
+    long long value = 0;
+    std::string text;  // a device id, a track id, a path, artists
+    const char* method = "PUT";
+    std::string body;
+};
+std::vector<Command> g_commands;  // (g_mutex)
+
+// A call to Spotify's Web API with your pass. Gives the status (-1 = not
+// connected or no internet) and the answer in "out".
+int Api(const wchar_t* method, const std::string& path, const std::string& body, std::string& out) {
+    out.clear();
+    if (!EnsureToken()) return -1;
+    std::string headers = "Authorization: Bearer " + g_accessToken + "\r\n";
+    if (!body.empty()) headers += "Content-Type: application/json\r\n";
+    int status = Https(L"api.spotify.com", method, path, headers, body, out);
+    if (status == 401) {  // the pass ran out early: a new one, and once more
+        g_accessToken.clear();
+        if (!EnsureToken()) return -1;
+        headers = "Authorization: Bearer " + g_accessToken + "\r\n";
+        if (!body.empty()) headers += "Content-Type: application/json\r\n";
+        status = Https(L"api.spotify.com", method, path, headers, body, out);
+    }
+    return status == 0 ? -1 : status;
+}
+
+void SetPlayerError(const std::string& error) {
+    std::lock_guard lock(g_mutex);
+    g_playerError = error;
+    g_playerErrorAt = std::chrono::steady_clock::now();
+}
+
+// Spotify's reason for a refusal: "premium" (only Premium can control),
+// "no_device" (nothing open to play on), or a short text.
+std::string ReasonOf(int status, const std::string& body) {
+    const auto j = nlohmann::json::parse(body, nullptr, false);
+    std::string reason, message;
+    if (j.is_object() && j.contains("error") && j["error"].is_object()) {
+        reason = j["error"].value("reason", std::string());
+        message = j["error"].value("message", std::string());
+    }
+    if (reason == "PREMIUM_REQUIRED" || (status == 403 && message.find("remium") != std::string::npos)) return "premium";
+    if (reason == "NO_ACTIVE_DEVICE" || status == 404) return "no_device";
+    if (status == 429) return "busy";
+    return message.empty() ? "error " + std::to_string(status) : message;
+}
+
+std::string ArtistsOf(const nlohmann::json& item) {
+    std::string out;
+    const auto artists = item.find("artists");
+    if (artists == item.end() || !artists->is_array()) return out;
+    for (const auto& a : *artists) {
+        if (!a.is_object()) continue;
+        if (!out.empty()) out += ", ";
+        out += a.value("name", std::string());
+    }
+    return out;
+}
+
+// The album art of a song, downloaded once to %APPDATA%\Luma\covers\spotify\.
+std::wstring DownloadArt(const nlohmann::json& images) {
+    if (!images.is_array() || images.empty()) return {};
+    // the one closest to 300 px (Spotify gives 640, 300 and 64)
+    const nlohmann::json* best = nullptr;
+    for (const auto& im : images) {
+        if (!im.is_object() || !im.contains("url") || !im["url"].is_string()) continue;
+        if (best == nullptr || std::abs(im.value("width", 0) - 300) < std::abs(best->value("width", 0) - 300)) best = &im;
+    }
+    if (best == nullptr) return {};
+    const std::string url = (*best)["url"].get<std::string>();
+    const std::string prefix = "https://i.scdn.co";
+    if (url.rfind(prefix, 0) != 0) return {};  // (only Spotify's own image server)
+    const std::string path = url.substr(prefix.size());
+    std::string name = path.substr(path.find_last_of('/') + 1);
+    for (char& c : name) {
+        if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
+    }
+    const std::filesystem::path dir = paths::DataDir() / L"covers" / L"spotify";
+    const std::filesystem::path file = dir / (Widen(name) + L".jpg");
+    std::error_code ec;
+    if (std::filesystem::exists(file, ec)) return file.wstring();
+    std::string data;
+    if (Https(L"i.scdn.co", L"GET", path, {}, {}, data) != 200 || data.size() < 100) return {};
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream(file, std::ios::binary | std::ios::trunc).write(data.data(), static_cast<std::streamsize>(data.size()));
+    return file.wstring();
+}
+
+void FetchLiked(const std::string& trackId) {
+    if (trackId.empty()) return;
+    std::string body;
+    const int status = Api(L"GET", "/v1/me/tracks/contains?ids=" + trackId, {}, body);
+    if (status != 200) return;
+    const auto j = nlohmann::json::parse(body, nullptr, false);
+    if (!j.is_array() || j.empty() || !j[0].is_boolean()) return;
+    std::lock_guard lock(g_mutex);
+    if (g_player.trackId == trackId) {
+        g_player.liked = j[0].get<bool>();
+        g_player.likedKnown = true;
+        ++g_player.version;
+    }
+}
+
+void FetchPlayer() {
+    std::string body;
+    const int status = Api(L"GET", "/v1/me/player", {}, body);
+    if (status < 0) return;
+    if (status == 204 || (status == 200 && body.empty())) {  // nothing playing anywhere
+        std::lock_guard lock(g_mutex);
+        const bool was = g_player.hasDevice;
+        g_player.valid = true;
+        g_player.hasDevice = false;
+        g_player.playing = false;
+        if (was) ++g_player.version;
+        return;
+    }
+    if (status != 200) {
+        if (status == 429) g_nextPoll = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        return;
+    }
+    const auto j = nlohmann::json::parse(body, nullptr, false);
+    if (!j.is_object()) return;
+    Player p;
+    {
+        std::lock_guard lock(g_mutex);
+        p = g_player;
+    }
+    const std::string oldTrack = p.trackId;
+    p.valid = true;
+    p.hasDevice = j.contains("device") && j["device"].is_object();
+    p.playing = j.value("is_playing", false);
+    p.shuffle = j.value("shuffle_state", false);
+    const std::string repeat = j.value("repeat_state", std::string("off"));
+    p.repeat = repeat == "track" ? 1 : (repeat == "context" ? 2 : 0);
+    p.progressMs = j.value("progress_ms", 0);
+    p.at = std::chrono::steady_clock::now();
+    if (p.hasDevice) {
+        const auto& dv = j["device"];
+        p.device.id = dv.value("id", std::string());
+        p.device.name = dv.value("name", std::string());
+        p.device.type = dv.value("type", std::string());
+        p.device.active = true;
+        p.device.volume = dv.contains("volume_percent") && dv["volume_percent"].is_number() ? dv["volume_percent"].get<int>() : -1;
+        p.device.canVolume = dv.value("supports_volume", true);
+    }
+    const auto item = j.find("item");
+    if (item != j.end() && item->is_object()) {
+        p.trackId = item->value("id", std::string());
+        p.title = item->value("name", std::string());
+        p.durationMs = item->value("duration_ms", 0);
+        p.artist = ArtistsOf(*item);
+        if (item->contains("album") && (*item)["album"].is_object()) {
+            const auto& album = (*item)["album"];
+            p.album = album.value("name", std::string());
+            if (p.trackId != oldTrack || p.artPath.empty()) {
+                try {
+                    p.artPath = album.contains("images") ? DownloadArt(album["images"]) : std::wstring();
+                } catch (...) {
+                    p.artPath.clear();
+                }
+            }
+        } else if (item->contains("show") && (*item)["show"].is_object()) {  // (a podcast episode)
+            p.album = (*item)["show"].value("name", std::string());
+            p.artist = (*item)["show"].value("publisher", std::string());
+            if (p.trackId != oldTrack) p.artPath = DownloadArt((*item)["images"]);
+        }
+    } else {
+        p.trackId.clear();
+        p.title.clear();
+    }
+    if (p.trackId != oldTrack) {
+        p.likedKnown = false;
+        p.liked = false;
+    }
+    ++p.version;
+    {
+        std::lock_guard lock(g_mutex);
+        g_player = p;
+        if (g_playerError == "no_device" && p.hasDevice) g_playerError.clear();
+    }
+    if (p.trackId != oldTrack && !p.trackId.empty()) {
+        FetchLiked(p.trackId);
+        FetchQueue();
+    }
+}
+
+void FetchDevices() {
+    std::string body;
+    const int status = Api(L"GET", "/v1/me/player/devices", {}, body);
+    if (status != 200) return;
+    const auto j = nlohmann::json::parse(body, nullptr, false);
+    if (!j.is_object() || !j.contains("devices") || !j["devices"].is_array()) return;
+    std::vector<Device> list;
+    for (const auto& dv : j["devices"]) {
+        if (!dv.is_object()) continue;
+        Device d;
+        d.id = dv.contains("id") && dv["id"].is_string() ? dv["id"].get<std::string>() : std::string();
+        d.name = dv.value("name", std::string());
+        d.type = dv.value("type", std::string());
+        d.active = dv.value("is_active", false);
+        d.volume = dv.contains("volume_percent") && dv["volume_percent"].is_number() ? dv["volume_percent"].get<int>() : -1;
+        d.canVolume = dv.value("supports_volume", true);
+        if (!d.id.empty()) list.push_back(std::move(d));
+    }
+    std::lock_guard lock(g_mutex);
+    g_devices = std::move(list);
+    ++g_devicesVersion;
+}
+
+void RunMix(const std::string& artistsCsv, const std::string& seedUri);  // (below)
+
+void RunCommand(const Command& c) {
+    std::string body;
+    int status = -1;
+    switch (c.kind) {
+        case Command::Play: status = Api(L"PUT", "/v1/me/player/play", {}, body); break;
+        case Command::Pause: status = Api(L"PUT", "/v1/me/player/pause", {}, body); break;
+        case Command::Next: status = Api(L"POST", "/v1/me/player/next", {}, body); break;
+        case Command::Previous: status = Api(L"POST", "/v1/me/player/previous", {}, body); break;
+        case Command::Seek: status = Api(L"PUT", "/v1/me/player/seek?position_ms=" + std::to_string(c.value), {}, body); break;
+        case Command::Shuffle: status = Api(L"PUT", std::string("/v1/me/player/shuffle?state=") + (c.value ? "true" : "false"), {}, body); break;
+        case Command::Repeat: {
+            const char* mode = c.value == 1 ? "track" : (c.value == 2 ? "context" : "off");
+            status = Api(L"PUT", std::string("/v1/me/player/repeat?state=") + mode, {}, body);
+            break;
+        }
+        case Command::Volume: status = Api(L"PUT", "/v1/me/player/volume?volume_percent=" + std::to_string(c.value), {}, body); break;
+        case Command::Transfer: {
+            const nlohmann::json j = {{"device_ids", {c.text}}, {"play", true}};
+            status = Api(L"PUT", "/v1/me/player", j.dump(), body);
+            break;
+        }
+        case Command::Like:
+            status = Api(c.value ? L"PUT" : L"DELETE", "/v1/me/tracks?ids=" + c.text, {}, body);
+            break;
+        case Command::Raw: {
+            const std::wstring method = Widen(c.method);
+            status = Api(method.c_str(), c.text, c.body, body);
+            break;
+        }
+        case Command::Mix:
+            RunMix(c.text, c.body);
+            status = 204;
+            break;
+    }
+    if (status >= 200 && status < 300) {
+        SetPlayerError({});
+    } else if (status > 0) {
+        const std::string reason = ReasonOf(status, body);
+        log::Warn("Spotify: a command was refused ({}: {}).", status, reason);
+        SetPlayerError(reason);
+    }
+    if (c.kind == Command::Transfer) g_devicesWanted.store(true);
+    // what changed shows in Spotify's answer a moment later
+    g_nextPoll = std::chrono::steady_clock::now() + std::chrono::milliseconds(c.kind == Command::Next || c.kind == Command::Previous ? 450 : 300);
+}
+
+// --- BROWSING (part S3): your library, search, pages ----------------------------------------
+// The screens ask for Web API answers by their address ("/v1/me/playlists...").
+// The first time, the address goes to a list; this thread asks Spotify (a
+// couple per turn, never in the screen's frame) and keeps the parsed answer
+// for a while. Pictures (covers, artists) are downloaded once to disk.
+
+struct BrowseEntry {
+    int state = 0;  // 0 asked, 1 here, 2 failed
+    std::shared_ptr<const nlohmann::json> json;
+    std::chrono::steady_clock::time_point at;
+    std::uint32_t version = 0;
+};
+std::map<std::string, BrowseEntry> g_browse;   // (g_mutex)
+std::deque<std::string> g_browseQueue;         // (g_mutex)
+std::map<std::string, std::wstring> g_images;  // url -> file ("" = coming)  (g_mutex)
+std::deque<std::string> g_imageQueue;          // (g_mutex)
+std::uint32_t g_browseCounter = 0;
+std::chrono::steady_clock::time_point g_browseWaitUntil;
+
+std::wstring DownloadImage(const std::string& url) {
+    const std::string prefix = "https://i.scdn.co";
+    std::string host = "i.scdn.co";
+    std::string path;
+    if (url.rfind(prefix, 0) == 0) {
+        path = url.substr(prefix.size());
+    } else {
+        // (some pictures live on other Spotify servers: mosaic.scdn.co, image-cdn-*.spotifycdn.com)
+        const std::size_t scheme = url.find("://");
+        if (scheme == std::string::npos) return {};
+        const std::size_t slash = url.find('/', scheme + 3);
+        if (slash == std::string::npos) return {};
+        host = url.substr(scheme + 3, slash - scheme - 3);
+        path = url.substr(slash);
+        const bool spotifyHost = host.size() > 9 && (host.compare(host.size() - 9, 9, ".scdn.co") == 0 ||
+                                                      host.find("spotifycdn.com") != std::string::npos);
+        if (!spotifyHost) return {};
+    }
+    std::string name = host + path;
+    for (char& c : name) {
+        if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
+    }
+    if (name.size() > 120) name = name.substr(name.size() - 120);
+    const std::filesystem::path dir = paths::DataDir() / L"covers" / L"spotify";
+    const std::filesystem::path file = dir / (Widen(name) + L".jpg");
+    std::error_code ec;
+    if (std::filesystem::exists(file, ec)) return file.wstring();
+    std::string data;
+    if (Https(Widen(host).c_str(), L"GET", path, {}, {}, data) != 200 || data.size() < 100) return {};
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream(file, std::ios::binary | std::ios::trunc).write(data.data(), static_cast<std::streamsize>(data.size()));
+    return file.wstring();
+}
+
+// The mix ("radio"): the most played songs of these artists, mixed, after the seed.
+void RunMix(const std::string& artistsCsv, const std::string& seedUri) {
+    std::vector<std::string> uris;
+    std::size_t pos = 0;
+    int artists = 0;
+    while (pos < artistsCsv.size() && artists < 6) {
+        std::size_t end = artistsCsv.find(',', pos);
+        if (end == std::string::npos) end = artistsCsv.size();
+        const std::string id = artistsCsv.substr(pos, end - pos);
+        pos = end + 1;
+        if (id.empty()) continue;
+        ++artists;
+        std::string body;
+        if (Api(L"GET", "/v1/artists/" + id + "/top-tracks?market=from_token", {}, body) != 200) continue;
+        const auto j = nlohmann::json::parse(body, nullptr, false);
+        if (!j.is_object() || !j.contains("tracks") || !j["tracks"].is_array()) continue;
+        for (const auto& t : j["tracks"]) {
+            if (t.is_object() && t.contains("uri") && t["uri"].is_string()) uris.push_back(t["uri"].get<std::string>());
+        }
+    }
+    // mixed (and without repeats), the seed first
+    std::sort(uris.begin(), uris.end());
+    uris.erase(std::unique(uris.begin(), uris.end()), uris.end());
+    std::uint32_t seed = static_cast<std::uint32_t>(GetTickCount64());
+    for (std::size_t i = uris.size(); i > 1; --i) {
+        seed = seed * 1664525u + 1013904223u;
+        std::swap(uris[i - 1], uris[seed % i]);
+    }
+    if (!seedUri.empty()) {
+        uris.erase(std::remove(uris.begin(), uris.end(), seedUri), uris.end());
+        uris.insert(uris.begin(), seedUri);
+    }
+    if (uris.size() > 60) uris.resize(60);
+    if (uris.empty()) {
+        SetPlayerError("mix_empty");
+        return;
+    }
+    const nlohmann::json play = {{"uris", uris}};
+    std::string body;
+    const int status = Api(L"PUT", "/v1/me/player/play", play.dump(), body);
+    if (status >= 300) SetPlayerError(ReasonOf(status, body));
+}
+
+// LUMA'S OWN PLAYER (the launcher's hidden Edge page) needs the access pass
+// too: this thread keeps a copy for it while it's asked for.
+std::atomic<bool> g_tokenWanted{false};
+std::string g_sharedToken;  // (g_mutex)
+
+void ShareTokenTick() {
+    if (!g_tokenWanted.load()) return;
+    if (!EnsureToken()) return;
+    std::lock_guard lock(g_mutex);
+    g_sharedToken = g_accessToken;
+}
+
+void BrowseTick() {
+    if (GetStatus().state != State::Connected) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now < g_browseWaitUntil) return;
+    for (int n = 0; n < 2; ++n) {  // two answers per turn
+        std::string path;
+        {
+            std::lock_guard lock(g_mutex);
+            if (g_browseQueue.empty()) break;
+            path = g_browseQueue.front();
+            g_browseQueue.pop_front();
+        }
+        std::string body;
+        int status = -1;
+        try {
+            status = Api(L"GET", path, {}, body);
+        } catch (...) {
+        }
+        if (status == 429) {  // too many: wait, and ask again later
+            g_browseWaitUntil = now + std::chrono::seconds(3);
+            std::lock_guard lock(g_mutex);
+            g_browseQueue.push_back(path);
+            return;
+        }
+        auto parsed = std::make_shared<nlohmann::json>(nlohmann::json::parse(body, nullptr, false));
+        std::lock_guard lock(g_mutex);
+        BrowseEntry& e = g_browse[path];
+        e.at = std::chrono::steady_clock::now();
+        e.version = ++g_browseCounter;
+        if (status == 200 && !parsed->is_discarded()) {
+            e.state = 1;
+            e.json = std::move(parsed);
+        } else {
+            e.state = 2;
+            if (status > 0) log::Info("Spotify: {} answered {}.", path.substr(0, 60), status);
+        }
+    }
+    for (int n = 0; n < 3; ++n) {  // three pictures per turn
+        std::string url;
+        {
+            std::lock_guard lock(g_mutex);
+            if (g_imageQueue.empty()) break;
+            url = g_imageQueue.front();
+            g_imageQueue.pop_front();
+        }
+        std::wstring file;
+        try {
+            file = DownloadImage(url);
+        } catch (...) {
+        }
+        std::lock_guard lock(g_mutex);
+        g_images[url] = file.empty() ? L"-" : file;  // ("-" = it failed: not asked again)
+    }
+}
+
+// One turn of the player's work (from the thread).
+void PlayerTick() {
+    std::vector<Command> commands;
+    {
+        std::lock_guard lock(g_mutex);
+        commands.swap(g_commands);
+        if (g_status.state != State::Connected) commands.clear();
+    }
+    for (const Command& c : commands) {
+        try {
+            RunCommand(c);
+        } catch (...) {
+        }
+    }
+    BrowseTick();
+    ShareTokenTick();
+    if (!g_playerWanted.load() || GetStatus().state != State::Connected) return;
+    if (g_devicesWanted.exchange(false)) {
+        try {
+            FetchDevices();
+        } catch (...) {
+        }
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now < g_nextPoll) return;
+    g_nextPoll = now + std::chrono::milliseconds(1000);
+    try {
+        FetchPlayer();
+    } catch (...) {
+    }
+}
+
+void Push(Command c) {
+    {
+        std::lock_guard lock(g_mutex);
+        // a newer seek / volume replaces one that's still waiting
+        if (c.kind == Command::Seek || c.kind == Command::Volume) {
+            for (Command& old : g_commands) {
+                if (old.kind == c.kind) {
+                    old = c;
+                    return;
+                }
+            }
+        }
+        g_commands.push_back(std::move(c));
+    }
+    EnsureThread();
+}
+
 void ThreadMain() {
     std::uint32_t lastTrack = 0;
     auto nextRefresh = std::chrono::steady_clock::now();
     while (!g_stop.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));  // (short: the player's buttons answer quickly)
+        PlayerTick();
         if (g_disconnectRequested.exchange(false)) {
             g_profileAsked = false;
             DeletePass();
@@ -555,6 +1049,194 @@ bool Queue(std::uint32_t knownVersion, std::vector<QueueItem>& out, std::uint32_
     out = g_queue;
     version = g_queueVersion;
     return true;
+}
+
+// --- The player (see spotify.h) -------------------------------------------------------------
+
+void SetPlayerWanted(bool wanted) {
+    if (wanted && !g_playerWanted.load()) g_nextPoll = {};  // (ask right away)
+    g_playerWanted.store(wanted);
+    if (wanted) EnsureThread();
+}
+
+Player GetPlayer() {
+    std::lock_guard lock(g_mutex);
+    return g_player;
+}
+
+double PositionSeconds(const Player& p) {
+    double ms = p.progressMs;
+    if (p.playing) ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - p.at).count();
+    if (p.durationMs > 0) ms = std::min(ms, static_cast<double>(p.durationMs));
+    return ms / 1000.0;
+}
+
+std::string PlayerError() {
+    std::lock_guard lock(g_mutex);
+    // (an error is shown for a while, then forgotten)
+    if (!g_playerError.empty() && std::chrono::steady_clock::now() - g_playerErrorAt > std::chrono::seconds(8) && g_playerError != "no_device") {
+        g_playerError.clear();
+    }
+    return g_playerError;
+}
+
+void RequestDevices() {
+    g_devicesWanted.store(true);
+    EnsureThread();
+}
+
+bool Devices(std::uint32_t knownVersion, std::vector<Device>& out, std::uint32_t& version) {
+    std::lock_guard lock(g_mutex);
+    if (g_devicesVersion == knownVersion) return false;
+    out = g_devices;
+    version = g_devicesVersion;
+    return true;
+}
+
+// The commands: the screen changes at once (Spotify confirms a moment later).
+void PlayerPlay(bool play) {
+    {
+        std::lock_guard lock(g_mutex);
+        g_player.progressMs = static_cast<int>(PositionSeconds(g_player) * 1000.0);
+        g_player.at = std::chrono::steady_clock::now();
+        g_player.playing = play;
+        ++g_player.version;
+    }
+    Push({play ? Command::Play : Command::Pause, 0, {}});
+}
+
+void PlayerNext() {
+    Push({Command::Next, 0, {}});
+}
+
+void PlayerPrevious() {
+    Push({Command::Previous, 0, {}});
+}
+
+void PlayerSeek(double seconds) {
+    const long long ms = static_cast<long long>(std::max(0.0, seconds) * 1000.0);
+    {
+        std::lock_guard lock(g_mutex);
+        g_player.progressMs = static_cast<int>(ms);
+        g_player.at = std::chrono::steady_clock::now();
+        ++g_player.version;
+    }
+    Push({Command::Seek, ms, {}});
+}
+
+void PlayerShuffle(bool on) {
+    {
+        std::lock_guard lock(g_mutex);
+        g_player.shuffle = on;
+        ++g_player.version;
+    }
+    Push({Command::Shuffle, on ? 1 : 0, {}});
+}
+
+void PlayerRepeat(int mode) {
+    mode = std::clamp(mode, 0, 2);
+    {
+        std::lock_guard lock(g_mutex);
+        g_player.repeat = mode;
+        ++g_player.version;
+    }
+    Push({Command::Repeat, mode, {}});
+}
+
+void PlayerVolume(int percent) {
+    percent = std::clamp(percent, 0, 100);
+    {
+        std::lock_guard lock(g_mutex);
+        g_player.device.volume = percent;
+        ++g_player.version;
+    }
+    Push({Command::Volume, percent, {}});
+}
+
+void PlayerTransfer(const std::string& deviceId) {
+    Push({Command::Transfer, 0, deviceId});
+}
+
+void PlayerLike(bool liked) {
+    std::string id;
+    {
+        std::lock_guard lock(g_mutex);
+        id = g_player.trackId;
+        g_player.liked = liked;
+        g_player.likedKnown = true;
+        ++g_player.version;
+    }
+    if (!id.empty()) Push({Command::Like, liked ? 1 : 0, id});
+}
+
+// --- Browsing (see spotify.h) -----------------------------------------------------------------
+
+int Browse(const std::string& path, std::shared_ptr<const nlohmann::json>& out, int maxAgeSeconds) {
+    std::lock_guard lock(g_mutex);
+    auto it = g_browse.find(path);
+    const auto now = std::chrono::steady_clock::now();
+    if (it == g_browse.end()) {
+        g_browse[path] = BrowseEntry{};
+        g_browseQueue.push_back(path);
+        return 0;
+    }
+    BrowseEntry& e = it->second;
+    if (e.state != 0 && now - e.at > std::chrono::seconds(maxAgeSeconds)) {
+        // old: ask again (and keep showing the old answer meanwhile)
+        e.at = now;
+        if (std::find(g_browseQueue.begin(), g_browseQueue.end(), path) == g_browseQueue.end()) g_browseQueue.push_back(path);
+    }
+    if (e.json) out = e.json;
+    return e.state == 1 || e.json ? 1 : e.state;
+}
+
+void Forget(const std::string& prefix) {
+    std::lock_guard lock(g_mutex);
+    for (auto it = g_browse.begin(); it != g_browse.end();) {
+        if (it->first.rfind(prefix, 0) == 0) {
+            it = g_browse.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+std::wstring Image(const std::string& url) {
+    if (url.empty()) return {};
+    std::lock_guard lock(g_mutex);
+    auto it = g_images.find(url);
+    if (it == g_images.end()) {
+        g_images[url] = L"";
+        g_imageQueue.push_back(url);
+        return {};
+    }
+    return it->second == L"-" ? std::wstring() : it->second;
+}
+
+void Send(const char* method, const std::string& path, const std::string& body) {
+    Command c{Command::Raw, 0, path};
+    c.method = method;
+    c.body = body;
+    Push(std::move(c));
+}
+
+void PlayMix(const std::vector<std::string>& artistIds, const std::string& seedUri) {
+    std::string csv;
+    for (const std::string& id : artistIds) {
+        if (id.empty()) continue;
+        if (!csv.empty()) csv += ',';
+        csv += id;
+    }
+    Command c{Command::Mix, 0, csv};
+    c.body = seedUri;
+    Push(std::move(c));
+}
+
+std::string SharedToken() {
+    g_tokenWanted.store(true);
+    EnsureThread();
+    std::lock_guard lock(g_mutex);
+    return g_sharedToken;
 }
 
 void Shutdown() {

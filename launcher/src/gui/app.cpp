@@ -2098,9 +2098,9 @@ void DrawAmbient(ImDrawList* d, ImVec2 display, const media::Track& t) {
     }
     (void)now;
     // 3. Shade, so the words read: darker at the bottom and the edges.
-    const bool dark = CurrentTheme() == ThemeKind::Dark;
-    const ImVec4 shade = dark ? ImVec4(0.05f, 0.05f, 0.06f, 1.0f) : ImVec4(0.97f, 0.96f, 0.94f, 1.0f);
-    const float top = (dark ? 0.42f : 0.50f) * g_ambient, bottom = (dark ? 0.72f : 0.70f) * g_ambient;
+    const float light = ThemeLight();  // (0 dark .. 1 light: it slides when the theme changes)
+    const ImVec4 shade = Mix(ImVec4(0.05f, 0.05f, 0.06f, 1.0f), ImVec4(0.97f, 0.96f, 0.94f, 1.0f), light);
+    const float top = (0.42f + 0.08f * light) * g_ambient, bottom = (0.72f - 0.02f * light) * g_ambient;
     d->AddRectFilledMultiColor(ImVec2(0, 0), display, Col(shade, top), Col(shade, top), Col(shade, bottom), Col(shade, bottom));
     const float edge = big * 0.18f;
     d->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(edge, display.y), Col(shade, 0.35f * g_ambient), Col(shade, 0.0f),
@@ -4393,7 +4393,7 @@ void DrawSpotifyPlayer(ImDrawList* d, ImVec2 min, ImVec2 max, const spotify::Sta
     SoftLight(d, artC, artSize * 0.95f, p.accent, (0.55f + 0.35f * g_bassSmooth) * g_fade);
     SoftLightOval(d, ImVec2(artC.x, artC.y + artSize * 0.08f), artSize * 0.70f, artSize * 0.62f, ImVec4(0, 0, 0, 1), 0.9f * g_fade);
     {
-        const textures::Texture* tex = pl.artPath.empty() ? nullptr : textures::Get(pl.artPath);
+        const textures::Texture* tex = pl.artPath.empty() ? nullptr : textures::GetAsync(pl.artPath);
         if (tex != nullptr) {
             d->AddImageRounded(tex->id, artMin, artMax, ImVec2(0, 0), ImVec2(1, 1), C(ImVec4(1, 1, 1, 1)), S(16.0f));
         } else {
@@ -5006,7 +5006,7 @@ bool Visible(ImVec2 a, ImVec2 b) {
 void Cover(ImDrawList* d, const std::string& url, ImVec2 a, ImVec2 b, float rounding, float alpha, bool round = false, int type = kAlbum) {
     const Palette& p = P();
     const std::wstring file = spotify::Image(url);
-    const textures::Texture* tex = file.empty() ? nullptr : textures::Get(file);
+    const textures::Texture* tex = file.empty() ? nullptr : textures::GetAsync(file);
     const float r = round ? (b.x - a.x) * 0.5f : rounding;
     if (tex != nullptr) {
         d->AddImageRounded(tex->id, a, b, ImVec2(0, 0), ImVec2(1, 1), C(ImVec4(1, 1, 1, 1), alpha), r);
@@ -6094,7 +6094,7 @@ void TopBar(ImDrawList* d, ImVec2 min, float width, const spotify::Status& st) {
     float x = min.x;
     if (pl.valid && pl.hasDevice && !pl.title.empty()) {
         const float art = S(76.0f);
-        const textures::Texture* tex = pl.artPath.empty() ? nullptr : textures::Get(pl.artPath);
+        const textures::Texture* tex = pl.artPath.empty() ? nullptr : textures::GetAsync(pl.artPath);
         const ImVec2 a(x, cy - art * 0.5f), b(x + art, cy + art * 0.5f);
         SoftLight(d, ImVec2((a.x + b.x) * 0.5f, cy), art * 0.9f, p.accent, 0.4f + 0.3f * g_bassSmooth);
         if (tex != nullptr) {
@@ -6527,8 +6527,8 @@ void DrawDock(ImDrawList* d, ImVec2 display) {
     const float h = S(kDockH);
     const ImVec2 min((display.x - total) * 0.5f, display.y - S(kDockBottom) - h);
     const ImVec2 max(min.x + total, min.y + h);
-    // glass
-    d->AddRectFilled(ImVec2(min.x, min.y + S(8.0f)), ImVec2(max.x, max.y + S(10.0f)), Col(ImVec4(0, 0, 0, 1), 0.22f), h * 0.5f);
+    // glass (with a soft shadow under it: a blur, not a hard dark band)
+    SoftLightOval(d, ImVec2((min.x + max.x) * 0.5f, max.y + S(4.0f)), (max.x - min.x) * 0.62f, h * 0.9f, ImVec4(0, 0, 0, 1), 0.45f);
     d->AddRectFilled(min, max, Col(Mix(p.card, ImVec4(1, 1, 1, 1), 0.06f), 0.55f + 0.30f * (1.0f - g_glass)), h * 0.5f);
     d->AddRect(min, max, Col(ImVec4(1, 1, 1, 1), 0.14f), h * 0.5f, 0, 1.0f);
     // which one is lit (it slides)
@@ -6552,10 +6552,8 @@ void DrawDock(ImDrawList* d, ImVec2 display) {
         const float lw = widths[lo] + (widths[hi] - widths[lo]) * f;
         const float lx = itemX(g_dockLit);
         const ImVec2 lmin(lx, min.y + S(6.0f)), lmax(lx + lw, max.y - S(6.0f));
-        for (int g = 3; g >= 1; --g) {
-            const float e = S(3.0f) * static_cast<float>(g);
-            d->AddRectFilled(ImVec2(lmin.x - e, lmin.y - e), ImVec2(lmax.x + e, lmax.y + e), Col(p.accent, 0.07f), (lmax.y - lmin.y) * 0.5f + e);
-        }
+        // its glow: soft (a blur), not rings
+        SoftLightOval(d, ImVec2((lmin.x + lmax.x) * 0.5f, (lmin.y + lmax.y) * 0.5f), (lmax.x - lmin.x) * 0.75f, (lmax.y - lmin.y) * 0.9f, p.accent, 0.35f);
         d->AddRectFilled(lmin, lmax, Col(p.accent), (lmax.y - lmin.y) * 0.5f);
     }
     float xx = min.x + S(6.0f);
@@ -8011,6 +8009,7 @@ void AppRebuildFonts() {
 
 void AppFrame() {
     if (g_blurAtlasDirty) BuildBlurAtlas();
+    TickTheme(Dt());  // (the soft change between dark and light)
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     const Palette& p = P();
 

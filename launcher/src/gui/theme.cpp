@@ -58,29 +58,71 @@ float Luminance(const ImVec4& c) {
     return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
 }
 
-void Rebuild() {
-    g_live = g_theme == ThemeKind::Light ? kLight : kDark;
-    if (!g_hasAccent) return;
+// THE CHANGE BETWEEN DARK AND LIGHT is soft: the palette in use is a mix of
+// both (0 = dark, 1 = light) that slides toward the chosen one in about half
+// a second (TickTheme, each frame). Every color of the launcher comes from it,
+// so everything changes together.
+float g_mix = 0.0f;
+
+// A theme's palette, with the accent of the moment adjusted to read on it.
+Palette Build(ThemeKind kind) {
+    Palette out = kind == ThemeKind::Light ? kLight : kDark;
+    if (!g_hasAccent) return out;
     ImVec4 c = g_accent;
     c.w = 1.0f;
     const float l = Luminance(c);
-    if (g_theme == ThemeKind::Dark && l < 0.55f) {
+    if (kind == ThemeKind::Dark && l < 0.55f) {
         // Too dark for a dark window: toward white until it reads.
         const float k = (0.55f - l) / std::max(0.001f, 1.0f - l);
         c = ImVec4(c.x + (1.0f - c.x) * k, c.y + (1.0f - c.y) * k, c.z + (1.0f - c.z) * k, 1.0f);
-    } else if (g_theme == ThemeKind::Light && l > 0.42f) {
+    } else if (kind == ThemeKind::Light && l > 0.42f) {
         const float k = 0.42f / l;
         c = ImVec4(c.x * k, c.y * k, c.z * k, 1.0f);
     }
-    g_live.accent = c;
-    g_live.onAccent = Luminance(c) > 0.5f ? Hex(0x1B1D1F) : Hex(0xF4F1EA);
+    out.accent = c;
+    out.onAccent = Luminance(c) > 0.5f ? Hex(0x1B1D1F) : Hex(0xF4F1EA);
+    return out;
+}
+
+float Eased() {
+    return g_mix * g_mix * (3.0f - 2.0f * g_mix);
+}
+
+void Rebuild() {
+    const Palette a = Build(ThemeKind::Dark), b = Build(ThemeKind::Light);
+    const float t = Eased();
+    static_assert(sizeof(Palette) % sizeof(ImVec4) == 0, "the palette is only colors");
+    const ImVec4* pa = reinterpret_cast<const ImVec4*>(&a);
+    const ImVec4* pb = reinterpret_cast<const ImVec4*>(&b);
+    ImVec4* out = reinterpret_cast<ImVec4*>(&g_live);
+    for (std::size_t i = 0; i < sizeof(Palette) / sizeof(ImVec4); ++i) {
+        out[i] = ImVec4(pa[i].x + (pb[i].x - pa[i].x) * t, pa[i].y + (pb[i].y - pa[i].y) * t, pa[i].z + (pb[i].z - pa[i].z) * t,
+                        pa[i].w + (pb[i].w - pa[i].w) * t);
+    }
 }
 
 }  // namespace
 
 void SetTheme(ThemeKind kind) {
+    static bool first = true;
     g_theme = kind;
+    if (first) {  // (at start: straight to it, no slide)
+        first = false;
+        g_mix = kind == ThemeKind::Light ? 1.0f : 0.0f;
+    }
     Rebuild();
+}
+
+void TickTheme(float dt) {
+    const float target = g_theme == ThemeKind::Light ? 1.0f : 0.0f;
+    if (g_mix == target) return;
+    const float step = dt * 2.4f;  // (about 0.4 s)
+    g_mix = g_mix < target ? std::min(target, g_mix + step) : std::max(target, g_mix - step);
+    Rebuild();
+}
+
+float ThemeLight() {
+    return Eased();
 }
 
 ThemeKind CurrentTheme() {

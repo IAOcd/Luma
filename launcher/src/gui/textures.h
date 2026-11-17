@@ -29,6 +29,9 @@ void SetDevice(ID3D11Device* device);
 // "cacheKey": si el archivo puede cambiar (la skin), pasar una clave distinta
 // cada vez que cambie (por ejemplo, con la fecha del archivo) para recargarla.
 const Texture* Get(const std::wstring& path, const std::wstring& cacheKey = {});
+// The same, but decoded in the background (covers: many at once): nullptr
+// until it is ready (a moment later), the screen never waits.
+const Texture* GetAsync(const std::wstring& path);
 // Decodifica un archivo a RGBA en memoria (sin GPU). Para revisar píxeles.
 bool DecodeFile(const std::wstring& path, std::vector<std::uint8_t>& rgba, unsigned& width, unsigned& height);
 // Libera todas (al cerrar el launcher).

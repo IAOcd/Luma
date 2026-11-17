@@ -35,6 +35,10 @@ struct Palette {
 
 void SetTheme(ThemeKind kind);
 ThemeKind CurrentTheme();
+// Each frame: the soft change between dark and light (half a second).
+void TickTheme(float dt);
+// How light the theme is right now (0 dark .. 1 light, sliding during a change).
+float ThemeLight();
 const Palette& P();
 // The ALBUM'S COLOR as the accent (the Play button, the active section, the
 // progress...): nullptr = the theme's own. It's adjusted so it always reads

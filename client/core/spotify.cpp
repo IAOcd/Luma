@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <memory>
 #include <map>
 #include <deque>
@@ -758,6 +759,19 @@ std::deque<std::string> g_imageQueue;          // (g_mutex)
 std::uint32_t g_browseCounter = 0;
 std::chrono::steady_clock::time_point g_browseWaitUntil;
 
+// The file a picture of Spotify's is kept in (empty if it's not one of theirs).
+std::wstring CachedImagePath(const std::string& url) {
+    const std::size_t scheme = url.find("://");
+    if (scheme == std::string::npos) return {};
+    std::string rest = url.substr(scheme + 3);
+    if (rest.rfind("i.scdn.co", 0) != 0 && rest.find(".scdn.co") == std::string::npos && rest.find("spotifycdn.com") == std::string::npos) return {};
+    for (char& ch : rest) {
+        if (!std::isalnum(static_cast<unsigned char>(ch))) ch = '_';
+    }
+    if (rest.size() > 120) rest = rest.substr(rest.size() - 120);
+    return (paths::DataDir() / L"covers" / L"spotify" / (Widen(rest) + L".jpg")).wstring();
+}
+
 std::wstring DownloadImage(const std::string& url) {
     const std::string prefix = "https://i.scdn.co";
     std::string host = "i.scdn.co";
@@ -884,11 +898,20 @@ void BrowseTick() {
             if (status > 0) log::Info("Spotify: {} answered {}.", path.substr(0, 60), status);
         }
     }
-    for (int n = 0; n < 3; ++n) {  // three pictures per turn
+}
+
+// THE PICTURES have their own 6 threads (covers come by dozens: they don't wait
+// in line with the commands, and several download at the same time).
+std::vector<std::thread> g_imageThreads;
+std::condition_variable g_imageWake;
+
+void ImageWorker() {
+    for (;;) {
         std::string url;
         {
-            std::lock_guard lock(g_mutex);
-            if (g_imageQueue.empty()) break;
+            std::unique_lock lock(g_mutex);
+            g_imageWake.wait(lock, [] { return g_stop.load() || !g_imageQueue.empty(); });
+            if (g_stop.load()) return;
             url = g_imageQueue.front();
             g_imageQueue.pop_front();
         }
@@ -1209,14 +1232,25 @@ void Forget(const std::string& prefix) {
 
 std::wstring Image(const std::string& url) {
     if (url.empty()) return {};
-    std::lock_guard lock(g_mutex);
-    auto it = g_images.find(url);
-    if (it == g_images.end()) {
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_images.find(url);
+        if (it != g_images.end()) return it->second == L"-" ? std::wstring() : it->second;
         g_images[url] = L"";
+        // (already on the disk from before: no download, no wait)
+        const std::wstring cached = CachedImagePath(url);
+        std::error_code ec;
+        if (!cached.empty() && std::filesystem::exists(cached, ec)) {
+            g_images[url] = cached;
+            return cached;
+        }
         g_imageQueue.push_back(url);
-        return {};
+        if (g_imageThreads.empty() && !g_stop.load()) {
+            for (int i = 0; i < 6; ++i) g_imageThreads.emplace_back(ImageWorker);
+        }
     }
-    return it->second == L"-" ? std::wstring() : it->second;
+    g_imageWake.notify_one();
+    return {};
 }
 
 void Send(const char* method, const std::string& path, const std::string& body) {
@@ -1247,6 +1281,11 @@ std::string SharedToken() {
 
 void Shutdown() {
     g_stop.store(true);
+    g_imageWake.notify_all();
+    for (auto& t : g_imageThreads) {
+        if (t.joinable()) t.join();
+    }
+    g_imageThreads.clear();
     std::lock_guard lock(g_threadMutex);
     if (g_thread.joinable()) g_thread.join();
 }

@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -51,11 +52,62 @@ double Now() {
     return static_cast<double>(GetTickCount64()) / 1000.0;
 }
 
-// The program, next to the launcher.
-fs::path ExePath() {
+// THE PROGRAM comes inside LumaLauncher.exe (resource 3: launcher/CMakeLists.txt),
+// so Luma is a single file. To run it, it must exist as a file: it's written to
+// %APPDATA%\Luma\bin\luma-spotify.exe, only when it's missing or different (a
+// new launcher brings a new player). If that file is in use (a player still
+// running), the one there is used. A launcher built without Rust has no
+// resource: then it looks next to itself (the old way).
+constexpr int kEmbeddedPlayerResource = 3;
+
+fs::path FindProgram() {
     wchar_t self[MAX_PATH * 2];
     const DWORD n = GetModuleFileNameW(nullptr, self, static_cast<DWORD>(std::size(self)));
-    return fs::path(std::wstring(self, n)).parent_path() / L"luma-spotify.exe";
+    const fs::path beside = fs::path(std::wstring(self, n)).parent_path() / L"luma-spotify.exe";
+    HRSRC resource = FindResourceW(nullptr, MAKEINTRESOURCEW(kEmbeddedPlayerResource), MAKEINTRESOURCEW(10) /* RT_RCDATA */);
+    HGLOBAL loaded = resource != nullptr ? LoadResource(nullptr, resource) : nullptr;
+    const auto* data = loaded != nullptr ? static_cast<const char*>(LockResource(loaded)) : nullptr;
+    const DWORD size = resource != nullptr ? SizeofResource(nullptr, resource) : 0;
+    if (data == nullptr || size == 0) return beside;
+    const fs::path dir = paths::DataDir() / L"bin";
+    const fs::path target = dir / L"luma-spotify.exe";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    // already there and the same?
+    {
+        HANDLE file = CreateFileW(target.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file != INVALID_HANDLE_VALUE) {
+            bool same = false;
+            LARGE_INTEGER existing{};
+            if (GetFileSizeEx(file, &existing) && existing.QuadPart == size) {
+                std::vector<char> bytes(size);
+                DWORD read = 0;
+                same = ReadFile(file, bytes.data(), size, &read, nullptr) && read == size && std::memcmp(bytes.data(), data, size) == 0;
+            }
+            CloseHandle(file);
+            if (same) return target;
+        }
+    }
+    // written to a temporary file, then put in place (never half written)
+    const fs::path temp = dir / L"luma-spotify.exe.tmp";
+    HANDLE file = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return fs::exists(target, ec) ? target : beside;
+    DWORD written = 0;
+    const bool ok = WriteFile(file, data, size, &written, nullptr) && written == size;
+    CloseHandle(file);
+    if (!ok || !MoveFileExW(temp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        DeleteFileW(temp.c_str());
+        log::Warn("Spotify player: couldn't write {} (in use?); using the one there.", paths::ToUtf8(target));
+        return fs::exists(target, ec) ? target : beside;
+    }
+    log::Info("Spotify player: written to {}.", paths::ToUtf8(target));
+    return target;
+}
+
+fs::path ExePath() {
+    static const fs::path path = FindProgram();  // (once: the first time it's asked)
+    return path;
 }
 
 fs::path CacheDir() {

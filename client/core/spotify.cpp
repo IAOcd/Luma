@@ -469,6 +469,9 @@ void EnsureThread();  // (below)
 
 std::atomic<bool> g_playerWanted{false};
 Player g_player;                      // (g_mutex)
+// Play / pause you asked for, kept over Spotify's late answers until then.
+std::chrono::steady_clock::time_point g_playHoldUntil{};
+bool g_playHeld = false;
 std::vector<Device> g_devices;        // (g_mutex)
 std::uint32_t g_devicesVersion = 0;   // (g_mutex)
 std::string g_playerError;            // (g_mutex) "premium", "no_device", "" ...
@@ -539,11 +542,12 @@ std::string ArtistsOf(const nlohmann::json& item) {
 // The album art of a song, downloaded once to %APPDATA%\Luma\covers\spotify\.
 std::wstring DownloadArt(const nlohmann::json& images) {
     if (!images.is_array() || images.empty()) return {};
-    // the one closest to 300 px (Spotify gives 640, 300 and 64)
+    // the biggest (Spotify gives 640, 300 and 64): it's the big cover on the
+    // launcher's Home too (the one Windows gets from Spotify is only 300)
     const nlohmann::json* best = nullptr;
     for (const auto& im : images) {
         if (!im.is_object() || !im.contains("url") || !im["url"].is_string()) continue;
-        if (best == nullptr || std::abs(im.value("width", 0) - 300) < std::abs(best->value("width", 0) - 300)) best = &im;
+        if (best == nullptr || im.value("width", 0) > best->value("width", 0)) best = &im;
     }
     if (best == nullptr) return {};
     const std::string url = (*best)["url"].get<std::string>();
@@ -601,14 +605,21 @@ void FetchPlayer() {
     const auto j = nlohmann::json::parse(body, nullptr, false);
     if (!j.is_object()) return;
     Player p;
+    std::chrono::steady_clock::time_point holdUntil;
+    bool held = false;
     {
         std::lock_guard lock(g_mutex);
         p = g_player;
+        holdUntil = g_playHoldUntil;
+        held = g_playHeld;
     }
     const std::string oldTrack = p.trackId;
     p.valid = true;
     p.hasDevice = j.contains("device") && j["device"].is_object();
     p.playing = j.value("is_playing", false);
+    // (just after you paused or played, Spotify's answer may still be the old
+    // state: what you asked for is kept a moment, or the screen flickers back)
+    if (std::chrono::steady_clock::now() < holdUntil) p.playing = held;
     p.shuffle = j.value("shuffle_state", false);
     const std::string repeat = j.value("repeat_state", std::string("off"));
     p.repeat = repeat == "track" ? 1 : (repeat == "context" ? 2 : 0);
@@ -1126,6 +1137,8 @@ bool Devices(std::uint32_t knownVersion, std::vector<Device>& out, std::uint32_t
 void PlayerPlay(bool play) {
     {
         std::lock_guard lock(g_mutex);
+        g_playHeld = play;
+        g_playHoldUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
         g_player.progressMs = static_cast<int>(PositionSeconds(g_player) * 1000.0);
         g_player.at = std::chrono::steady_clock::now();
         g_player.playing = play;

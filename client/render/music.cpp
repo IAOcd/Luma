@@ -123,9 +123,9 @@ ImTextureID ArtTexture() {
     std::uint32_t newVersion = 0;
     if (media::TakeArt(version, pixels, newVersion)) {
         if (texture == 0) {
-            texture = gpu::CreateTexture(pixels.data(), media::kArtSize, media::kArtSize);
+            texture = gpu::CreateTexture(pixels.data(), media::ArtSize(), media::ArtSize());
         } else {
-            gpu::UpdateTexture(texture, pixels.data(), media::kArtSize, media::kArtSize);
+            gpu::UpdateTexture(texture, pixels.data(), media::ArtSize(), media::ArtSize());
         }
         version = newVersion;
     }

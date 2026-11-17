@@ -1858,25 +1858,61 @@ void ReleaseArt(ArtTexture& t) {
     }
 }
 
+// The album art on the GPU, with its smaller copies (mipmaps): the 1024 px
+// picture is drawn at ~400-600 px, and shrunk with no mipmaps its fine detail
+// shimmers and looks jagged. The GPU makes them (GenerateMips).
 ID3D11ShaderResourceView* MakeArt(const std::vector<std::uint8_t>& rgba) {
-    if (g_device == nullptr || rgba.size() < static_cast<std::size_t>(media::kArtSize) * media::kArtSize * 4) return nullptr;
+    const int n = media::ArtSize();
+    if (g_device == nullptr || rgba.size() < static_cast<std::size_t>(n) * n * 4) return nullptr;
     D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = media::kArtSize;
-    desc.Height = media::kArtSize;
-    desc.MipLevels = 1;
+    desc.Width = static_cast<UINT>(n);
+    desc.Height = static_cast<UINT>(n);
+    desc.MipLevels = 0;  // (all of them, down to 1x1)
     desc.ArraySize = 1;
     desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_IMMUTABLE;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    D3D11_SUBRESOURCE_DATA init{rgba.data(), media::kArtSize * 4, 0};
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
     ID3D11Texture2D* texture = nullptr;
     ID3D11ShaderResourceView* view = nullptr;
-    if (SUCCEEDED(g_device->CreateTexture2D(&desc, &init, &texture))) {
-        g_device->CreateShaderResourceView(texture, nullptr, &view);
-        texture->Release();
+    if (FAILED(g_device->CreateTexture2D(&desc, nullptr, &texture))) return nullptr;
+    if (SUCCEEDED(g_device->CreateShaderResourceView(texture, nullptr, &view))) {
+        ID3D11DeviceContext* context = nullptr;
+        g_device->GetImmediateContext(&context);
+        context->UpdateSubresource(texture, 0, nullptr, rgba.data(), static_cast<UINT>(n * 4), 0);
+        context->GenerateMips(view);
+        context->Release();
     }
+    texture->Release();
     return view;
+}
+
+// ImGui's sampler only reads the full-size picture (it ignores mipmaps), so
+// the album art is drawn with one of ours that uses them (a draw callback
+// switches to it; ImGui's own comes back right after).
+ID3D11SamplerState* g_mipSampler = nullptr;
+
+void UseMipSampler(const ImDrawList*, const ImDrawCmd*) {
+    if (g_device == nullptr) return;
+    if (g_mipSampler == nullptr) {
+        D3D11_SAMPLER_DESC desc{};
+        desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        desc.AddressU = desc.AddressV = desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        desc.ComparisonFunc = D3D11_COMPARISON_ALWAYS;
+        desc.MaxLOD = D3D11_FLOAT32_MAX;
+        g_device->CreateSamplerState(&desc, &g_mipSampler);
+    }
+    ID3D11DeviceContext* context = nullptr;
+    g_device->GetImmediateContext(&context);
+    context->PSSetSamplers(0, 1, &g_mipSampler);
+    context->Release();
+}
+
+void DrawArtImage(ImDrawList* d, ID3D11ShaderResourceView* view, ImVec2 a, ImVec2 b, ImU32 color, float rounding) {
+    d->AddCallback(UseMipSampler, nullptr);
+    d->AddImageRounded(reinterpret_cast<ImTextureID>(view), a, b, ImVec2(0, 0), ImVec2(1, 1), color, rounding);
+    d->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 }
 
 // A soft round light (no blur in ImGui: many see-through circles, bigger and
@@ -1948,7 +1984,7 @@ float g_ambient = 0.0f;  // 0..1: the ambient on (there's music)
 // 24 and 3 for the calm base; fewer for the "blobs" that turn, with more shape)
 ID3D11ShaderResourceView* MakeBlur(const std::vector<std::uint8_t>& rgba, int shrinkTo = 24, int passes = 3) {
     const int kSmall = shrinkTo;
-    const int n = media::kArtSize;
+    const int n = media::ArtSize();
     if (g_device == nullptr || rgba.size() < static_cast<std::size_t>(n) * n * 4) return nullptr;
     std::vector<float> pix(kSmall * kSmall * 3, 0.0f);
     const int block = n / kSmall;
@@ -2265,8 +2301,7 @@ void DrawNowPlaying(ImDrawList* d, ImVec2 min, ImVec2 max, const media::Track& t
             icons::Draw(d, icons::kMusic, artCenter, artSize * 0.26f, C(p.onAccent, alpha * 0.7f), S(1.6f));
             return;
         }
-        d->AddImageRounded(reinterpret_cast<ImTextureID>(view), a, b, ImVec2(0, 0), ImVec2(1, 1), C(ImVec4(1, 1, 1, 1), alpha),
-                           S(18.0f));
+        DrawArtImage(d, view, a, b, C(ImVec4(1, 1, 1, 1), alpha), S(18.0f));
     };
     // (a soft shadow under it)
     d->AddRectFilled(ImVec2(artMin.x + S(4.0f), artMin.y + S(10.0f)), ImVec2(artMax.x - S(4.0f), artMax.y + S(10.0f)),
@@ -2815,6 +2850,22 @@ bool IsSpotifyApp(const char* app) {
     if (std::strstr(app, "Spotify") != nullptr) return true;
     namespace eng = luma::launcher::spotifyengine;
     return eng::GetState() == eng::State::Ready && std::strstr(app, "Luma") != nullptr;
+}
+
+// SPOTIFY'S OWN COVER, 640 px: Windows only gets a 300 px one from Spotify (the
+// big cover looked blurry). When the song plays from Spotify and the section
+// knows it, its picture (already downloaded for the Spotify section) goes to
+// core/media, which decodes it like the app's own. It's that album's exact
+// picture (Apple Music's is looked up by name: for the other apps).
+void UpdateHdArt(const media::Track& t) {
+    static std::uint32_t offered = 0;
+    if (!t.present || !t.artChecked || t.trackId == offered) return;
+    spotify::Player sp;
+    if (!SpotifyDrivesHome(t, sp) || sp.artPath.empty()) return;
+    std::ifstream in(fs::path(sp.artPath), std::ios::binary);
+    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    offered = t.trackId;
+    if (bytes.size() > 1000) media::OfferArt(t.trackId, std::move(bytes));
 }
 
 lyrics::Result g_lyrics;
@@ -3500,7 +3551,6 @@ ImVec4 HeartColor() {
 // The heart, in the album art's corner (glass, filled when it's a favorite;
 // it pops when you press it).
 void DrawArtHeart(ImDrawList* d, ImVec2 artC, float artSize, const media::Track& t, float alpha) {
-    const Palette& p = P();
     const float half = artSize * 0.5f;
     const float r = S(19.0f);
     const ImVec2 c(artC.x + half - r - S(10.0f), artC.y + half - r - S(10.0f));
@@ -3943,8 +3993,7 @@ void DrawArtAt(ImDrawList* d, ImVec2 center, float size, float alpha, float roun
             icons::Draw(d, icons::kMusic, center, size * 0.26f, C(p.onAccent, a * alpha * 0.7f), S(1.6f));
             return;
         }
-        d->AddImageRounded(reinterpret_cast<ImTextureID>(view), mn, mx, ImVec2(0, 0), ImVec2(1, 1), C(ImVec4(1, 1, 1, 1), a * alpha),
-                           rounding);
+        DrawArtImage(d, view, mn, mx, C(ImVec4(1, 1, 1, 1), a * alpha), rounding);
     };
     if (g_artOld.view != nullptr && g_artFade < 1.0f) one(g_artOld.view, 1.0f, 1.0f);
     one(g_art.view, g_artOld.view != nullptr ? g_artFade : 1.0f, pop);
@@ -7835,6 +7884,12 @@ bool FontJobDone();
 void AppInit(HWND hwnd, float scale) {
     luma::launcher::smtc::Init(hwnd);  // (Luma's own player tells Windows what plays)
     perf::Init();  // (the music's clock: core/media.cpp)
+    // HD covers: 1024 px (the big cover fills more than 512 on a scaled
+    // screen); Apple Music's 1000 px when the app gives a small one (the same
+    // as the game's option); Spotify's own 640 px when it plays from Spotify
+    // (UpdateHdArt).
+    media::SetArtSize(1024);
+    lyrics::SetHdCovers(true);
     g_hwnd = hwnd;
     g_scale = scale;
     LoadConfig();
@@ -8187,6 +8242,7 @@ void AppFrame() {
     const bool visible = IsIconic(g_hwnd) == FALSE && IsWindowVisible(g_hwnd) != FALSE;
     const media::Track track = media::Current();
     UpdateMusic(track, visible);
+    UpdateHdArt(track);
     flowcfg::Refresh();  // (the lyrics' offset, the style chosen in the game)
     SyncSpotifyClientId();  // (the Spotify connection, shared with the game)
     {
@@ -8254,6 +8310,8 @@ void AppShutdown() {
     luma::launcher::smtc::Shutdown();
     spotify::Shutdown();
     StopFontJob();
+    if (g_mipSampler != nullptr) g_mipSampler->Release();
+    g_mipSampler = nullptr;
     ReleaseBlurAtlas();
     lyrics::Shutdown();
     audioviz::Shutdown();

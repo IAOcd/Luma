@@ -173,7 +173,10 @@ void Palette(const std::vector<std::uint8_t>& rgba, const float accent[3], float
     }
 }
 
+std::atomic<int> g_artSize{512};
+
 bool DecodeArt(const std::vector<std::uint8_t>& bytes, std::vector<std::uint8_t>& rgba, float accent[3]) {
+    const UINT kArtSize = static_cast<UINT>(g_artSize.load());
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICStream> stream;
     ComPtr<IWICBitmapDecoder> decoder;
@@ -592,6 +595,14 @@ void Previous() {
 
 void Seek(double seconds) {
     Push(Command::Seek, std::max(0.0, seconds));
+}
+
+int ArtSize() {
+    return g_artSize.load();
+}
+
+void SetArtSize(int size) {
+    g_artSize.store(std::clamp(size, 64, 2048));
 }
 
 void OfferArt(std::uint32_t trackId, std::vector<std::uint8_t> bytes) {

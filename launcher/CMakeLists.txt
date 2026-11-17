@@ -73,18 +73,30 @@ target_sources(LumaLauncher PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/luma_d
 add_dependencies(LumaLauncher Luma)
 
 # Luma's own Spotify player (launcher/player, Rust on librespot): built with
-# Cargo (Rust's tool) and copied next to the launcher as luma-spotify.exe.
-# Without Rust installed, the launcher still builds (the player just isn't there).
+# Cargo (Rust's tool) and carried INSIDE LumaLauncher.exe, like the DLL
+# (resource 3). The launcher writes it to %APPDATA%/Luma/bin/luma-spotify.exe
+# when it's needed (src/spotify_engine.cpp): Luma is one single program.
+# Without Rust installed, the launcher still builds (the player just isn't
+# there), except the official build, which must always have it.
 find_program(LUMA_CARGO cargo HINTS "$ENV{USERPROFILE}/.cargo/bin")
 if(LUMA_CARGO)
+    set(LUMA_PLAYER_EXE "${CMAKE_BINARY_DIR}/player-target/release/luma-spotify.exe")
     add_custom_target(luma_spotify_player ALL
         COMMAND ${LUMA_CARGO} build --release --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/player/Cargo.toml"
                 --target-dir "${CMAKE_BINARY_DIR}/player-target"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_BINARY_DIR}/player-target/release/luma-spotify.exe"
-                "$<TARGET_FILE_DIR:LumaLauncher>/luma-spotify.exe"
+        BYPRODUCTS "${LUMA_PLAYER_EXE}"
         COMMENT "Building Luma's Spotify player (Rust)"
         USES_TERMINAL)
+    file(GENERATE
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/luma_player.rc
+        CONTENT "3 RCDATA \"${LUMA_PLAYER_EXE}\"
+")
+    target_sources(LumaLauncher PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/luma_player.rc)
+    # (the .rc must be compiled again when the player changes)
+    set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/luma_player.rc PROPERTIES OBJECT_DEPENDS "${LUMA_PLAYER_EXE}")
     add_dependencies(LumaLauncher luma_spotify_player)
+elseif(LUMA_OFFICIAL_BUILD)
+    message(FATAL_ERROR "Rust (cargo) not found: the official build needs it for Luma's Spotify player")
 else()
     message(STATUS "Rust (cargo) not found: luma-spotify.exe won't be built")
 endif()

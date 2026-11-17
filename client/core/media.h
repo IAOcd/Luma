@@ -31,7 +31,11 @@
 
 namespace luma::media {
 
-constexpr int kArtSize = 512;  // the album art, always as a 512x512 RGBA picture (sharp on the Music page)
+// The album art is always a square RGBA picture of ArtSize() x ArtSize():
+// 512 in the game (sharp on the Music page); the launcher, whose cover is
+// bigger on the screen, asks for 1024 (SetArtSize, before anything else).
+int ArtSize();
+void SetArtSize(int size);
 
 struct Track {
     bool present = false;      // is anything reporting media?
@@ -71,7 +75,7 @@ void Shutdown();
 // A copy of what's playing now. Cheap (any thread).
 Track Current();
 
-// The album art, if it's newer than "knownVersion": kArtSize x kArtSize RGBA into "out".
+// The album art, if it's newer than "knownVersion": ArtSize() x ArtSize() RGBA into "out".
 bool TakeArt(std::uint32_t knownVersion, std::vector<std::uint8_t>& out, std::uint32_t& version);
 
 // Commands (they run on media's thread a moment later).

@@ -92,6 +92,15 @@ endif()
 # Compilación OFICIAL (la hace GitHub Actions con -DLUMA_OFFICIAL_BUILD=ON).
 # Solo esas se reemplazan solas con las actualizaciones: tus compilaciones
 # locales nunca se pisan.
+# The Minecraft versions THIS build of Luma knows it works with (the same
+# list the next release publishes): built into the launcher, so a version
+# added here is recognized before the release is published.
+file(READ "${PROJECT_SOURCE_DIR}/release/minecraft.json" LUMA_MINECRAFT_JSON)
+string(REGEX MATCHALL "[0-9]+\.[0-9]+\.[0-9]+" LUMA_MINECRAFT_LIST "${LUMA_MINECRAFT_JSON}")
+string(REPLACE ";" "," LUMA_MINECRAFT_LIST "${LUMA_MINECRAFT_LIST}")
+target_compile_definitions(LumaLauncher PRIVATE LUMA_BUILTIN_MINECRAFT="${LUMA_MINECRAFT_LIST}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/release/minecraft.json")
+
 option(LUMA_OFFICIAL_BUILD "Compilación oficial (se actualiza sola)" OFF)
 if(LUMA_OFFICIAL_BUILD)
     target_compile_definitions(LumaLauncher PRIVATE LUMA_OFFICIAL_BUILD)

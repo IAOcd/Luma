@@ -142,6 +142,11 @@ Rect g_noDrag[6];
 int g_noDragCount = 0;
 
 PlayFlow g_flow;
+
+// The Minecraft versions Luma works with: the published release's list (from
+// GitHub) PLUS the one built into this launcher (release/minecraft.json), so a
+// version added there isn't "unsupported" while the release isn't out yet.
+std::vector<std::string> SupportedMinecraft();
 PlayState g_lastState = PlayState::Idle;
 double g_minimizeAt = 0.0;  // cuándo minimizar después de JUGAR (0 = no)
 
@@ -151,6 +156,25 @@ bool g_startWithWindows = false;  // la verdad está en el registro: se lee al a
 bool g_autoUpdate = true;         // actualizarse solo al abrir
 sky::Mode g_skyMode = sky::Mode::Auto;  // el cielo del cartel: según la hora o fijo
 updater::Info g_upd;              // el estado del actualizador en este frame
+
+std::vector<std::string> SupportedMinecraft() {
+    std::vector<std::string> list = g_upd.supportedMinecraft;
+#ifdef LUMA_BUILTIN_MINECRAFT
+    if (!list.empty()) {  // (empty = not known: no warning at all, as before)
+        const std::string built = LUMA_BUILTIN_MINECRAFT;
+        std::size_t pos = 0;
+        while (pos <= built.size()) {
+            std::size_t end = built.find(',', pos);
+            if (end == std::string::npos) end = built.size();
+            const std::string v = built.substr(pos, end - pos);
+            if (!v.empty() && std::find(list.begin(), list.end(), v) == list.end()) list.push_back(v);
+            pos = end + 1;
+        }
+    }
+#endif
+    return list;
+}
+
 bool g_closing = false;
 
 // Lo que se consulta en un hilo aparte cada 1,5 s (listar procesos y leer
@@ -1406,7 +1430,7 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, cons
     const ImVec2 bmax(bmin.x + S(230.0f), bmin.y + buttonH);
     float hover = 0.0f;
     if (Hit("##play", bmin, bmax, &hover, !busy)) {
-        g_flow.Start(g_upd.supportedMinecraft);
+        g_flow.Start(SupportedMinecraft());
     }
     const float press = ImGui::IsItemActive() && !busy ? 1.0f : 0.0f;
     const float lift = S(2.0f) * hover * (1.0f - press);
@@ -1459,7 +1483,7 @@ void DrawHero(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data, cons
         DrawPlayStatus(d, ImVec2(statusX, bmin.y + S(8.0f)), statusW - S(12.0f), snap);
         if (snap.state == PlayState::Unsupported && !busy) {
             if (Button("##play_anyway", ImVec2(statusX, bmin.y + S(26.0f)), T("play.anyway"), false)) {
-                g_flow.Start(g_upd.supportedMinecraft, true);
+                g_flow.Start(SupportedMinecraft(), true);
             }
         }
     }
@@ -2365,7 +2389,7 @@ void DrawPlayBar(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
     const ImVec2 bmax(bmin.x + S(220.0f), bmin.y + buttonH);
     float hover = 0.0f;
     if (Hit("##play", bmin, bmax, &hover, !busy)) {
-        g_flow.Start(g_upd.supportedMinecraft);
+        g_flow.Start(SupportedMinecraft());
     }
     const float press = Anim(ImGui::GetID("##play") + 5, ImGui::IsItemActive() && !busy, 22.0f);
     // Waiting for you: a slow breathing halo around it.
@@ -2412,7 +2436,7 @@ void DrawPlayBar(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
         DrawPlayStatus(d, ImVec2(sx, min.y + h * 0.5f - S(18.0f)), sw, snap);
         if (snap.state == PlayState::Unsupported && !busy && sw > S(200.0f)) {
             if (Button("##play_anyway", ImVec2(max.x - S(18.0f) - S(160.0f), min.y + (h - S(38.0f)) * 0.5f), T("play.anyway"), false)) {
-                g_flow.Start(g_upd.supportedMinecraft, true);
+                g_flow.Start(SupportedMinecraft(), true);
             }
         }
         return;
@@ -6547,7 +6571,7 @@ void DrawOrb(ImDrawList* d, ImVec2 display, const LocalData& data) {
     const ImVec2 c(display.x - S(74.0f), display.y - S(kDockBottom) - S(kDockH) * 0.5f - S(6.0f));
     float hover = 0.0f;
     if (Hit("##play", ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), &hover, !busy)) {
-        g_flow.Start(g_upd.supportedMinecraft);
+        g_flow.Start(SupportedMinecraft());
     }
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {  // (right click: the Luma folder, the logs)
         g_playMenuOpen = !g_playMenuOpen;
@@ -6584,7 +6608,7 @@ void DrawOrb(ImDrawList* d, ImVec2 display, const LocalData& data) {
         DrawPlayStatus(d, ImVec2(bmin.x + S(14.0f), bmin.y + S(10.0f)), bw - S(28.0f), snap);
         if (snap.state == PlayState::Unsupported && !busy) {
             if (Button("##play_anyway", ImVec2(bmin.x, bmin.y - S(46.0f)), T("play.anyway"), false)) {
-                g_flow.Start(g_upd.supportedMinecraft, true);
+                g_flow.Start(SupportedMinecraft(), true);
             }
         }
     }

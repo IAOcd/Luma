@@ -49,11 +49,6 @@ struct Info {
     bool mineLoaded = false;
     bool banned = false;
     std::vector<Style> mine;
-    // The style a luma:// link asked for (from the website), shown on top of Explore
-    std::string linkedId;            // "" = none
-    bool linkedLoading = false;
-    std::string linkedErrorKey;
-    Style linked;
     // The last thing you did (publish, remove, report...)
     bool busy = false;
     std::string actionKey;           // translation key, "" = none
@@ -72,9 +67,6 @@ void Unpublish(const std::string& id);
 void CountInstall(const std::string& id);
 // reason: "offensive_name", "spam" or "other".
 void Report(const std::string& id, const std::string& reason);
-// A luma://style/<id> link: fetch that one style (to show it on top).
-void LoadLinked(const std::string& id);
-void ClearLinked();
 // Forget everything (signed out / another account).
 void Reset();
 

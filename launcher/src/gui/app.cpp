@@ -8388,6 +8388,14 @@ void DrawSettingsYear(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info
                 nameFor = g_year;
                 showName = s.shareShowName;
             }
+            {  // count my songs in "Top in Luma" (the website's public charts)
+                bool charts = s.inCharts;
+                const float hc = SettingLabel(d, ImVec2(x, y), w - S(66.0f), T("year.charts"), T("year.charts_hint"));
+                if (Toggle("##year_charts", ImVec2(right - S(46.0f), y + std::max(0.0f, (hc - S(26.0f)) * 0.5f)), &charts) && !li.shareBusy) {
+                    listening::SetCharts(charts);
+                }
+                y += std::max(hc, S(30.0f)) + S(14.0f);
+            }
             const float h = SettingLabel(d, ImVec2(x, y), w - S(66.0f), T("year.share_name"), nullptr);
             Toggle("##year_sharename", ImVec2(right - S(46.0f), y + std::max(0.0f, (h - S(26.0f)) * 0.5f)), &showName);
             y += std::max(h, S(30.0f)) + S(8.0f);
@@ -8662,40 +8670,7 @@ void DrawExplore(ImDrawList* d, ImVec2 min, ImVec2 max, const gallery::Info& g, 
             gallery::Load(g.sort);
         }
     }
-    float top = min.y + S(54.0f);
-    // The style a luma:// link brought (from Luma's website): on top, ready to install.
-    if (!g.linkedId.empty()) {
-        const float bh = S(112.0f);
-        const ImVec2 a(min.x, top), b(max.x, top + bh);
-        Card(d, a, b);
-        d->AddRect(a, b, C(p.accent, 0.6f), S(kRound), 0, S(1.5f));
-        const ImVec2 va(a.x + S(10.0f), a.y + S(10.0f)), vb(a.x + S(10.0f) + S(220.0f), b.y - S(10.0f));
-        d->AddRectFilled(va, vb, C(ImVec4(0.03f, 0.03f, 0.05f, 1.0f), 0.55f), S(kRound) - S(4.0f));
-        const float tx = vb.x + S(18.0f);
-        Text(d, g_fonts.tiny, ImVec2(tx, a.y + S(14.0f)), C(p.textDim), T("gallery.from_web"));
-        if (g.linkedLoading) {
-            Spinner(d, ImVec2(tx + S(8.0f), a.y + S(52.0f)), S(6.0f), C(p.textDim));
-        } else if (!g.linkedErrorKey.empty() || g.linked.id.empty()) {
-            TextFit(d, g_fonts.regular, ImVec2(tx, a.y + S(40.0f)), C(p.text), T(g.linkedErrorKey.empty() ? "gallery.err_not_found" : g.linkedErrorKey.c_str()),
-                    b.x - tx - S(60.0f));
-        } else {
-            const gallery::Style& ls = g.linked;
-            d->PushClipRect(va, vb, true);
-            DrawFlowLook(d, ImVec2((va.x + vb.x) * 0.5f, (va.y + vb.y) * 0.5f), vb.y - va.y, LookFromJson(ls.look), g_fade, 0.7f, "LUMA", -1.0f, 0.0f);
-            d->PopClipRect();
-            TextFit(d, g_fonts.semibold, ImVec2(tx, a.y + S(34.0f)), C(p.text), ls.name.c_str(), b.x - tx - S(60.0f));
-            TextFit(d, g_fonts.tiny, ImVec2(tx, a.y + S(36.0f) + g_fonts.semibold->FontSize), C(p.textDim),
-                    ls.author.empty() ? T("gallery.anonymous") : ls.author.c_str(), b.x - tx - S(60.0f));
-            const bool installed = g_installed == ls.id;
-            if (Button("##gal_link_install", ImVec2(tx, b.y - S(48.0f)), T(installed ? "gallery.installed" : "gallery.install"), !installed)) {
-                flowcfg::InstallGalleryStyle(ls.name, gallery::LookOnly(ls.look));
-                gallery::CountInstall(ls.id);
-                g_installed = ls.id;
-            }
-        }
-        if (IconToggle(d, "##gal_link_close", ImVec2(b.x - S(24.0f), a.y + S(24.0f)), icons::kClose, S(14.0f), false)) gallery::ClearLinked();
-        top += bh + S(14.0f);
-    }
+    const float top = min.y + S(54.0f);
     if (g.loading && g.styles.empty()) {
         Spinner(d, ImVec2((min.x + max.x) * 0.5f, top + S(60.0f)), S(9.0f), C(p.textDim));
         return;
@@ -9405,48 +9380,6 @@ void StatusThread() {
 void BuildFirstFonts();  // (the fonts: below, with their helper thread)
 bool FontJobDone();
 
-// "luma://style/<id>": Lyrics > Gallery, with that style on top.
-void AppOpenLink(const wchar_t* link) {
-    if (link == nullptr) return;
-    std::wstring text(link);
-    constexpr const wchar_t* kStyle = L"luma://style/";
-    if (text.rfind(kStyle, 0) != 0) return;
-    std::string id;
-    for (std::size_t i = std::wcslen(kStyle); i < text.size() && id.size() < 8; ++i) {
-        const wchar_t c = text[i];
-        if (!((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9'))) break;
-        id += static_cast<char>(c);
-    }
-    if (id.size() != 8) return;  // (an id is 8 letters and numbers: anything else is ignored)
-    g_page = Page::Lyrics;
-    g_lyricsTab = 5;
-    g_lyricsTabIn = 0.0f;
-    galleryui::g_view = 0;
-    galleryui::g_scroll = 0.0f;
-    gallery::LoadLinked(id);
-}
-
-// Tells Windows that "luma://" links open this launcher (only for your user:
-// HKEY_CURRENT_USER\Software\Classes\luma). Written each time it opens, so it
-// always points to where the launcher is now. Only the official build does it
-// (a test build never takes the links).
-void RegisterLinks() {
-    if (!updater::OfficialBuild()) return;
-    wchar_t exe[MAX_PATH]{};
-    if (GetModuleFileNameW(nullptr, exe, MAX_PATH) == 0) return;
-    auto set = [](const wchar_t* key, const wchar_t* name, const std::wstring& value) {
-        HKEY h = nullptr;
-        if (RegCreateKeyExW(HKEY_CURRENT_USER, key, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &h, nullptr) != ERROR_SUCCESS) return;
-        RegSetValueExW(h, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()), static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
-        RegCloseKey(h);
-    };
-    const std::wstring path(exe);
-    set(L"Software\\Classes\\luma", nullptr, L"URL:Luma");
-    set(L"Software\\Classes\\luma", L"URL Protocol", L"");
-    set(L"Software\\Classes\\luma\\DefaultIcon", nullptr, L"\"" + path + L"\",0");
-    set(L"Software\\Classes\\luma\\shell\\open\\command", nullptr, L"\"" + path + L"\" \"%1\"");
-}
-
 void AppInit(HWND hwnd, float scale) {
     luma::launcher::smtc::Init(hwnd);  // (Luma's own player tells Windows what plays)
     perf::Init();  // (the music's clock: core/media.cpp)
@@ -9469,8 +9402,6 @@ void AppInit(HWND hwnd, float scale) {
     if (std::wcsstr(GetCommandLineW(), L"--page=skins") != nullptr) g_page = Page::Skins;
     if (std::wcsstr(GetCommandLineW(), L"--page=settings") != nullptr) g_page = Page::Settings;
     if (std::wcsstr(GetCommandLineW(), L"--page=lyrics") != nullptr) g_page = Page::Lyrics;
-    RegisterLinks();
-    if (const wchar_t* link = std::wcsstr(GetCommandLineW(), L"luma://")) AppOpenLink(link);
     if (std::wcsstr(GetCommandLineW(), L"--page=spotify") != nullptr) g_page = Page::Spotify;
     if (std::wcsstr(GetCommandLineW(), L"--view=lyrics") != nullptr) g_openViewWhenReady = true;
     if (std::wcsstr(GetCommandLineW(), L"--luma-player") != nullptr) luma::launcher::spotifyengine::Start();  // (for testing)

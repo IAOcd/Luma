@@ -203,6 +203,7 @@ Summary FromServer(const json& j, int year) {
             out.push_back({e.value("title", std::string()), e.value("artist", std::string()), e.value("seconds", 0.0), e.value("plays", 0)});
         }
     };
+    s.inCharts = j.value("inCharts", false);
     if (j.contains("share") && j["share"].is_object()) {
         s.shareUrl = j["share"].value("url", std::string());
         s.shareShowName = j["share"].value("showName", false);
@@ -297,7 +298,7 @@ void Finish(const char* key, bool ok) {
     ++g_info.version;
 }
 
-enum class Job { None, DeleteCloud, Share, Unshare };
+enum class Job { None, DeleteCloud, Share, Unshare, Charts };
 Job g_job = Job::None;
 int g_jobYear = 0;
 bool g_jobShowName = false;
@@ -413,6 +414,25 @@ void Run() {
                     Save();
                 }
                 Finish(r.status == 200 ? "year.deleted_cloud" : FailKey(r.status), r.status == 200);
+            }
+        }
+        if (job == Job::Charts) {
+            bool on = false;
+            {
+                std::lock_guard lock(g_mutex);
+                on = g_jobShowName;
+            }
+            const Reply r = pass.empty() ? Reply{} : Call(L"PUT", L"/v1/me/charts", pass, json{{"on", on}}.dump());
+            std::lock_guard lock(g_mutex);
+            g_info.shareBusy = false;
+            ++g_info.version;
+            if (r.status == 200) {
+                if (g_cloudOk) g_cloud.inCharts = on;
+                g_info.actionKey = on ? "year.charts_on" : "year.charts_off";
+                g_info.actionOk = true;
+            } else {
+                g_info.actionKey = pass.empty() ? "year.err_signed_out" : FailKey(r.status);
+                g_info.actionOk = false;
             }
         }
         if (job == Job::Share || job == Job::Unshare) {
@@ -583,6 +603,17 @@ void Share(int year, bool showName) {
         g_job = Job::Share;
         g_jobYear = year;
         g_jobShowName = showName;
+    }
+    g_wake.notify_all();
+}
+
+void SetCharts(bool on) {
+    {
+        std::lock_guard lock(g_mutex);
+        if (g_info.shareBusy) return;
+        g_info.shareBusy = true;
+        g_job = Job::Charts;
+        g_jobShowName = on;  // (the same slot carries the choice)
     }
     g_wake.notify_all();
 }

@@ -44,6 +44,7 @@ struct Summary {
     double months[12] = {};    // seconds per month
     std::string shareUrl;      // (from your account) its public link, "" = not shared
     bool shareShowName = false;
+    bool inCharts = false;     // (from your account) your songs count in "Top in Luma"
 };
 
 struct Info {
@@ -84,5 +85,8 @@ void DeleteCloud();
 // stops working if you remove it, or delete what you listened to.
 void Share(int year, bool showName);
 void Unshare(int year);
+// "Count my songs in Top in Luma" (the website's public charts): anonymous,
+// and a song shows only when at least 3 people heard it. Off by default.
+void SetCharts(bool on);
 
 }  // namespace luma::launcher::listening

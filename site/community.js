@@ -1,7 +1,7 @@
-// Luma — the community pages: the style gallery and a shared "Your year".
-// They read Luma's server (luma-api), the same one the launcher uses. Nothing
-// here needs an account: the gallery and a shared year are public. Publishing,
-// reporting and sharing are done from the launcher.
+// Luma — "Top in Luma" (the songs most heard, anonymous) and a shared "Your
+// year". They read Luma's server (luma-api), the same one the launcher uses.
+// Nothing here needs an account: both are public by choice of whoever shares.
+// Sharing, and joining the charts, are done from the launcher.
 (() => {
   const $ = (s, el = document) => el.querySelector(s);
   const API = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? "http://127.0.0.1:8787" : "https://luma-api.gios-app.workers.dev";
@@ -29,111 +29,40 @@
     return col;
   }
 
-  /* ---------- a Lyric Flow style's preview (an approximation, like the launcher's) ---------- */
-  const rgb = (c, a = 1) => `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)},${a})`;
-  const ALBUM = [[0.89, 0.64, 0.49], [0.6, 0.31, 0.53]];  // (an album's colors, for the styles that take them)
-  function drawLook(cv, look) {
-    const d = Math.min(devicePixelRatio || 1, 2), w = cv.clientWidth || 300, h = cv.clientHeight || 120;
-    cv.width = Math.round(w * d); cv.height = Math.round(h * d);
-    const x = cv.getContext("2d"); x.setTransform(d, 0, 0, d, 0, 0);
-    x.fillStyle = "#08080b"; x.fillRect(0, 0, w, h);
-    const L = look || {};
-    const c1 = Array.isArray(L.color) ? L.color : [1, 1, 1], c2 = Array.isArray(L.color2) ? L.color2 : [0.7, 0.56, 1];
-    const mode = L.colorMode ?? 0, cols = 23;
-    const cell = Math.min(w * 0.6 / cols, h * 0.42 / 7), tw = cols * cell, x0 = (w - tw) / 2, y0 = (h - 7 * cell) / 2;
-    const colorAt = k => {
-      const u = k / (cols - 1);
-      if (mode === 1) return ALBUM[0];
-      if (mode === 2) return ALBUM[0].map((v, i) => v + (ALBUM[1][i] - v) * u);
-      if (mode === 3) return c1.map((v, i) => v + (c2[i] - v) * u);
-      if (mode === 4) { const hue = u * 300, f = n => { const k2 = (n + hue / 60) % 6; return 1 - Math.max(0, Math.min(k2, 4 - k2, 1)) * 0.75; }; return [f(5), f(3), f(1)]; }
-      return c1;
-    };
-    const sung = (L.fill ?? 1) > 0 ? 0.72 : 1;
-    const glow = (L.glow ?? 0) > 0, glowStrength = L.glowStrength ?? 1;
-    const glowColor = k => { const g = L.glowColor ?? 0; return g === 1 ? [1, 1, 1] : g === 2 ? ALBUM[0] : g === 3 && Array.isArray(L.glowCustom) ? L.glowCustom : colorAt(k); };
-    // particles
-    if ((L.vfx ?? 0) > 0) {
-      const n = Math.round(10 * (L.vfxAmount ?? 1));
-      for (let i = 0; i < n; i++) {
-        const r = Math.abs(Math.sin(i * 12.9898 + (L.vfx || 0) * 78.233)) % 1, r2 = Math.abs(Math.sin(i * 39.3468)) % 1;
-        const vc = (L.vfxColor ?? 0) === 0 ? colorAt(Math.floor(r * cols)) : (L.vfxColor === 1 ? [1, 1, 1] : ALBUM[0]);
-        x.fillStyle = rgb(vc, 0.5 + 0.5 * r2);
-        const s = cell * (0.35 + 0.4 * r2);
-        x.fillRect(x0 - cell * 2 + r * (tw + cell * 4), y0 - cell * 2.5 + r2 * (7 * cell + cell * 5), s, s);
-      }
-    }
-    // shadow, outline, then the letters (with their light)
-    const shadowOn = !!L.shadow, outline = !!L.outline;
-    const oc = Array.isArray(L.outlineColor) ? L.outlineColor : [0.05, 0.05, 0.07], oa = L.outlineAlpha ?? 0.85;
-    if (shadowOn) {
-      const depth = (L.shadowStyle ?? 0) === 2 ? 3 : 1;
-      eachBlock("LUMA", x0, y0, cell, (bx, by, cs, k) => {
-        x.fillStyle = (L.shadowStyle ?? 0) === 1 ? rgb(colorAt(k), 0.35) : "rgba(0,0,0,.55)";
-        for (let s = 1; s <= depth; s++) x.fillRect(bx + cs * 0.35 * s, by + cs * 0.35 * s, cs, cs);
-      });
-    }
-    if (outline) eachBlock("LUMA", x0, y0, cell, (bx, by, cs) => { x.fillStyle = rgb(oc, oa); x.fillRect(bx - cs * 0.22, by - cs * 0.22, cs * 1.44, cs * 1.44); });
-    eachBlock("LUMA", x0, y0, cell, (bx, by, cs, k) => {
-      const on = k / (cols - 1) <= sung;
-      const c = colorAt(k);
-      if (glow && on) { x.shadowColor = rgb(glowColor(k), 0.9); x.shadowBlur = cs * 2.2 * glowStrength; } else x.shadowBlur = 0;
-      x.fillStyle = rgb(c, on ? (L.opacity ?? 0.95) : 0.3);
-      x.fillRect(bx, by, cs + 0.4, cs + 0.4);
-    });
-    x.shadowBlur = 0;
+  /* ---------- Top in Luma: the songs most heard (anonymous, 3 people at least) ---------- */
+  const topSongs = $("#topSongs"), topArtists = $("#topArtists"), topStatus = $("#topStatus"), topLead = $("#topLead");
+  let period = "month", chart = null, chartFor = null, chartBusy = false;
+  const people = n => n === 1 ? t("top.person") : t("top.people").replace("{n}", n);
+  function row(rank, main, sub, n) {
+    return `<li><span class="trank">${rank}</span><span class="tname"><b>${esc(main)}</b>${sub ? `<span>${esc(sub)}</span>` : ""}</span><span class="tcount">${esc(people(n))}</span></li>`;
   }
-
-  /* ---------- the gallery ---------- */
-  const grid = $("#galGrid"), more = $("#galMore"), status = $("#galStatus");
-  let sort = "new", next = 0, styles = [], loading = false, loaded = false;
-  function card(s) {
-    const count = s.installs === 1 ? t("gal.install_one") : t("gal.installs").replace("{n}", s.installs);
-    return `<article class="gcard">
-      <canvas class="gprev" aria-hidden="true"></canvas>
-      <div class="gmeta"><b>${esc(s.name)}</b><span>${esc(s.author || t("gal.anon"))} · ${esc(count)}</span></div>
-      <a class="btn btn-glass gopen" href="luma://style/${esc(s.id)}">${esc(t("gal.open"))}</a>
-    </article>`;
+  function paintTop() {
+    if (!topSongs) return;
+    if (!chart) { topSongs.innerHTML = ""; topArtists.innerHTML = ""; return; }
+    topSongs.innerHTML = chart.songs.map((e, i) => row(i + 1, e.title, e.artist, e.listeners)).join("");
+    topArtists.innerHTML = chart.artists.map((e, i) => row(i + 1, e.artist, "", e.listeners)).join("");
+    topLead.textContent = chart.people > 0 ? t("top.lead_n").replace("{n}", chart.people) : t("top.lead");
+    topStatus.textContent = chart.songs.length || chart.artists.length ? "" : t("top.empty");
   }
-  function paint() {
-    if (!grid) return;
-    grid.innerHTML = styles.map(card).join("");
-    [...grid.querySelectorAll(".gprev")].forEach((cv, i) => drawLook(cv, styles[i].look));
-    more.hidden = next === null || !styles.length;
-    status.textContent = loading && !styles.length ? t("gal.loading") : (!loading && loaded && !styles.length ? t("gal.empty") : "");
-  }
-  async function load(reset) {
-    if (loading) return;
-    loading = true;
-    if (reset) { styles = []; next = 0; }
-    paint();
+  async function loadTop() {
+    if (chartBusy || chartFor === period) return;
+    chartBusy = true; chart = null; paintTop(); topStatus.textContent = t("gal.loading");
     try {
-      const r = await fetch(`${API}/v1/gallery?sort=${sort}&cursor=${next || 0}`);
+      const r = await fetch(`${API}/v1/charts?period=${period}`);
       if (!r.ok) throw new Error(r.status);
-      const data = await r.json();
-      styles = styles.concat(data.styles || []);
-      next = data.next ?? null;
-      loaded = true;
-    } catch (e) {
-      status.textContent = t("gal.error");
-      loading = false;
-      return;
-    }
-    loading = false;
-    paint();
+      chart = await r.json(); chartFor = period;
+    } catch (e) { topStatus.textContent = t("gal.error"); chartBusy = false; return; }
+    chartBusy = false; paintTop();
   }
-  if (grid) {
-    $("#galSort").addEventListener("click", e => {
-      const b = e.target.closest("button[data-v]"); if (!b || b.dataset.v === sort) return;
-      [...$("#galSort").children].forEach(x => x.setAttribute("aria-pressed", String(x === b)));
-      sort = b.dataset.v; load(true);
-    });
-    more.addEventListener("click", () => load(false));
-    addEventListener("resize", () => { if (styles.length) [...grid.querySelectorAll(".gprev")].forEach((cv, i) => drawLook(cv, styles[i].look)); });
-  }
+  if (topSongs) $("#topPeriod").addEventListener("click", e => {
+    const b = e.target.closest("button[data-v]"); if (!b || b.dataset.v === period) return;
+    [...$("#topPeriod").children].forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    period = b.dataset.v; loadTop();
+  });
 
   /* ---------- a shared "Your year" (the same card as the launcher's picture) ---------- */
-  const yrCanvas = $("#yrCanvas"), yrMsg = $("#yrMsg"), yrSave = $("#yrSave"), yrTitle = $("#yrTitle");
+  const yrCanvas = $("#yrCanvas"), yrMsg = $("#yrMsg"), yrSave = $("#yrSave"), yrTitle = $("#yrTitle"), yrEmpty = $("#yrEmpty"), yrLead = $("#yrLead");
+  let yrNoLink = false;
   let year = null, yearCode = null;
   const hours = s => s < 3600 ? `${Math.floor(s / 60)} min` : s < 36000 ? `${(s / 3600).toFixed(1)} h` : `${Math.round(s / 3600)} h`;
   function fit(x, text, width) {
@@ -216,13 +145,17 @@
   }
   function paintYear() {
     if (!yrCanvas) return;
-    if (!year) { yrCanvas.hidden = true; yrSave.hidden = true; yrTitle.textContent = t("yr.title"); return; }
+    yrEmpty.hidden = !yrNoLink;
+    yrLead.textContent = t(yrNoLink ? "yr.empty_lead" : "yr.lead");
+    if (!year) { yrCanvas.hidden = true; yrSave.hidden = true; yrTitle.textContent = t(yrNoLink ? "yr.empty_title" : "yr.title"); return; }
     yrCanvas.hidden = false; yrSave.hidden = false; yrMsg.textContent = "";
     yrTitle.textContent = year.name ? t("yr.title_name").replace("{name}", year.name) : t("yr.title");
     drawYear(yrCanvas, year);
   }
   async function loadYear(code) {
-    if (!/^[a-z0-9]{10}$/.test(code || "")) { year = null; paintYear(); yrMsg.textContent = t("yr.missing"); return; }
+    yrNoLink = !code;
+    if (!code) { year = null; yearCode = null; yrMsg.textContent = ""; paintYear(); return; }
+    if (!/^[a-z0-9]{10}$/.test(code)) { year = null; paintYear(); yrMsg.textContent = t("yr.missing"); return; }
     if (code === yearCode && year) { paintYear(); return; }
     yearCode = code; year = null; paintYear(); yrMsg.textContent = t("gal.loading");
     try {
@@ -233,6 +166,13 @@
       (document.fonts ? document.fonts.ready : Promise.resolve()).then(paintYear);
     } catch (e) { yrMsg.textContent = t("gal.error"); }
   }
+  // Paste a link (…/y/<code>, …#year/<code>) or just the code
+  if ($("#yrPaste")) $("#yrPaste").addEventListener("submit", e => {
+    e.preventDefault();
+    const m = $("#yrInput").value.trim().match(/(?:\/y\/|#year\/|^)([a-z0-9]{10})(?:[^a-z0-9]|$)/i);
+    if (!m) { yrMsg.textContent = t("yr.bad_link"); return; }
+    location.hash = "#year/" + m[1].toLowerCase();
+  });
   if (yrSave) yrSave.addEventListener("click", () => {
     yrCanvas.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = `Luma ${year.year}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }, "image/png");
   });
@@ -240,8 +180,11 @@
   /* ---------- when a page opens, or the language changes ---------- */
   document.addEventListener("luma:view", e => {
     const { id, arg } = e.detail;
-    if (id === "gallery" && !loaded) load(true);
+    if (id === "top") loadTop();
     if (id === "year") loadYear(arg);
   });
-  document.addEventListener("luma:lang", () => { paint(); paintYear(); });
+  document.addEventListener("luma:lang", () => {
+    document.querySelectorAll("[data-i18n-ph]").forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
+    paintTop(); paintYear();
+  });
 })();

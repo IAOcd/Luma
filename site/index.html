@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Luma · Music client for Minecraft Bedrock</title>
+<meta name="description" content="Luma is a free music client for Minecraft Bedrock on Windows: the song playing on your PC, its lyrics word by word and a visualizer, inside your game.">
+<meta name="theme-color" content="#1B1D1F">
+<meta property="og:title" content="Luma · Music client for Minecraft Bedrock">
+<meta property="og:description" content="Your music, inside Minecraft. Lyrics word by word, Lyric Flow, visualizer and a launcher with Spotify.">
+<meta property="og:image" content="assets/screens/ingame-lyric-flow.webp">
+<link rel="icon" href="assets/luma-logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=8">
+</head>
+<body data-view="home">
+
+<!-- the album's living colors, like the launcher: they follow what's on screen -->
+<div class="aura" aria-hidden="true"><i data-v="home" class="on"></i><i data-v="game"></i><i data-v="launcher"></i><i data-v="faq"></i><i data-v="download"></i></div>
+<canvas class="field" id="field" aria-hidden="true"></canvas>
+
+<header class="top">
+  <a class="brand" href="#home" data-go="home" aria-label="Luma"><i class="mark" aria-hidden="true"></i><span>Luma</span></a>
+  <div class="top-right">
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" data-lang="en" aria-pressed="true">EN</button>
+      <button type="button" data-lang="es" aria-pressed="false">ES</button>
+      <button type="button" data-lang="pt" aria-pressed="false">PT</button>
+      <span class="lang-pill" aria-hidden="true"></span>
+    </div>
+    <a class="gh" href="https://github.com/IAOcd/Luma" target="_blank" rel="noopener" aria-label="GitHub">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 8.4 22.9c.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0C17.3 4.6 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.9 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.2c0 .3.2.7.8.6A11.5 11.5 0 0 0 12 .5Z"/></svg>
+    </a>
+  </div>
+</header>
+
+<main class="views" id="views">
+
+  <!-- HOME -->
+  <section class="view v-home" id="home" data-label="Home" aria-labelledby="h-home">
+    <div class="hero">
+      <div class="home-in">
+      <div class="logo-wrap" id="logoWrap">
+        <span class="ring" aria-hidden="true"></span><span class="ring" aria-hidden="true"></span><span class="ring" aria-hidden="true"></span>
+        <img class="big-logo" id="bigLogo" src="assets/luma-logo.svg" alt="Luma logo" width="168" height="168">
+      </div>
+      <h1 id="h-home" class="home-title">
+        <span class="ln" data-i18n="home.l1">Your music.</span>
+        <span class="ln dim" data-i18n="home.l2">Inside Minecraft.</span>
+      </h1>
+      <p class="home-sub" data-i18n="home.sub">Luma is a free music client for Minecraft Bedrock. The song playing on your PC, its lyrics word by word and a visualizer, right in your world.</p>
+      <div class="home-cta">
+        <a class="btn btn-primary dl" href="https://github.com/IAOcd/Luma/releases/latest/download/LumaLauncher.exe">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+          <span data-i18n="cta.download">Download for Windows</span>
+        </a>
+        <a class="btn btn-glass" href="#game" data-go="game">
+          <span data-i18n="home.see">See it in the game</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+        </a>
+      </div>
+      <p class="meta"><span data-i18n="cta.free">Free</span> · <span class="ver">v0.7.5</span> · Windows · Minecraft Bedrock (GDK)</p>
+      <span class="hint" aria-hidden="true"><span data-i18n="hint">Scroll to see more</span><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></span>
+    </div>
+    <canvas class="bars" id="bars" aria-hidden="true"></canvas>
+    </div>
+    <div class="more">
+      <h2 class="more-title reveal" data-i18n="more.title">Everything for your song.</h2>
+      <div class="cards">
+        <a class="card reveal" href="#game" data-go="game">
+          <span class="card-img"><img src="assets/screens/ingame-lyric-flow.webp" alt="" width="1600" height="900" loading="lazy" decoding="async"></span>
+          <b>Lyric Flow</b><span data-i18n="more.flow">The lyrics, written in your world.</span>
+        </a>
+        <a class="card reveal" href="#game" data-go="game">
+          <span class="card-img"><img src="assets/screens/ingame-halo.webp" alt="" width="1600" height="900" loading="lazy" decoding="async"></span>
+          <b>Halo</b><span data-i18n="more.halo">Your music from the radial menu.</span>
+        </a>
+        <a class="card reveal" href="#launcher" data-go="launcher">
+          <span class="card-img"><img src="assets/screens/launcher-home.webp" alt="" width="1600" height="900" loading="lazy" decoding="async"></span>
+          <b>Launcher</b><span data-i18n="more.launcher">Spotify inside, with Luma's own player.</span>
+        </a>
+      </div>
+
+      <!-- Lyric Flow: styles you can change -->
+      <div class="feat">
+        <div class="feat-text reveal">
+          <h2 data-i18n="lf.title">Lyric Flow, your way.</h2>
+          <p data-i18n="lf.body">Pick a ready-made style or make your own. Your styles work in the game and in the launcher.</p>
+          <ul class="opts">
+            <li data-i18n="lf.o1">15 fonts, Minecraft's own included</li>
+            <li data-i18n="lf.o2">One color, two colors, the album's colors or rainbow</li>
+            <li data-i18n="lf.o3">Glow, outline and shadow</li>
+            <li data-i18n="lf.o4">Particles around the words</li>
+            <li data-i18n="lf.o5">How words appear, move and leave</li>
+            <li data-i18n="lf.o6">In front of you, or pinned in one place</li>
+          </ul>
+        </div>
+        <div class="feat-demo reveal">
+          <div class="stage" id="stage" data-style="karaoke">
+            <p class="flow" id="flow" aria-hidden="true"></p>
+            <span class="demo-tag" data-i18n="demo.tag">Demo</span>
+          </div>
+          <div class="chips" role="group" aria-label="Lyric Flow styles" data-target="stage" data-attr="style">
+            <button type="button" data-v="karaoke" aria-pressed="true">Karaoke</button>
+            <button type="button" data-v="neon" aria-pressed="false">Neon</button>
+            <button type="button" data-v="party" aria-pressed="false">Party</button>
+            <button type="button" data-v="dream" aria-pressed="false">Dream</button>
+            <button type="button" data-v="fire" aria-pressed="false">Fire</button>
+            <button type="button" data-v="minimal" aria-pressed="false">Minimal</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Now Playing: 7 styles -->
+      <div class="feat flip">
+        <div class="feat-text reveal">
+          <h2 data-i18n="np.title">Now Playing, seven ways.</h2>
+          <p data-i18n="np.body">Your song in a corner of the screen. Choose the look that fits your HUD, and move it wherever you want.</p>
+        </div>
+        <div class="feat-demo reveal">
+          <div class="corner">
+            <img src="assets/screens/ingame-halo.webp" alt="" width="1600" height="900" loading="lazy" decoding="async">
+            <div class="np" id="np" data-np="progress" aria-hidden="true">
+              <span class="np-art"></span>
+              <span class="np-txt"><b>Afterglow</b><small>Demo artist</small><em>we left the lights on</em><span class="np-bar"><i></i></span></span>
+            </div>
+          </div>
+          <div class="chips" role="group" aria-label="Now Playing styles" data-target="np" data-attr="np">
+            <button type="button" data-v="compact" aria-pressed="false">Compact</button>
+            <button type="button" data-v="progress" aria-pressed="true">With progress</button>
+            <button type="button" data-v="card" aria-pressed="false">Card</button>
+            <button type="button" data-v="line" aria-pressed="false">One line</button>
+            <button type="button" data-v="vinyl" aria-pressed="false">Vinyl</button>
+            <button type="button" data-v="lyrics" aria-pressed="false">Lyrics</button>
+            <button type="button" data-v="wide" aria-pressed="false">Wide + lyrics</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Visualizer: 7 styles -->
+      <div class="feat">
+        <div class="feat-text reveal">
+          <h2 data-i18n="vz.title">See the beat.</h2>
+          <p data-i18n="vz.body">Seven visualizers that move with your song, drawn in the sky of your world.</p>
+        </div>
+        <div class="feat-demo reveal">
+          <div class="vizbox"><canvas id="viz" aria-hidden="true"></canvas></div>
+          <div class="chips" role="group" aria-label="Visualizer styles" data-target="viz" data-attr="viz">
+            <button type="button" data-v="bars" aria-pressed="true">Bars</button>
+            <button type="button" data-v="mirror" aria-pressed="false">Mirrored</button>
+            <button type="button" data-v="wave" aria-pressed="false">Wave</button>
+            <button type="button" data-v="aurora" aria-pressed="false">Aurora</button>
+            <button type="button" data-v="rings" aria-pressed="false">Rings</button>
+            <button type="button" data-v="pillars" aria-pressed="false">Pillars</button>
+            <button type="button" data-v="layered" aria-pressed="false">Layered wave</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Launcher: yours -->
+      <div class="feat flip">
+        <div class="feat-text reveal">
+          <h2 data-i18n="ly.title">A launcher that's yours.</h2>
+          <ul class="opts">
+            <li data-i18n="ly.o1">Dark or light theme</li>
+            <li data-i18n="ly.o2">Tinted by the album you're playing</li>
+            <li data-i18n="ly.o3">Spotify inside, with Luma's own player (Premium)</li>
+            <li data-i18n="ly.o4">English, Spanish and Portuguese</li>
+            <li data-i18n="ly.o5">Updates itself, signed</li>
+          </ul>
+        </div>
+        <a class="feat-demo shot reveal" href="#launcher" data-go="launcher">
+          <img src="assets/screens/launcher-spotify.webp" alt="Spotify inside the Luma launcher" width="1600" height="900" loading="lazy" decoding="async">
+        </a>
+      </div>
+
+      <div class="why">
+      <div class="vow reveal"><h3 class="sing" data-i18n="why.1.t">Performance first.</h3><p data-i18n="why.1.b">Luma draws only what you turn on, and nothing at all while the game is minimized.</p></div>
+      <div class="vow reveal"><h3 class="sing" data-i18n="why.2.t">No unfair advantage.</h3><p data-i18n="why.2.b">No killaura, reach, xray or autoclicker. Not now, not later. Just music.</p></div>
+      <div class="vow reveal"><h3 class="sing" data-i18n="why.3.t">Works with other clients.</h3><p data-i18n="why.3.b">Luma only does music, so it runs next to the client you already use.</p></div>
+    </div>
+      <div class="end reveal">
+        <h2 data-i18n="end.title">Free. Light. Yours.</h2>
+        <a class="btn btn-primary btn-xl dl" href="https://github.com/IAOcd/Luma/releases/latest/download/LumaLauncher.exe">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+          <span data-i18n="cta.download">Download for Windows</span>
+        </a>
+        <a class="end-link" href="#faq" data-go="faq" data-i18n="end.faq">Questions? We have answers.</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- IN THE GAME -->
+  <section class="view v-show" id="game" data-label="In the game" aria-labelledby="h-game">
+    <div class="show">
+      <div class="show-side">
+        <h2 id="h-game" data-i18n="game.title">In your world.</h2>
+        <p class="lead" data-i18n="game.lead">Everything Luma draws, it draws for your song. Pick one to see it.</p>
+        <div class="picks" role="tablist" aria-label="In the game" data-group="game">
+          <button role="tab" aria-selected="true" data-shot="flow"><b>Lyric Flow</b><span class="d"><span data-i18n="game.flow">The lyrics written in your world, behind the blocks, filling word by word.</span></span></button>
+          <button role="tab" aria-selected="false" data-shot="viz"><b data-i18n="game.viz.t">Visualizer</b><span class="d"><span data-i18n="game.viz">Seven styles that dance in the sky: bars, wave, aurora, rings…</span></span></button>
+          <button role="tab" aria-selected="false" data-shot="now"><b>Now Playing</b><span class="d"><span data-i18n="game.now">Your song in a corner, in 7 styles.</span></span></button>
+          <button role="tab" aria-selected="false" data-shot="halo"><b>Halo</b><span class="d"><span data-i18n="game.halo">Pause, skip and see the cover from the radial menu.</span></span></button>
+          <button role="tab" aria-selected="false" data-shot="page"><b data-i18n="game.page.t">Music page</b><span class="d"><span data-i18n="game.page">Cover, controls and lyrics you can scroll. Press L.</span></span></button>
+        </div>
+      </div>
+      <figure class="screen" data-group="game">
+        <img data-shot="flow" class="on" src="assets/screens/ingame-lyric-flow.webp" alt="Lyric Flow: lyrics drawn in a Minecraft sunset with a red visualizer" width="1600" height="900" style="--fx:56%;--fy:42%;--z:1.7">
+        <img data-shot="viz" src="assets/screens/ingame-lyric-flow.webp" alt="Luma's visualizer bars in the sky" width="1600" height="900" style="--fx:50%;--fy:12%;--z:1.35" loading="lazy" decoding="async">
+        <img data-shot="now" src="assets/screens/ingame-lyric-flow.webp" alt="Now Playing in the bottom-left corner of the game" width="1600" height="900" style="--fx:0%;--fy:100%;--z:3" loading="lazy" decoding="async">
+        <img data-shot="halo" src="assets/screens/ingame-halo.webp" alt="Halo, Luma's radial menu with the album cover" width="1600" height="900" style="--fx:50%;--fy:50%;--z:1.4" loading="lazy" decoding="async">
+        <img data-shot="page" src="assets/screens/ingame-music-page.webp" alt="The Music page in Luma's menu with synced lyrics" width="1600" height="900" style="--fx:50%;--fy:50%;--z:1.08" loading="lazy" decoding="async">
+      </figure>
+    </div>
+  </section>
+
+  <!-- LAUNCHER -->
+  <section class="view v-show" id="launcher" data-label="Launcher" aria-labelledby="h-launcher">
+    <div class="show">
+      <div class="show-side">
+        <h2 id="h-launcher" data-i18n="launch.title">A launcher that plays along.</h2>
+        <p class="lead" data-i18n="launch.lead">Open Minecraft from here and Luma comes with it. Meanwhile, your music lives here.</p>
+        <div class="picks" role="tablist" aria-label="Launcher" data-group="launcher">
+          <button role="tab" aria-selected="true" data-shot="lhome"><b>Home</b><span class="d"><span data-i18n="launch.home">Your song in the middle, over the album's living colors.</span></span></button>
+          <button role="tab" aria-selected="false" data-shot="llyrics"><b data-i18n="launch.lyrics.t">Lyrics</b><span class="d"><span data-i18n="launch.lyrics">Big lyrics, word by word, in the style you made.</span></span></button>
+          <button role="tab" aria-selected="false" data-shot="lspotify"><b>Spotify</b><span class="d"><span data-i18n="launch.spotify">Library, playlists and search. Luma's own player plays without the Spotify app (needs Premium).</span></span></button>
+        </div>
+        <p class="note" data-i18n="launch.note">Updates itself from GitHub, signed. English, Spanish and Portuguese.</p>
+      </div>
+      <figure class="screen" data-group="launcher">
+        <img data-shot="lhome" class="on" src="assets/screens/launcher-home.webp" alt="Luma launcher home with the song over the album colors" width="1600" height="900" style="--fx:50%;--fy:50%;--z:1.06">
+        <img data-shot="llyrics" src="assets/screens/launcher-lyrics.webp" alt="Luma launcher lyrics view" width="1600" height="900" style="--fx:50%;--fy:50%;--z:1.06" loading="lazy" decoding="async">
+        <img data-shot="lspotify" src="assets/screens/launcher-spotify.webp" alt="Spotify inside the Luma launcher" width="1600" height="900" style="--fx:50%;--fy:50%;--z:1.04" loading="lazy" decoding="async">
+      </figure>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="view v-faq" id="faq" data-label="FAQ" aria-labelledby="h-faq">
+    <div class="faq">
+      <div class="qs">
+        <h2 id="h-faq" data-i18n="faq.title">Questions</h2>
+        <div role="tablist" aria-label="Questions" class="qlist">
+          <button role="tab" aria-selected="true" data-q="1" data-i18n="faq.q1">Is it safe?</button>
+          <button role="tab" aria-selected="false" data-q="2" data-i18n="faq.q2">Which Minecraft does it work with?</button>
+          <button role="tab" aria-selected="false" data-q="3" data-i18n="faq.q3">How does it update?</button>
+          <button role="tab" aria-selected="false" data-q="4" data-i18n="faq.q4">Do I need Spotify Premium?</button>
+          <button role="tab" aria-selected="false" data-q="5" data-i18n="faq.q5">What does Luma send, and where?</button>
+          <button role="tab" aria-selected="false" data-q="6" data-i18n="faq.q6">Does it cost anything?</button>
+        </div>
+      </div>
+      <div class="answer" aria-live="polite">
+        <div class="a on" data-a="1"><h3 data-i18n="faq.q1">Is it safe?</h3><p data-i18n="faq.a1">Luma is open source (GPL-3.0) on GitHub, so anyone can read what it does. It loads into the official game on your PC and doesn't touch your account or your worlds. Press End to unload it without closing the game. Some servers don't allow any client, so check their rules.</p></div>
+        <div class="a" data-a="2"><h3 data-i18n="faq.q2">Which Minecraft does it work with?</h3><p data-i18n="faq.a2">Minecraft Bedrock for Windows, the GDK version (Minecraft.Windows.exe) from the Microsoft Store or the Xbox app. Not Java, consoles or phones.</p></div>
+        <div class="a" data-a="3"><h3 data-i18n="faq.q3">How does it update?</h3><p data-i18n="faq.a3">The launcher checks Luma's GitHub Releases when you open it, verifies the signature and updates itself. You don't have to download it again.</p></div>
+        <div class="a" data-a="4"><h3 data-i18n="faq.q4">Do I need Spotify Premium?</h3><p data-i18n="faq.a4">Only for Luma's own player inside the launcher. Now Playing, lyrics and the visualizer work with any app that shows up in Windows' media controls.</p></div>
+        <div class="a" data-a="5"><h3 data-i18n="faq.q5">What does Luma send, and where?</h3><p data-i18n="faq.a5">To find lyrics, only the song's title, artist, album and length go to LiriQo and LRCLIB. For sharp covers, the title and artist go to Apple's iTunes catalog. You can turn each one off. Signing in with Microsoft is optional.</p></div>
+        <div class="a" data-a="6"><h3 data-i18n="faq.q6">Does it cost anything?</h3><p data-i18n="faq.a6">No. Luma is free.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DOWNLOAD -->
+  <section class="view v-get" id="download" data-label="Download" aria-labelledby="h-get">
+    <div class="get">
+      <img class="get-logo" src="assets/luma-logo.svg" alt="" width="104" height="104">
+      <h2 id="h-get" data-i18n="get.title">Press play.</h2>
+      <a class="btn btn-primary btn-xl dl" href="https://github.com/IAOcd/Luma/releases/latest/download/LumaLauncher.exe">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+        <span data-i18n="cta.download">Download for Windows</span>
+      </a>
+      <p class="meta"><span data-i18n="cta.free">Free</span> · <span class="ver">v0.7.5</span> · LumaLauncher.exe · <a href="https://github.com/IAOcd/Luma/releases" target="_blank" rel="noopener" data-i18n="get.notes">Release notes</a></p>
+      <ol class="steps">
+        <li><b>1</b><span data-i18n="get.s1">Open LumaLauncher.exe</span></li>
+        <li><b>2</b><span data-i18n="get.s2">Press PLAY</span></li>
+        <li><b>3</b><span data-i18n="get.s3">Play a song. Press L in the game.</span></li>
+      </ol>
+    </div>
+    <footer class="foot">
+      <p><span data-i18n="foot.made">Made with</span> Dear ImGui, MinHook, nlohmann/json, librespot, LRCLIB, Lucide <span data-i18n="foot.and">and</span> Simple Icons.</p>
+      <p data-i18n="foot.legal">Luma is not made or endorsed by Mojang, Microsoft or Spotify. Minecraft is a trademark of Mojang. Spotify is a trademark of Spotify AB.</p>
+    </footer>
+  </section>
+</main>
+
+<!-- the glass dock, like the launcher's -->
+<nav class="dock" aria-label="Sections">
+  <span class="dock-pill" aria-hidden="true"></span>
+  <a href="#home" data-go="home" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg><span data-i18n="dock.home">Home</span></a>
+  <a href="#game" data-go="game"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span data-i18n="dock.game">In the game</span></a>
+  <a href="#launcher" data-go="launcher"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg><span data-i18n="dock.launcher">Launcher</span></a>
+  <a href="#faq" data-go="faq"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg><span data-i18n="dock.faq">Questions</span></a>
+  <a href="#download" data-go="download" class="dock-get"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><span data-i18n="dock.get">Download</span></a>
+</nav>
+
+<script src="i18n.js?v=8"></script>
+<script src="main.js?v=8"></script>
+</body>
+</html>

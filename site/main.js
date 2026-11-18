@@ -274,7 +274,7 @@
   // Unas pocas curvas orgánicas detrás de todo. No reaccionan al mouse ni al scroll: solo "respiran"
   // muy despacio y toman otra forma al cambiar de sección. Se dibujan ~12 veces por segundo (casi gratis).
   const field = $("#field"), fx = field.getContext("2d");
-  const tint = { home: [233, 230, 223], game: [255, 176, 120], launcher: [240, 150, 205], top: [200, 180, 255], faq: [175, 195, 240], download: [240, 232, 215], year: [233, 230, 223] };
+  const tint = { home: [233, 230, 223], game: [255, 176, 120], launcher: [240, 150, 205], top: [200, 180, 255], me: [233, 230, 223], faq: [175, 195, 240], download: [240, 232, 215], year: [233, 230, 223] };
   const SEG = 110, NP = 9;
   let lines = [], W = 0, H = 0, dpr = 1;
   function shapeFor(view, k) {

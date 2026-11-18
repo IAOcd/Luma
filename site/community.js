@@ -143,6 +143,7 @@
       });
     });
   }
+  window.LUMA_YEAR = { draw: drawYear };  // (your profile draws the same card: account.js)
   function paintYear() {
     if (!yrCanvas) return;
     yrEmpty.hidden = !yrNoLink;

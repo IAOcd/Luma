@@ -13,17 +13,18 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=9">
+<link rel="stylesheet" href="styles.css?v=10">
 </head>
 <body data-view="home">
 
 <!-- the album's living colors, like the launcher: they follow what's on screen -->
-<div class="aura" aria-hidden="true"><i data-v="home" class="on"></i><i data-v="game"></i><i data-v="launcher"></i><i data-v="top"></i><i data-v="year"></i><i data-v="faq"></i><i data-v="download"></i></div>
+<div class="aura" aria-hidden="true"><i data-v="home" class="on"></i><i data-v="game"></i><i data-v="launcher"></i><i data-v="top"></i><i data-v="year"></i><i data-v="me"></i><i data-v="faq"></i><i data-v="download"></i></div>
 <canvas class="field" id="field" aria-hidden="true"></canvas>
 
 <header class="top">
   <a class="brand" href="#home" data-go="home" aria-label="Luma"><i class="mark" aria-hidden="true"></i><span>Luma</span></a>
   <div class="top-right">
+    <a class="me-btn" id="meBtn" href="#me" data-go="me" aria-label="Your profile"><span>Sign in</span></a>
     <div class="lang" role="group" aria-label="Language">
       <button type="button" data-lang="en" aria-pressed="true">EN</button>
       <button type="button" data-lang="es" aria-pressed="false">ES</button>
@@ -288,6 +289,49 @@
     </div>
   </section>
 
+  <!-- YOUR PROFILE: sign in with Microsoft (the same account as the launcher) -->
+  <section class="view v-me" id="me" data-label="Your profile" aria-labelledby="h-me">
+    <div class="me-wrap">
+      <div class="me-out" id="meOut">
+        <h2 id="h-me" data-i18n="me.title">Your Luma.</h2>
+        <p class="lead" data-i18n="me.lead">Sign in with the same Microsoft account as Luma's launcher to see your year, share it and manage your data.</p>
+        <button type="button" class="btn btn-primary" id="meSignIn"><svg viewBox="0 0 21 21" aria-hidden="true"><path fill="#f25022" d="M1 1h9v9H1z"/><path fill="#7fba00" d="M11 1h9v9h-9z"/><path fill="#00a4ef" d="M1 11h9v9H1z"/><path fill="#ffb900" d="M11 11h9v9h-9z"/></svg><span>Sign in with Microsoft</span></button>
+        <p class="me-err" id="meErr" aria-live="polite"></p>
+        <p class="note" data-i18n="me.privacy">Your password is typed only on Microsoft's page. Luma gets your Xbox gamertag and picture, and keeps nothing else from Microsoft.</p>
+      </div>
+      <div class="me-in" id="meIn" hidden>
+        <div class="yr-art">
+          <canvas id="meCanvas" width="1080" height="1350" role="img" aria-label="Your year in Luma" hidden></canvas>
+          <p class="yr-msg" id="meMsg" aria-live="polite"></p>
+        </div>
+        <div class="me-side">
+          <div class="me-who"><img id="meAvatar" alt="" width="56" height="56" hidden><div><b id="meName"></b><span data-i18n="me.signed">Signed in with Xbox</span></div></div>
+          <div class="chips" id="meYear" role="group" aria-label="Year"></div>
+          <div class="me-rows">
+            <label class="me-row"><span><b data-i18n="me.charts">Count my songs in "Top in Luma"</b><small data-i18n="me.charts_hint">Anonymous: only how many people heard each song, and only songs at least 3 people heard.</small></span><input type="checkbox" class="sw" id="meCharts"></label>
+            <label class="me-row"><span><b data-i18n="me.share_name">Show my gamertag on the link</b></span><input type="checkbox" class="sw" id="meShareName"></label>
+          </div>
+          <div class="me-actions">
+            <button type="button" class="btn btn-primary" id="meShare">Share a link</button>
+            <button type="button" class="btn btn-glass" id="meUnshare" hidden data-i18n="me.unshare">Stop sharing</button>
+            <button type="button" class="btn btn-glass" id="meSave" data-i18n="yr.save">Save image</button>
+          </div>
+          <p class="me-link" id="meLink"></p>
+          <p class="me-note" id="meNote" aria-live="polite"></p>
+          <details class="me-data">
+            <summary data-i18n="me.data">Your data</summary>
+            <p data-i18n="me.data_text">Luma's server keeps your Xbox account number and gamertag, and only what you turned on in the launcher: your styles and settings, your styles in the gallery and your year's monthly totals. Deleting your Luma account deletes all of it, right away.</p>
+            <div class="me-actions">
+              <button type="button" class="btn btn-glass" id="meExport" data-i18n="me.export">Download my data</button>
+              <button type="button" class="btn btn-glass me-danger" id="meDelete" data-i18n="me.delete">Delete my Luma account</button>
+            </div>
+          </details>
+          <button type="button" class="me-signout" id="meSignOut" data-i18n="me.signout">Sign out</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- FAQ -->
   <section class="view v-faq" id="faq" data-label="FAQ" aria-labelledby="h-faq">
     <div class="faq">
@@ -343,13 +387,13 @@
   <a href="#game" data-go="game"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span data-i18n="dock.game">In the game</span></a>
   <a href="#launcher" data-go="launcher"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg><span data-i18n="dock.launcher">Launcher</span></a>
   <a href="#top" data-go="top"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span data-i18n="dock.top">Top</span></a>
-  <a href="#year" data-go="year"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span data-i18n="dock.year">Your year</span></a>
   <a href="#faq" data-go="faq"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg><span data-i18n="dock.faq">Questions</span></a>
   <a href="#download" data-go="download" class="dock-get"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><span data-i18n="dock.get">Download</span></a>
 </nav>
 
-<script src="i18n.js?v=9"></script>
-<script src="community.js?v=9"></script>
-<script src="main.js?v=9"></script>
+<script src="i18n.js?v=10"></script>
+<script src="community.js?v=10"></script>
+<script src="account.js?v=10"></script>
+<script src="main.js?v=10"></script>
 </body>
 </html>

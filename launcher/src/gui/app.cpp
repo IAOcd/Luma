@@ -7942,79 +7942,186 @@ std::string Hours(double seconds) {
     return out;
 }
 
-// The card, in the rectangle a..b (4:5). Everything is measured in "u"
-// (1/540 of its width), so it looks the same small or big.
-void DrawCard(ImDrawList* d, ImVec2 a, ImVec2 b, const listening::Summary& s) {
-    const float W = b.x - a.x, u = W / 540.0f;
-    const ImU32 top = IM_COL32(18, 17, 34, 255), bottom = IM_COL32(52, 26, 74, 255);
-    d->AddRectFilledMultiColor(a, b, top, top, bottom, bottom);
-    // soft lights
-    for (int i = 0; i < 3; ++i) {
-        const ImVec2 c(a.x + W * (i == 0 ? 0.85f : i == 1 ? 0.10f : 0.55f), a.y + (b.y - a.y) * (i == 0 ? 0.08f : i == 1 ? 0.55f : 0.98f));
-        const ImU32 col = i == 0 ? IM_COL32(150, 110, 255, 14) : i == 1 ? IM_COL32(255, 120, 190, 9) : IM_COL32(90, 200, 255, 9);
-        for (int r = 14; r >= 1; --r) d->AddCircleFilled(c, u * 18.0f * static_cast<float>(r), col, 64);
+// Numbers in PIXELS (5 x 7 blocks, like Minecraft's letters), drawn block by
+// block: sharp at any size, on the screen and in the saved picture.
+const unsigned char* PixelGlyph(char c, int& width) {
+    static const unsigned char k0[7] = {14, 17, 19, 21, 25, 17, 14}, k1[7] = {4, 12, 4, 4, 4, 4, 14}, k2[7] = {14, 17, 1, 2, 4, 8, 31},
+                               k3[7] = {30, 1, 1, 14, 1, 1, 30}, k4[7] = {2, 6, 10, 18, 31, 2, 2}, k5[7] = {31, 16, 30, 1, 1, 17, 14},
+                               k6[7] = {6, 8, 16, 30, 17, 17, 14}, k7[7] = {31, 1, 2, 4, 8, 8, 8}, k8[7] = {14, 17, 17, 14, 17, 17, 14},
+                               k9[7] = {14, 17, 17, 15, 1, 2, 12}, kh[7] = {16, 16, 22, 25, 17, 17, 17}, km[7] = {0, 0, 26, 21, 21, 17, 17},
+                               ki[7] = {4, 0, 12, 4, 4, 4, 14}, kn[7] = {0, 0, 22, 25, 17, 17, 17}, kdot[7] = {0, 0, 0, 0, 0, 12, 12};
+    width = 5;
+    switch (c) {
+        case '0': return k0;
+        case '1': return k1;
+        case '2': return k2;
+        case '3': return k3;
+        case '4': return k4;
+        case '5': return k5;
+        case '6': return k6;
+        case '7': return k7;
+        case '8': return k8;
+        case '9': return k9;
+        case 'h': return kh;
+        case 'm': return km;
+        case 'i': return ki;
+        case 'n': return kn;
+        case '.': case ',': return kdot;
+        default: width = 3; return nullptr;  // (a space)
     }
-    const ImU32 white = IM_COL32(245, 242, 236, 255), dim = IM_COL32(245, 242, 236, 150), accent = IM_COL32(190, 160, 255, 255);
-    ImFont* bold = g_fonts.hero;
-    ImFont* semi = g_fonts.semibold;
-    ImFont* reg = g_fonts.regular;
-    const float x = a.x + u * 40.0f, w = W - u * 80.0f;
-    float y = a.y + u * 38.0f;
-    Put(d, semi, u * 17.0f, ImVec2(x, y), dim, "LUMA");
-    y += u * 26.0f;
-    char year[16];
-    std::snprintf(year, sizeof(year), "%d", s.year);
-    Put(d, bold, u * 74.0f, ImVec2(x - u * 3.0f, y), white, year);
-    y += u * 74.0f;
-    Put(d, semi, u * 22.0f, ImVec2(x, y), accent, T("year.card_title"));
-    y += u * 44.0f;
-    // the big number
-    Put(d, bold, u * 58.0f, ImVec2(x, y), white, Hours(s.seconds));
-    y += u * 60.0f;
-    Put(d, reg, u * 17.0f, ImVec2(x, y), dim, T("year.card_hours"));
-    y += u * 30.0f;
-    char line[160];
-    std::snprintf(line, sizeof(line), T("year.card_counts"), s.plays, s.songs, s.artists);
-    Put(d, semi, u * 17.0f, ImVec2(x, y), white, FitText(semi, u * 17.0f, w, line));
-    y += u * 38.0f;
-    // top songs and top artists, side by side
-    const float colW = (w - u * 24.0f) * 0.5f;
-    for (int col = 0; col < 2; ++col) {
-        const float cx = x + col * (colW + u * 24.0f);
-        float cy = y;
-        Put(d, semi, u * 15.0f, ImVec2(cx, cy), accent, T(col == 0 ? "year.card_songs" : "year.card_artists"));
-        cy += u * 26.0f;
-        const auto& list = col == 0 ? s.topSongs : s.topArtists;
-        if (list.empty()) Put(d, reg, u * 15.0f, ImVec2(cx, cy), dim, "\xE2\x80\x94");
-        for (std::size_t i = 0; i < list.size(); ++i) {
-            char n[8];
-            std::snprintf(n, sizeof(n), "%zu", i + 1);
-            Put(d, bold, u * 22.0f, ImVec2(cx, cy - u * 2.0f), i == 0 ? accent : dim, n);
-            const float tx = cx + u * 26.0f, tw = colW - u * 26.0f;
-            const std::string main = col == 0 ? list[i].title : list[i].artist;
-            Put(d, semi, u * 16.0f, ImVec2(tx, cy), white, FitText(semi, u * 16.0f, tw, main));
-            const std::string sub = col == 0 ? (list[i].artist.empty() ? Hours(list[i].seconds) : list[i].artist) : Hours(list[i].seconds);
-            Put(d, reg, u * 13.0f, ImVec2(tx, cy + u * 20.0f), dim, FitText(reg, u * 13.0f, tw, sub));
-            cy += u * 40.0f;
+}
+
+float PixelWidth(const std::string& text, float cell) {
+    float w = 0.0f;
+    for (char c : text) {
+        int gw = 0;
+        PixelGlyph(c, gw);
+        w += (gw + 1) * cell;
+    }
+    return std::max(0.0f, w - cell);
+}
+
+// (Clean, without a shadow: on the black it would only smudge the blocks.)
+void PixelText(ImDrawList* d, ImVec2 pos, float cell, ImU32 color, const std::string& text) {
+    for (int pass = 1; pass < 2; ++pass) {
+        const ImU32 col = pass == 0 ? IM_COL32(0, 0, 0, 90) : color;
+        const float off = pass == 0 ? cell : 0.0f;
+        float x = pos.x;
+        for (char c : text) {
+            int gw = 0;
+            const unsigned char* g = PixelGlyph(c, gw);
+            if (g != nullptr) {
+                for (int row = 0; row < 7; ++row) {
+                    for (int col2 = 0; col2 < 5; ++col2) {
+                        if (g[row] & (16 >> col2)) {
+                            const ImVec2 a(x + col2 * cell + off, pos.y + row * cell + off);
+                            d->AddRectFilled(a, ImVec2(a.x + cell, a.y + cell), col);
+                        }
+                    }
+                }
+            }
+            x += (gw + 1) * cell;
         }
     }
-    // the months
-    const float barsTop = b.y - u * 118.0f, barsBottom = b.y - u * 62.0f;
+}
+
+// The card, in the rectangle a..b (4:5). Everything is measured in "u"
+// (1/540 of its width), so it looks the same small or big. OLED black, with
+// soft gradients of Luma's own color (the logo's ivory and its warm stone
+// tones, the same as the website's living background). THE HILL IS YOUR
+// YEAR: each of its twelve columns of blocks is a month, as tall as the
+// music you heard in it; the blocks fade into the black.
+void DrawCard(ImDrawList* d, ImVec2 a, ImVec2 b, const listening::Summary& s) {
+    const float W = b.x - a.x, H = b.y - a.y, u = W / 540.0f;
+    const ImU32 ivory = IM_COL32(233, 230, 223, 255), dim = IM_COL32(233, 230, 223, 150), faint = IM_COL32(233, 230, 223, 80);
+    const ImVec4 stone(0.604f, 0.561f, 0.486f, 1.0f), stoneDark(0.478f, 0.447f, 0.400f, 1.0f), ivoryV(0.913f, 0.902f, 0.874f, 1.0f);
+    d->AddRectFilled(a, b, IM_COL32(0, 0, 0, 255));
+    // the light: soft gradients of Luma's color on the black
+    d->PushClipRect(a, b, true);
+    SoftLightOval(d, ImVec2(a.x + W * 0.20f, a.y + H * 0.16f), W * 0.62f, H * 0.36f, stone, 0.95f);
+    SoftLightOval(d, ImVec2(a.x + W * 0.92f, a.y + H * 0.06f), W * 0.46f, H * 0.26f, stoneDark, 0.70f);
+    SoftLightOval(d, ImVec2(a.x + W * 0.55f, a.y + H * 0.40f), W * 0.70f, H * 0.22f, ivoryV, 0.16f);
+    SoftLightOval(d, ImVec2(a.x + W * 0.08f, a.y + H * 0.98f), W * 0.55f, H * 0.30f, stoneDark, 0.55f);
+    SoftLightOval(d, ImVec2(a.x + W * 0.95f, a.y + H * 0.88f), W * 0.40f, H * 0.26f, stone, 0.35f);
+    d->PopClipRect();
+    ImFont* semi = g_fonts.semibold;
+    ImFont* reg = g_fonts.regular;
+    const float m = u * 38.0f;
+    const float x = a.x + m, right = b.x - m;
+    // --- top: LUMA, the year, what it is ---
+    d->AddText(semi, u * 15.0f, ImVec2(x, a.y + u * 40.0f), dim, "LUMA");
+    {
+        const char* from = T(s.fromCloud ? "year.card_all_pcs" : "year.card_this_pc");
+        const float fw = reg->CalcTextSizeA(u * 12.0f, FLT_MAX, 0.0f, from).x;
+        d->AddText(reg, u * 12.0f, ImVec2(right - fw, a.y + u * 42.0f), faint, from);
+    }
+    char year[16];
+    std::snprintf(year, sizeof(year), "%d", s.year);
+    PixelText(d, ImVec2(x, a.y + u * 72.0f), u * 8.0f, ivory, year);
+    d->AddText(semi, u * 19.0f, ImVec2(x, a.y + u * 138.0f), ivory, T("year.card_title"));
+    // --- the hill of your year ---
+    const float ground = a.y + u * 300.0f;
     double most = 0.0;
-    for (double m : s.months) most = std::max(most, m);
-    const float bw = w / 12.0f;
+    int best = -1;
+    for (int i = 0; i < 12; ++i) {
+        if (s.months[i] > most) {
+            most = s.months[i];
+            best = i;
+        }
+    }
+    const float colW = (right - x) / 12.0f;
+    const float gapB = std::max(1.0f, u * 1.5f);
+    const float blk = (colW - gapB) / 3.0f;
+    constexpr int kRows = 7;
     static const char* initials[3] = {"JFMAMJJASOND", "EFMAMJJASOND", "JFMAMJJASOND"};
     const char* letters = initials[static_cast<int>(i18n::CurrentLanguage()) % 3];
-    for (int m = 0; m < 12; ++m) {
-        const float h = most > 0.0 ? static_cast<float>(s.months[m] / most) * (barsBottom - barsTop) : 0.0f;
-        const float bx = x + bw * m + bw * 0.18f;
-        d->AddRectFilled(ImVec2(bx, barsBottom - std::max(h, u * 3.0f)), ImVec2(bx + bw * 0.64f, barsBottom),
-                         s.months[m] == most && most > 0.0 ? accent : IM_COL32(245, 242, 236, 70), u * 4.0f);
-        const char letter[2] = {letters[m], 0};
-        const float lw = reg->CalcTextSizeA(u * 13.0f, FLT_MAX, 0.0f, letter).x;
-        Put(d, reg, u * 13.0f, ImVec2(bx + bw * 0.32f - lw * 0.5f, barsBottom + u * 6.0f), dim, letter);
+    for (int i = 0; i < 12; ++i) {
+        const float cx = x + colW * i;
+        const int rows = most > 0.0 && s.months[i] > 0.0 ? std::max(1, static_cast<int>(std::round(s.months[i] / most * kRows))) : 0;
+        for (int r = 0; r < rows; ++r) {
+            // brighter at the top of each column, fading into the black at the bottom
+            const float t = rows > 1 ? static_cast<float>(r) / static_cast<float>(rows - 1) : 1.0f;
+            const float alpha = (i == best ? 0.22f : 0.12f) + t * (i == best ? 0.78f : 0.48f);
+            const float y1 = ground - r * (blk + gapB), y0 = y1 - blk;
+            for (int c = 0; c < 3; ++c) {
+                const float bx = cx + c * (blk + gapB * 0.5f);
+                d->AddRectFilled(ImVec2(bx, y0), ImVec2(bx + blk - gapB * 0.5f, y1), C(ivoryV, alpha * ((r + c) % 2 == 0 ? 1.0f : 0.86f)));
+            }
+        }
+        const char letter[2] = {letters[i], 0};
+        const float lw = reg->CalcTextSizeA(u * 12.0f, FLT_MAX, 0.0f, letter).x;
+        d->AddText(reg, u * 12.0f, ImVec2(cx + (colW - gapB) * 0.5f - lw * 0.5f, ground + u * 10.0f), i == best ? ivory : faint, letter);
     }
-    Put(d, reg, u * 13.0f, ImVec2(x, b.y - u * 30.0f), dim, T(s.fromCloud ? "year.card_all_pcs" : "year.card_this_pc"));
+    d->AddRectFilledMultiColor(ImVec2(x, ground + u * 2.0f), ImVec2(right, ground + u * 3.0f), C(ivoryV, 0.05f), C(ivoryV, 0.25f),
+                               C(ivoryV, 0.25f), C(ivoryV, 0.05f));
+    // --- the numbers ---
+    float y = ground + u * 46.0f;
+    PixelText(d, ImVec2(x, y), u * 6.0f, ivory, Hours(s.seconds));
+    d->AddText(reg, u * 14.0f, ImVec2(x, y + u * 48.0f), dim, T("year.card_hours"));
+    {  // plays, songs, artists, at the right
+        const int values[3] = {s.plays, s.songs, s.artists};
+        const char* keys[3] = {"year.card_plays", "year.card_song_count", "year.card_artist_count"};
+        float rx = right;
+        for (int i = 2; i >= 0; --i) {
+            char n[16];
+            std::snprintf(n, sizeof(n), "%d", values[i]);
+            const float nw = PixelWidth(n, u * 3.0f);
+            const float lw = reg->CalcTextSizeA(u * 12.0f, FLT_MAX, 0.0f, T(keys[i])).x;
+            const float cw = std::max(nw, lw);
+            PixelText(d, ImVec2(rx - cw + (cw - nw) * 0.5f, y + u * 12.0f), u * 3.0f, ivory, n);
+            d->AddText(reg, u * 12.0f, ImVec2(rx - cw + (cw - lw) * 0.5f, y + u * 40.0f), dim, T(keys[i]));
+            rx -= cw + u * 26.0f;
+        }
+    }
+    y += u * 86.0f;
+    // --- top songs / top artists: glass of Luma's color on the black ---
+    const float gap = u * 14.0f;
+    const float cw = (right - x + u * 8.0f - gap) * 0.5f;
+    const float left = x - u * 4.0f;
+    const float ch = b.y - u * 34.0f - y;
+    for (int col = 0; col < 2; ++col) {
+        const ImVec2 ca(left + col * (cw + gap), y), cb(ca.x + cw, y + ch);
+        const float r = u * 16.0f;
+        d->AddRectFilled(ca, cb, C(ivoryV, 0.035f), r);
+        d->AddRect(ca, cb, C(ivoryV, 0.12f), r, 0, std::max(1.0f, u));
+        const float px = ca.x + u * 18.0f;
+        d->AddText(semi, u * 14.0f, ImVec2(px, ca.y + u * 16.0f), ivory, T(col == 0 ? "year.card_songs" : "year.card_artists"));
+        const auto& list = col == 0 ? s.topSongs : s.topArtists;
+        float ry = ca.y + u * 46.0f;
+        const float rowH = (cb.y - ry - u * 8.0f) / 5.0f;
+        if (list.empty()) d->AddText(reg, u * 14.0f, ImVec2(px, ry), faint, "\xE2\x80\x94");
+        for (std::size_t i = 0; i < list.size() && i < 5; ++i) {
+            char n[4];
+            std::snprintf(n, sizeof(n), "%zu", i + 1);
+            PixelText(d, ImVec2(px, ry + u * 4.0f), u * 2.4f, i == 0 ? ivory : faint, n);
+            const float tx2 = px + u * 22.0f, tw = cb.x - tx2 - u * 14.0f;
+            const std::string main = col == 0 ? list[i].title : list[i].artist;
+            const std::string sub = col == 0 ? (list[i].artist.empty() ? Hours(list[i].seconds) : list[i].artist) : Hours(list[i].seconds);
+            d->AddText(semi, u * 14.0f, ImVec2(tx2, ry), ivory, FitText(semi, u * 14.0f, tw, main).c_str());
+            d->AddText(reg, u * 12.0f, ImVec2(tx2, ry + u * 18.0f), dim, FitText(reg, u * 12.0f, tw, sub).c_str());
+            ry += rowH;
+        }
+    }
 }
 
 // Draws the card into a picture and saves it as a PNG (with the GPU, the same

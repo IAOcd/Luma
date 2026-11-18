@@ -50,6 +50,7 @@
 
 #include "account.h"
 #include "cloud_sync.h"
+#include "gallery.h"
 #include "smtc_bridge.h"
 #include "spotify_engine.h"
 #include "core/audio_viz.h"
@@ -2799,6 +2800,42 @@ void DeleteUserStyle(int i) {
     if (g_picked == i) g_picked = -1;
     else if (g_picked > i) --g_picked;
     luma::flowpresets::Save(luma::flowpresets::FileIn(DataDir()), g_presets);
+    Refresh(true);
+}
+
+// A style from the gallery: added to your styles (unless you already have
+// it) and put on. Its look has only "how it looks", so your lyrics stay
+// where they are.
+void InstallGalleryStyle(const std::string& name, const nlohmann::json& look) {
+    if (!look.is_object() || look.empty()) return;
+    RefreshPresets(true);
+    int index = -1;
+    for (std::size_t i = 0; i < g_presets.size(); ++i) {
+        if (!g_presets[i].autoSaved && g_presets[i].look == look) index = static_cast<int>(i);
+    }
+    if (index < 0) {
+        std::string unique = name.empty() ? std::string(T("lyrics.my_style")) : name;
+        auto taken = [&](const std::string& n) {
+            for (const auto& p : g_presets) {
+                if (p.name == n) return true;
+            }
+            return false;
+        };
+        if (taken(unique)) {
+            for (int n = 2;; ++n) {
+                const std::string candidate = unique + " " + std::to_string(n);
+                if (!taken(candidate)) {
+                    unique = candidate;
+                    break;
+                }
+            }
+        }
+        g_presets.push_back({unique, look, false});
+        index = static_cast<int>(g_presets.size()) - 1;
+        luma::flowpresets::Save(luma::flowpresets::FileIn(DataDir()), g_presets);
+    }
+    g_picked = index;
+    ApplyUserStyle(index);
     Refresh(true);
 }
 
@@ -7956,7 +7993,7 @@ void DrawSettingsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const account::I
 //  the left; on the right, at the top, THE STAGE (your song's line in your
 //  style, on a little Minecraft night) and under it the chosen part.
 // =============================================================================
-int g_lyricsTab = 0;  // 0 ready-made styles, 1 your styles, 2 where, 3 timing, 4 in the game
+int g_lyricsTab = 0;  // 0 ready-made styles, 1 your styles, 2 where, 3 timing, 4 in the game, 5 the gallery
 float g_lyricsTabIn = 1.0f;
 float g_lyricsPill = 0.0f;
 
@@ -8067,15 +8104,297 @@ void DrawLyricsGame(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data
     TextWrap(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), T("lyrics.more"), w);
 }
 
+// =============================================================================
+//  THE GALLERY (Lyric Flow styles other people published, gallery.h).
+//  "Explore": anyone, no account. Each card: the style's animated preview,
+//  its name, who made it (or "Anonymous") and how many installed it.
+//  "Install" adds it to your styles and puts it on. The "..." = report it.
+//  "Yours" (signed in): publish one of your styles, and see/remove yours.
+// =============================================================================
+namespace galleryui {
+
+int g_view = 0;                 // 0 explore, 1 yours
+float g_scroll = 0.0f;
+std::string g_reportOpen;       // the card whose report choices are open
+std::string g_installed;        // the last one installed (its card says so)
+int g_pick = -1;                // which of your styles is going to be published
+char g_name[40] = "";
+bool g_showAuthor = false;
+std::string g_armedRemove;      // remove asks twice
+double g_armedAt = 0.0;
+int g_passVersion = -1;
+
+void DrawExplore(ImDrawList* d, ImVec2 min, ImVec2 max, const gallery::Info& g, bool signedIn) {
+    const Palette& p = P();
+    if (!g.loaded && !g.loading && g.errorKey.empty()) gallery::Load(g.sort);
+    // New / Popular, and "refresh"
+    {
+        const char* labels[2] = {T("gallery.new"), T("gallery.popular")};
+        int index = static_cast<int>(g.sort);
+        float sw = 0.0f;
+        if (Segmented("##gal_sort", min, labels, 2, &index, &sw)) {
+            g_scroll = 0.0f;
+            gallery::Load(static_cast<gallery::Sort>(index));
+        }
+        if (IconToggle(d, "##gal_refresh", ImVec2(min.x + sw + S(26.0f), min.y + S(19.0f)), icons::kRotate, S(15.0f), false, !g.loading)) {
+            gallery::Load(g.sort);
+        }
+    }
+    const float top = min.y + S(54.0f);
+    if (g.loading && g.styles.empty()) {
+        Spinner(d, ImVec2((min.x + max.x) * 0.5f, top + S(60.0f)), S(9.0f), C(p.textDim));
+        return;
+    }
+    if (!g.errorKey.empty() && g.styles.empty()) {
+        TextWrap(d, g_fonts.regular, ImVec2(min.x, top + S(10.0f)), C(p.textDim), T(g.errorKey.c_str()), max.x - min.x);
+        return;
+    }
+    if (g.styles.empty()) {
+        TextWrap(d, g_fonts.regular, ImVec2(min.x, top + S(10.0f)), C(p.textDim), T("gallery.empty"), max.x - min.x);
+        return;
+    }
+    // the cards (3 per row), scrolling with the wheel
+    const float gap = S(14.0f);
+    const int columns = std::max(2, std::min(4, static_cast<int>((max.x - min.x + gap) / (S(220.0f) + gap))));
+    const float cw = ((max.x - min.x) - gap * static_cast<float>(columns - 1)) / static_cast<float>(columns);
+    const float ch = S(196.0f);
+    const int rows = (static_cast<int>(g.styles.size()) + columns - 1) / columns;
+    const float moreH = g.hasMore ? S(56.0f) : 0.0f;
+    const float contentH = rows * ch + std::max(0, rows - 1) * gap + moreH;
+    const float maxScroll = std::max(0.0f, contentH - (max.y - top));
+    if (ImGui::IsMouseHoveringRect(ImVec2(min.x, top), max)) g_scroll -= ImGui::GetIO().MouseWheel * S(90.0f);
+    g_scroll = std::clamp(g_scroll, 0.0f, maxScroll);
+    d->PushClipRect(ImVec2(min.x - S(4.0f), top), ImVec2(max.x + S(4.0f), max.y), true);
+    ImGui::PushClipRect(ImVec2(min.x - S(4.0f), top), ImVec2(max.x + S(4.0f), max.y), true);
+    for (std::size_t i = 0; i < g.styles.size(); ++i) {
+        const gallery::Style& s = g.styles[i];
+        const int col = static_cast<int>(i) % columns, row = static_cast<int>(i) / columns;
+        const ImVec2 a(min.x + col * (cw + gap), top + row * (ch + gap) - g_scroll), b(a.x + cw, a.y + ch);
+        if (b.y < top || a.y > max.y) continue;
+        Card(d, a, b);
+        // the preview
+        const float infoH = S(84.0f);
+        const ImVec2 va(a.x + S(10.0f), a.y + S(10.0f)), vb(b.x - S(10.0f), b.y - infoH);
+        d->AddRectFilled(va, vb, C(ImVec4(0.03f, 0.03f, 0.05f, 1.0f), 0.55f), S(kRound) - S(4.0f));
+        d->PushClipRect(va, vb, true);
+        DrawFlowLook(d, ImVec2((va.x + vb.x) * 0.5f, (va.y + vb.y) * 0.5f), vb.y - va.y, LookFromJson(s.look), g_fade,
+                     static_cast<float>(i) * 0.41f, "LUMA", -1.0f, 0.0f);
+        d->PopClipRect();
+        // name, author, installs
+        const float tx = a.x + S(14.0f);
+        float ty = vb.y + S(8.0f);
+        TextFit(d, g_fonts.semibold, ImVec2(tx, ty), C(p.text), s.name.c_str(), b.x - tx - S(40.0f));
+        ty += g_fonts.semibold->FontSize + S(2.0f);
+        char count[64];
+        std::snprintf(count, sizeof(count), T(s.installs == 1 ? "gallery.install_one" : "gallery.installs"), s.installs);
+        char sub[160];
+        std::snprintf(sub, sizeof(sub), "%s  \xC2\xB7  %s", s.author.empty() ? T("gallery.anonymous") : s.author.c_str(), count);
+        TextFit(d, g_fonts.tiny, ImVec2(tx, ty), C(p.textDim), sub, b.x - tx - S(10.0f));
+        // "..." -> report
+        char id[48];
+        std::snprintf(id, sizeof(id), "##gal_more_%s", s.id.c_str());
+        if (IconToggle(d, id, ImVec2(b.x - S(24.0f), vb.y + S(8.0f) + g_fonts.semibold->FontSize * 0.5f), icons::kEllipsis, S(16.0f),
+                       g_reportOpen == s.id)) {
+            g_reportOpen = g_reportOpen == s.id ? std::string() : s.id;
+        }
+        const float by = b.y - S(44.0f);
+        if (g_reportOpen == s.id) {
+            // the reasons (or "sign in first")
+            if (!signedIn) {
+                TextFit(d, g_fonts.tiny, ImVec2(tx, by + S(10.0f)), C(p.warning), T("gallery.report_sign_in"), b.x - tx - S(10.0f));
+                continue;
+            }
+            const char* reasons[3][2] = {{"offensive_name", "gallery.reason_name"}, {"spam", "gallery.reason_spam"}, {"other", "gallery.reason_other"}};
+            float x = tx;
+            for (const auto& r : reasons) {
+                std::snprintf(id, sizeof(id), "##gal_rep_%s_%s", r[0], s.id.c_str());
+                float w = 0.0f;
+                if (SmallPill(d, id, ImVec2(x, by + S(2.0f)), nullptr, T(r[1]), false, &w)) {
+                    gallery::Report(s.id, r[0]);
+                    g_reportOpen.clear();
+                }
+                x += w + S(6.0f);
+            }
+            continue;
+        }
+        std::snprintf(id, sizeof(id), "##gal_inst_%s", s.id.c_str());
+        const bool installed = g_installed == s.id;
+        if (Button(id, ImVec2(tx, by - S(2.0f)), T(installed ? "gallery.installed" : "gallery.install"), !installed)) {
+            flowcfg::InstallGalleryStyle(s.name, gallery::LookOnly(s.look));
+            gallery::CountInstall(s.id);
+            g_installed = s.id;
+        }
+    }
+    if (g.hasMore) {
+        const float y = top + rows * ch + std::max(0, rows - 1) * gap + S(12.0f) - g_scroll;
+        if (Button("##gal_more", ImVec2(min.x, y), T("gallery.more"), false, nullptr, !g.loading)) gallery::Load(g.sort, true);
+    }
+    ImGui::PopClipRect();
+    d->PopClipRect();
+}
+
+void DrawYours(ImDrawList* d, ImVec2 min, ImVec2 max, const gallery::Info& g) {
+    const Palette& p = P();
+    if (!g.mineLoaded && !g.mineLoading) gallery::LoadMine();
+    const float w = max.x - min.x;
+    const float leftW = std::min(w * 0.55f, S(520.0f));
+    float y = min.y;
+    // --- publish (left) ---
+    Text(d, g_fonts.semibold, ImVec2(min.x, y), C(p.text), T("gallery.publish_title"));
+    y += g_fonts.semibold->FontSize + S(4.0f);
+    if (g.banned) {
+        TextWrap(d, g_fonts.regular, ImVec2(min.x, y), C(p.danger), T("gallery.err_banned"), leftW);
+    } else {
+        y += TextWrap(d, g_fonts.tiny, ImVec2(min.x, y), C(p.textDim), T("gallery.publish_hint"), leftW) + S(10.0f);
+        // which of your styles
+        const auto& list = flowcfg::g_presets;
+        float x = min.x;
+        int count = 0;
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            if (list[i].autoSaved) continue;
+            ++count;
+            char id[32];
+            std::snprintf(id, sizeof(id), "##gal_pick%zu", i);
+            const float pw = TextSize(g_fonts.semibold, list[i].name.c_str()).x + S(28.0f);
+            if (x + pw > min.x + leftW && x > min.x) {
+                x = min.x;
+                y += S(40.0f);
+            }
+            const bool on = g_pick == static_cast<int>(i);
+            float bw = 0.0f;
+            if (SmallPill(d, id, ImVec2(x, y), nullptr, list[i].name.c_str(), false, &bw)) {
+                g_pick = static_cast<int>(i);
+                std::snprintf(g_name, sizeof(g_name), "%s", list[i].name.c_str());
+            }
+            if (on) d->AddRect(ImVec2(x, y), ImVec2(x + bw, y + S(34.0f)), C(p.accent), S(17.0f), 0, S(2.0f));
+            x += bw + S(6.0f);
+        }
+        if (count == 0) {
+            TextWrap(d, g_fonts.regular, ImVec2(min.x, y), C(p.textDim), T("gallery.no_styles"), leftW);
+            y += S(30.0f);
+        } else {
+            y += S(46.0f);
+        }
+        if (g_pick >= static_cast<int>(list.size())) g_pick = -1;
+        if (g_pick >= 0) {
+            // the name
+            const ImVec2 a(min.x, y), b(min.x + leftW, y + S(38.0f));
+            d->AddRectFilled(a, b, C(ImVec4(0, 0, 0, 1), 0.30f), S(10.0f));
+            d->AddRect(a, b, C(ImVec4(1, 1, 1, 1), 0.15f), S(10.0f));
+            ImGui::SetCursorScreenPos(ImVec2(a.x + S(12.0f), (a.y + b.y - g_fonts.semibold->FontSize) * 0.5f - S(3.0f)));
+            ImGui::PushFont(g_fonts.semibold);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_Text, p.text);
+            ImGui::PushStyleColor(ImGuiCol_TextDisabled, p.textDim);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, S(3.0f)));
+            ImGui::SetNextItemWidth(leftW - S(24.0f));
+            ImGui::InputTextWithHint("##gal_name", T("gallery.name_hint"), g_name, sizeof(g_name));
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(3);
+            ImGui::PopFont();
+            y += S(50.0f);
+            // show my gamertag
+            Toggle("##gal_author", ImVec2(min.x, y), &g_showAuthor);
+            TextFit(d, g_fonts.regular, ImVec2(min.x + S(56.0f), y + S(3.0f)), C(p.text), T("gallery.show_author"), leftW - S(56.0f));
+            y += S(40.0f);
+            std::string name = g_name;
+            while (!name.empty() && name.back() == ' ') name.pop_back();
+            if (Button("##gal_publish", ImVec2(min.x, y), T("gallery.publish"), true, nullptr, !g.busy && !name.empty())) {
+                gallery::Publish(name, list[static_cast<std::size_t>(g_pick)].look, g_showAuthor);
+            }
+            y += S(46.0f);
+        }
+    }
+    // --- the result of the last action ---
+    if (g.busy) {
+        Spinner(d, ImVec2(min.x + S(7.0f), y + S(9.0f)), S(5.5f), C(p.textDim));
+    } else if (!g.actionKey.empty()) {
+        Dot(d, ImVec2(min.x + S(7.0f), y + S(9.0f)), g.actionOk ? p.success : p.danger);
+        TextWrap(d, g_fonts.regular, ImVec2(min.x + S(20.0f), y), C(p.text), T(g.actionKey.c_str()), leftW - S(20.0f));
+    }
+    // --- your published styles (right) ---
+    const float rx = min.x + leftW + S(28.0f);
+    if (rx > max.x - S(160.0f)) return;
+    float ry = min.y;
+    Text(d, g_fonts.semibold, ImVec2(rx, ry), C(p.text), T("gallery.yours_title"));
+    ry += g_fonts.semibold->FontSize + S(10.0f);
+    if (g.mine.empty()) {
+        TextWrap(d, g_fonts.tiny, ImVec2(rx, ry), C(p.textDim), T(g.mineLoaded ? "gallery.none_yet" : "gallery.loading"), max.x - rx);
+        return;
+    }
+    if (ImGui::GetTime() - g_armedAt > 4.0) g_armedRemove.clear();
+    for (const gallery::Style& s : g.mine) {
+        if (ry + S(44.0f) > max.y) break;
+        const ImVec2 a(rx, ry), b(max.x, ry + S(48.0f));
+        d->AddRectFilled(a, b, C(p.text, 0.04f), S(10.0f));
+        TextFit(d, g_fonts.semibold, ImVec2(a.x + S(12.0f), a.y + S(6.0f)), C(p.text), s.name.c_str(), b.x - a.x - S(140.0f));
+        char count[64];
+        std::snprintf(count, sizeof(count), T(s.installs == 1 ? "gallery.install_one" : "gallery.installs"), s.installs);
+        char sub[160];
+        std::snprintf(sub, sizeof(sub), "%s  \xC2\xB7  %s", T(s.status == "visible" ? "gallery.mine_visible" : "gallery.mine_hidden"), count);
+        TextFit(d, g_fonts.tiny, ImVec2(a.x + S(12.0f), a.y + S(8.0f) + g_fonts.semibold->FontSize), C(s.status == "visible" ? p.textDim : p.warning),
+                sub, b.x - a.x - S(140.0f));
+        char id[48];
+        std::snprintf(id, sizeof(id), "##gal_rm_%s", s.id.c_str());
+        const bool armed = g_armedRemove == s.id;
+        const char* label = T(armed ? "gallery.remove_confirm" : "gallery.remove");
+        const float pw = TextSize(g_fonts.semibold, label).x + S(44.0f);
+        if (SmallPill(d, id, ImVec2(b.x - pw - S(7.0f), a.y + S(7.0f)), icons::kTrash, label, false)) {
+            if (armed) {
+                gallery::Unpublish(s.id);
+                g_armedRemove.clear();
+            } else {
+                g_armedRemove = s.id;
+                g_armedAt = ImGui::GetTime();
+            }
+        }
+        ry += S(56.0f);
+    }
+}
+
+}  // namespace galleryui
+
+void DrawLyricsGallery(ImDrawList* d, ImVec2 min, ImVec2 max) {
+    const Palette& p = P();
+    const account::Info acc = account::Get();
+    const bool signedIn = acc.state == account::State::SignedIn && !account::LumaPass().empty();
+    if (account::LumaPassVersion() != galleryui::g_passVersion) {  // signed in/out: "yours" is someone else's now
+        galleryui::g_passVersion = account::LumaPassVersion();
+        gallery::Reset();
+    }
+    const gallery::Info g = gallery::Get();
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("lyrics.tab_gallery"));
+    // Explore / Yours
+    {
+        const char* labels[2] = {T("gallery.explore"), T("gallery.yours")};
+        const float w = SegmentedWidth(labels, signedIn ? 2 : 1);
+        if (!signedIn) galleryui::g_view = 0;
+        Segmented("##gal_view", ImVec2(max.x - S(20.0f) - w, min.y + S(12.0f)), labels, signedIn ? 2 : 1, &galleryui::g_view);
+    }
+    const ImVec2 a(min.x + S(20.0f), min.y + S(62.0f)), b(max.x - S(20.0f), max.y - S(16.0f));
+    if (galleryui::g_view == 1 && signedIn) {
+        galleryui::DrawYours(d, a, b, g);
+    } else {
+        galleryui::DrawExplore(d, a, b, g, signedIn);
+        // a report/remove result (shown here too: reporting happens in Explore)
+        if (!g.actionKey.empty() && !g.busy) {
+            const float x = min.x + S(20.0f) + S(320.0f);
+            TextFit(d, g_fonts.tiny, ImVec2(x, min.y + S(74.0f)), C(g.actionOk ? p.success : p.danger), T(g.actionKey.c_str()),
+                    max.x - S(20.0f) - x);
+        }
+    }
+}
+
 void DrawLyricsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& data) {
     const Palette& p = P();
     flowcfg::Refresh();
     const IndexEntry entries[] = {{icons::kSparkle, "lyrics.tab_ready"}, {icons::kLayers, "lyrics.tab_yours"},
                                   {icons::kMapPin, "lyrics.tab_where"},  {icons::kTimer, "lyrics.tab_timing"},
-                                  {icons::kGamepad, "lyrics.tab_game"}};
+                                  {icons::kGamepad, "lyrics.tab_game"},  {icons::kCompass, "lyrics.tab_gallery"}};
     const float navW = S(230.0f);
     const ImVec2 na = min, nb(min.x + navW, max.y);
-    if (DrawSectionIndex(d, na, nb, T("nav.lyrics"), entries, 5, &g_lyricsTab, &g_lyricsPill, "lyr")) g_lyricsTabIn = 0.0f;
+    if (DrawSectionIndex(d, na, nb, T("nav.lyrics"), entries, 6, &g_lyricsTab, &g_lyricsPill, "lyr")) g_lyricsTabIn = 0.0f;
     // --- the right: the stage, and the chosen part under it ---
     const media::Track t = media::Current();
     const ImVec2 ca(nb.x + S(20.0f), min.y), cb(std::min(max.x, nb.x + S(20.0f) + S(980.0f)), max.y);
@@ -8096,6 +8415,7 @@ void DrawLyricsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& d
         }
         case 2: DrawLyricsWhere(d, pa, ImVec2(pb.x, std::min(pb.y, pa.y + S(340.0f)))); break;
         case 3: DrawLyricsTiming(d, pa, ImVec2(pb.x, std::min(pb.y, pa.y + S(300.0f)))); break;
+        case 5: DrawLyricsGallery(d, pa, pb); break;
         default: DrawLyricsGame(d, pa, ImVec2(pb.x, std::min(pb.y, pa.y + S(320.0f))), data); break;
     }
     d->PopClipRect();
@@ -8568,7 +8888,7 @@ void AppInit(HWND hwnd, float scale) {
         it.name = "test";
         sp::StartRadio(it);
     }
-    if (const wchar_t* lt = std::wcsstr(GetCommandLineW(), L"--lyr-tab=")) g_lyricsTab = std::clamp(static_cast<int>(lt[10] - L'0'), 0, 4);  // (for testing)
+    if (const wchar_t* lt = std::wcsstr(GetCommandLineW(), L"--lyr-tab=")) g_lyricsTab = std::clamp(static_cast<int>(lt[10] - L'0'), 0, 5);  // (for testing)
     if (const wchar_t* st = std::wcsstr(GetCommandLineW(), L"--set-tab=")) g_settingsTab = std::clamp(static_cast<int>(st[10] - L'0'), 0, 5);  // (for testing)
     if (std::wcsstr(GetCommandLineW(), L"--luma-play") != nullptr) sp::WithLumaDevice([](const std::string& id) { sp::ContinueOn(id); });  // (for testing)
     g_statusThread = std::thread(StatusThread);
@@ -8978,6 +9298,7 @@ void AppShutdown() {
         g_iconAtlas = nullptr;
     }
     cloudsync::Stop();
+    gallery::Stop();
     account::Shutdown();
     updater::Shutdown();
     if (g_statusThread.joinable()) {

@@ -35,6 +35,7 @@ add_executable(LumaLauncher WIN32
     src/gui/skins.cpp    # la biblioteca de skins
     ${PROJECT_SOURCE_DIR}/shared/skin_pack.cpp  # la biblioteca como paquete de skins del juego
     src/account.cpp      # iniciar sesión con Microsoft/Xbox (opcional)
+    src/cloud_sync.cpp   # tus estilos y ajustes en tu cuenta de Luma (opcional, apagado)
     src/net.cpp          # pedidos HTTPS (WinHTTP)
     src/signature.cpp    # comprobar la firma de las actualizaciones
     src/updater.cpp      # actualizaciones automáticas desde GitHub

@@ -63,4 +63,16 @@ void SignOut();
 Info Get(bool includePicture = false);
 void Shutdown();
 
+// --- El servidor de Luma (luma-api) ------------------------------------------------
+// El "pase de Luma" de esta sesión (para las cuentas de Luma: estilos en la
+// nube...). Vacío si no iniciaste sesión o el servidor no respondió.
+std::string LumaPass();
+// Cambia cada vez que llega un pase nuevo (o se cierra sesión).
+int LumaPassVersion();
+// La dirección del servidor: https://luma-api.gios-app.workers.dev. Para probar
+// un servidor en esta PC: la variable de entorno LUMA_API_URL=http://127.0.0.1:8787
+// (entonces el pase de prueba no se guarda para el juego).
+std::wstring ApiBase();
+bool ApiIsLocalTest();
+
 }  // namespace luma::launcher::account

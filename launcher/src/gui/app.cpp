@@ -49,6 +49,7 @@
 #include <nlohmann/json.hpp>
 
 #include "account.h"
+#include "cloud_sync.h"
 #include "smtc_bridge.h"
 #include "spotify_engine.h"
 #include "core/audio_viz.h"
@@ -7517,6 +7518,124 @@ void DrawSettingsAccount(ImDrawList* d, ImVec2 min, ImVec2 max, const account::I
     }
 }
 
+// "Your Luma account": your styles and settings in the cloud (off unless you
+// turn it on, see cloud_sync.h), and "Your data": what the server keeps,
+// download it, delete it.
+void DrawSettingsCloud(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc) {
+    const Palette& p = P();
+    const cloudsync::Info sync = cloudsync::Get();
+    const bool signedIn = acc.state == account::State::SignedIn;
+    Card(d, min, max);
+    SectionTitle(d, ImVec2(min.x + S(20.0f), min.y + S(18.0f)), T("sync.title"));
+    const float x = min.x + S(22.0f), right = max.x - S(22.0f), w = right - x;
+    float y = min.y + S(62.0f);
+    // the switch
+    {
+        const float h = SettingLabel(d, ImVec2(x, y), w - S(66.0f), T("sync.save"), T(signedIn ? "sync.save_hint" : "sync.needs_sign_in"));
+        bool on = sync.enabled;
+        const ImVec2 tp(right - S(46.0f), y + std::max(0.0f, (h - S(26.0f)) * 0.5f));
+        if (signedIn || on) {
+            if (Toggle("##sync_on", tp, &on)) cloudsync::SetEnabled(on);
+        } else {  // (a switch you can't use yet: sign in first)
+            d->AddRectFilled(tp, ImVec2(tp.x + S(46.0f), tp.y + S(26.0f)), C(p.text, 0.08f), S(13.0f));
+            d->AddCircleFilled(ImVec2(tp.x + S(13.0f), tp.y + S(13.0f)), S(9.0f), C(p.textDim, 0.5f), 24);
+        }
+        y += std::max(h, S(30.0f)) + S(12.0f);
+    }
+    // how it's going
+    if (sync.enabled) {
+        char text[160];
+        const ImVec4* color = &p.textDim;
+        switch (sync.status) {
+            case cloudsync::Status::Synced: {
+                const long long ago = std::max(0LL, static_cast<long long>(std::time(nullptr)) - sync.lastSync);
+                if (ago < 60) std::snprintf(text, sizeof(text), "%s", T("sync.saved_now"));
+                else if (ago < 3600) std::snprintf(text, sizeof(text), T("sync.saved_min"), static_cast<int>(ago / 60));
+                else std::snprintf(text, sizeof(text), T("sync.saved_hours"), static_cast<int>(ago / 3600));
+                color = &p.success;
+                break;
+            }
+            case cloudsync::Status::Working: std::snprintf(text, sizeof(text), "%s", T("sync.working")); break;
+            case cloudsync::Status::Offline:
+                std::snprintf(text, sizeof(text), "%s", T("sync.offline"));
+                color = &p.warning;
+                break;
+            case cloudsync::Status::NeedsAccount:
+                std::snprintf(text, sizeof(text), "%s", T("sync.needs_sign_in"));
+                color = &p.warning;
+                break;
+            case cloudsync::Status::Error:
+                std::snprintf(text, sizeof(text), "%s", T(sync.errorKey.empty() ? "sync.err_server" : sync.errorKey.c_str()));
+                color = &p.danger;
+                break;
+            default: text[0] = 0; break;
+        }
+        if (sync.status == cloudsync::Status::Working) Spinner(d, ImVec2(x + S(7.0f), y + S(9.0f)), S(5.5f), C(p.textDim));
+        else Dot(d, ImVec2(x + S(7.0f), y + S(9.0f)), *color);
+        TextFit(d, g_fonts.regular, ImVec2(x + S(20.0f), y), C(p.text), text, w - S(20.0f));
+        y += S(30.0f);
+    }
+    if (!signedIn) {
+        if (!sync.actionKey.empty()) {  // (e.g. "your account was deleted")
+            Dot(d, ImVec2(x + S(7.0f), y + S(9.0f)), sync.actionOk ? p.success : p.danger);
+            TextFit(d, g_fonts.regular, ImVec2(x + S(20.0f), y), C(p.text), T(sync.actionKey.c_str()), w - S(20.0f));
+        }
+        return;
+    }
+    // your data
+    y += S(6.0f);
+    d->AddLine(ImVec2(x, y), ImVec2(right, y), C(p.border));
+    y += S(14.0f);
+    Text(d, g_fonts.semibold, ImVec2(x, y), C(p.text), T("sync.your_data"));
+    y += g_fonts.semibold->FontSize + S(4.0f);
+    y += TextWrap(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), T("sync.what_is_kept"), w) + S(12.0f);
+    // Deleting asks twice: the first click arms the button for 5 seconds.
+    static double armedCloud = -100.0, armedAccount = -100.0;
+    const double now = ImGui::GetTime();
+    const bool cloudArmed = now - armedCloud < 5.0, accountArmed = now - armedAccount < 5.0;
+    const bool idle = !sync.actionBusy;
+    float bx = x, bw = 0.0f;
+    if (Button("##sync_export", ImVec2(bx, y), T("sync.export"), false, &bw, idle)) cloudsync::ExportData();
+    bx += bw + S(10.0f);
+    const char* cloudLabel = T(cloudArmed ? "sync.delete_cloud_confirm" : "sync.delete_cloud");
+    if (bx + TextSize(g_fonts.semibold, cloudLabel).x + S(32.0f) > right) {
+        bx = x;
+        y += S(46.0f);
+    }
+    if (Button("##sync_delcloud", ImVec2(bx, y), cloudLabel, false, &bw, idle)) {
+        if (cloudArmed) {
+            cloudsync::DeleteCloudCopy();
+            armedCloud = -100.0;
+        } else {
+            armedCloud = now;
+        }
+    }
+    bx += bw + S(10.0f);
+    const char* accountLabel = T(accountArmed ? "sync.delete_account_confirm" : "sync.delete_account");
+    if (bx + TextSize(g_fonts.semibold, accountLabel).x + S(32.0f) > right) {
+        bx = x;
+        y += S(46.0f);
+    }
+    if (Button("##sync_delacc", ImVec2(bx, y), accountLabel, accountArmed, &bw, idle)) {
+        if (accountArmed) {
+            cloudsync::DeleteAccount();
+            armedAccount = -100.0;
+        } else {
+            armedAccount = now;
+        }
+    }
+    y += S(48.0f);
+    if (sync.actionBusy) {
+        Spinner(d, ImVec2(x + S(7.0f), y + S(9.0f)), S(5.5f), C(p.textDim));
+        TextFit(d, g_fonts.regular, ImVec2(x + S(20.0f), y), C(p.text), T("sync.working"), w - S(20.0f));
+    } else if (!sync.actionKey.empty()) {
+        Dot(d, ImVec2(x + S(7.0f), y + S(9.0f)), sync.actionOk ? p.success : p.danger);
+        std::string text = T(sync.actionKey.c_str());
+        if (!sync.exportPath.empty()) text += "  " + sync.exportPath;
+        TextFit(d, g_fonts.regular, ImVec2(x + S(20.0f), y), C(p.text), text.c_str(), w - S(20.0f));
+    }
+}
+
 void DrawSettingsAbout(ImDrawList* d, ImVec2 min, ImVec2 max) {
     const Palette& p = P();
     Card(d, min, max);
@@ -7821,7 +7940,10 @@ void DrawSettingsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const account::I
         case 0: DrawSettingsGeneral(d, ca, ImVec2(cb.x, ca.y + S(392.0f))); break;
         case 1: DrawSettingsMusic(d, ca, ImVec2(cb.x, std::min(cb.y, ca.y + S(560.0f)))); break;
         case 2: DrawSettingsSpotify(d, ca, ImVec2(cb.x, cb.y)); break;
-        case 3: DrawSettingsAccount(d, ca, ImVec2(cb.x, ca.y + S(240.0f)), acc, data); break;
+        case 3:
+            DrawSettingsAccount(d, ca, ImVec2(cb.x, ca.y + S(240.0f)), acc, data);
+            DrawSettingsCloud(d, ImVec2(ca.x, ca.y + S(240.0f) + S(kGap)), ImVec2(cb.x, cb.y), acc);
+            break;
         case 4: DrawSettingsGame(d, ca, cb, data); break;
         default: DrawSettingsAboutAll(d, ca, cb); break;
     }
@@ -8451,6 +8573,7 @@ void AppInit(HWND hwnd, float scale) {
     if (std::wcsstr(GetCommandLineW(), L"--luma-play") != nullptr) sp::WithLumaDevice([](const std::string& id) { sp::ContinueOn(id); });  // (for testing)
     g_statusThread = std::thread(StatusThread);
     account::Init();
+    cloudsync::Start();  // "save my styles in my account" (does nothing while it's off)
     updater::Start(g_autoUpdate, GetCommandLineW());
 }
 
@@ -8753,6 +8876,7 @@ void AppFrame() {
     SyncSkins(data);  // si Luma.dll guardó una skin nueva, sumarla a la biblioteca
     const account::Info acc = account::Get();
     UpdateAvatar(acc);
+    if (cloudsync::TakeLauncherReload()) LoadConfig();  // theme/language/sky brought from your account
     g_upd = updater::Get();
     // La versión nueva ya se abrió: cerrar esta.
     if (g_upd.state == updater::State::Restarting && !g_closing) {
@@ -8853,6 +8977,7 @@ void AppShutdown() {
         g_iconAtlas->Release();
         g_iconAtlas = nullptr;
     }
+    cloudsync::Stop();
     account::Shutdown();
     updater::Shutdown();
     if (g_statusThread.joinable()) {

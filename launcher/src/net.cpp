@@ -38,8 +38,12 @@ bool Open(Handles& h, const wchar_t* method, const std::wstring& url, const std:
     parts.dwUrlPathLength = static_cast<DWORD>(std::size(path));
     parts.lpszExtraInfo = extra;
     parts.dwExtraInfoLength = static_cast<DWORD>(std::size(extra));
-    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS) {
-        return false;  // solo HTTPS
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts)) return false;
+    // Solo HTTPS. La única excepción es esta misma PC (127.0.0.1), para probar
+    // el servidor de Luma en local: esos datos nunca salen de la computadora.
+    const bool loopback = std::wstring(host) == L"127.0.0.1";
+    if (parts.nScheme != INTERNET_SCHEME_HTTPS && !(parts.nScheme == INTERNET_SCHEME_HTTP && loopback)) {
+        return false;
     }
     const std::wstring fullPath = std::wstring(path) + extra;
     h.session = WinHttpOpen(L"LumaLauncher/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
@@ -49,7 +53,8 @@ bool Open(Handles& h, const wchar_t* method, const std::wstring& url, const std:
     h.connection = WinHttpConnect(h.session, host, parts.nPort, 0);
     if (h.connection == nullptr) return false;
     h.request = WinHttpOpenRequest(h.connection, method, fullPath.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                   WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+                                   WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                   parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
     if (h.request == nullptr) return false;
     return WinHttpSendRequest(h.request, headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
                               headers.empty() ? 0 : static_cast<DWORD>(-1L),

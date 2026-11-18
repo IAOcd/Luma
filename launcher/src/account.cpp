@@ -59,6 +59,8 @@ Info g_info;
 std::thread g_worker;
 std::atomic<bool> g_busy{false};
 std::atomic<bool> g_cancel{false};
+std::string g_pass;             // el pase de Luma (bajo g_mutex)
+std::atomic<int> g_passVersion{0};
 
 // --- Pequeñas ayudas ------------------------------------------------------------------
 using net::Widen;
@@ -206,7 +208,8 @@ void DeleteSession() {
 // lee para avisar "estoy usando Luma". Si falla, no pasa nada: solo no hay logo.
 void FetchLumaPass(const std::string& authHeader) {
     Response response;
-    if (!PostJson(L"https://luma-api.gios-app.workers.dev/v1/auth", json{{"xbl", authHeader}}, L"", response) ||
+    const std::wstring url = ApiBase() + L"/v1/auth";
+    if (!PostJson(url.c_str(), json{{"xbl", authHeader}}, L"", response) ||
         response.status != 200) {
         return;
     }
@@ -214,6 +217,12 @@ void FetchLumaPass(const std::string& authHeader) {
     if (!reply.is_object() || !reply.contains("token") || !reply["token"].is_string()) return;
     const std::string token = reply["token"].get<std::string>();
     if (token.size() != 64) return;
+    {
+        std::lock_guard lock(g_mutex);
+        g_pass = token;
+    }
+    ++g_passVersion;
+    if (ApiIsLocalTest()) return;  // un pase del servidor de prueba no le sirve al juego
     DATA_BLOB in{static_cast<DWORD>(token.size()), reinterpret_cast<BYTE*>(const_cast<char*>(token.data()))};
     DATA_BLOB out{};
     if (!CryptProtectData(&in, L"Luma", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) return;
@@ -560,7 +569,9 @@ void SignOut() {
     DeleteSession();
     std::lock_guard lock(g_mutex);
     g_info = Info{};
-    g_info.pictureVersion = -1;  // (para que la interfaz suelte la textura)
+    g_info.pictureVersion = -1;
+    g_pass.clear();
+    ++g_passVersion;  // (para que la interfaz suelte la textura)
 }
 
 Info Get(bool includePicture) {
@@ -577,6 +588,32 @@ Info Get(bool includePicture) {
     copy.pictureHeight = g_info.pictureHeight;
     copy.pictureVersion = g_info.pictureVersion;
     return copy;
+}
+
+std::string LumaPass() {
+    std::lock_guard lock(g_mutex);
+    return g_pass;
+}
+
+int LumaPassVersion() {
+    return g_passVersion.load();
+}
+
+std::wstring ApiBase() {
+    static const std::wstring base = [] {
+        wchar_t value[256]{};
+        const DWORD n = GetEnvironmentVariableW(L"LUMA_API_URL", value, static_cast<DWORD>(std::size(value)));
+        std::wstring url = n > 0 && n < std::size(value) ? std::wstring(value, n) : std::wstring();
+        while (!url.empty() && url.back() == L'/') url.pop_back();
+        // Solo se acepta un servidor en esta misma PC (para probar).
+        if (url.rfind(L"http://127.0.0.1:", 0) == 0) return url;
+        return std::wstring(L"https://luma-api.gios-app.workers.dev");
+    }();
+    return base;
+}
+
+bool ApiIsLocalTest() {
+    return ApiBase().rfind(L"http://", 0) == 0;
 }
 
 void Shutdown() {

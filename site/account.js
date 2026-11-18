@@ -5,18 +5,22 @@
 //   1. The page sends you to Microsoft's page. Your password is typed there,
 //      never here. PKCE = a one-time secret this page makes up, so nobody else
 //      can use what Microsoft sends back.
-//   2. Microsoft sends you back here with a "code"; the page trades it (in your
-//      browser) for a permission for Xbox Live.
-//   3. That permission goes to Luma's server, which asks Xbox who you are and
-//      gives back a "Luma pass" (the same one the launcher gets). The
-//      permission isn't kept: only the pass, in this browser (localStorage).
+//   2. Microsoft sends you back (through Luma's server) with a "code". The page
+//      sends it, with its PKCE secret, to Luma's server, which trades it at
+//      Microsoft for a permission for Xbox Live (with personal Microsoft
+//      accounts a browser isn't allowed to do this itself).
+//   3. The server asks Xbox who you are and gives back a "Luma pass" (the same
+//      one the launcher gets). Microsoft's permission isn't kept: only the
+//      pass, in this browser (localStorage).
 (() => {
   const $ = s => document.querySelector(s);
   const API = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? "http://127.0.0.1:8787" : "https://luma-api.gios-app.workers.dev";
   const CLIENT_ID = "602c60cc-fed7-4ec9-aa25-f9f73ca0959b";  // "Luma Launcher" in Azure (public by design)
   const AUTHORITY = "https://login.microsoftonline.com/consumers/oauth2/v2.0";
   const SCOPE = "XboxLive.signin";
-  const REDIRECT = location.origin + "/";
+  // Microsoft comes back to Luma's server, which passes you here (#signin?code=…):
+  // with personal Microsoft accounts the code can't be traded in the browser.
+  const REDIRECT = API + "/v1/auth/callback";
   const KEY = "luma-pass";
   const t = key => { const d = window.LUMA_I18N || {}; const lang = document.documentElement.lang || "en"; return (d[lang] || d.en || {})[key] ?? (d.en || {})[key] ?? key; };
 
@@ -58,30 +62,28 @@
     location.assign(`${AUTHORITY}/authorize?${q}`);
   }
 
-  /* ---------- 2 and 3. back from Microsoft ---------- */
+  /* ---------- 2 and 3. back from Microsoft (through Luma's server) ---------- */
   async function finish() {
-    const q = new URLSearchParams(location.search);
-    if (!q.has("code") && !q.has("error")) return;
+    if (!location.hash.startsWith("#signin?")) return;
+    const q = new URLSearchParams(location.hash.slice("#signin?".length));
     let saved = null;
     try { saved = JSON.parse(sessionStorage.getItem("luma-signin") || "null"); sessionStorage.removeItem("luma-signin"); } catch (e) {}
     history.replaceState(null, "", location.pathname + "#me");  // (the code leaves the address bar)
-    if (q.has("error")) { showError(q.get("error") === "access_denied" ? "" : "me.err_generic"); return go(); }
-    if (!saved || q.get("state") !== saved.state) { showError("me.err_generic"); return go(); }
+    if (q.has("error")) { showError(q.get("error") === "access_denied" ? "" : "me.err_generic", q.get("error")); return go(); }
+    if (!saved || q.get("state") !== saved.state || !q.get("code")) { showError("me.err_generic", saved ? "state" : "no-session"); return go(); }
     signingIn = true; paint(); go();
     try {
-      const r = await fetch(`${AUTHORITY}/token`, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ client_id: CLIENT_ID, grant_type: "authorization_code", code: q.get("code"), redirect_uri: REDIRECT, code_verifier: saved.verifier, scope: SCOPE })
+      // Luma's server trades the code (with this browser's PKCE secret) at Microsoft, then at Xbox
+      const res = await fetch(API + "/v1/auth/web", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code: q.get("code"), verifier: saved.verifier })
       });
-      const tok = await r.json();
-      if (!r.ok || !tok.access_token) throw new Error("microsoft");
-      const res = await fetch(API + "/v1/auth/web", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ msToken: tok.access_token }) });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw Object.assign(new Error("luma"), { code: data.error });
+      if (!res.ok) throw Object.assign(new Error("luma"), { code: data.error, detail: data.error || "luma " + res.status });
       savePass(data);
     } catch (e) {
-      showError(e.code === "no_xbox_profile" ? "me.err_no_xbox" : e.code === "child_account" ? "me.err_child" : "me.err_generic");
+      console.warn("Luma sign-in:", e.detail || e.message);
+      showError(e.code === "no_xbox_profile" ? "me.err_no_xbox" : e.code === "child_account" ? "me.err_child" : "me.err_generic", e.detail || e.message);
     }
     signingIn = false; paintHeader(); paint();
   }
@@ -89,12 +91,14 @@
 
   /* ---------- the header button ---------- */
   const btn = $("#meBtn");
-  const avatarUrl = p => p && p.picture ? p.picture + (p.picture.includes("?") ? "&" : "?") + "format=png&w=96&h=96" : "";
+  // (the server sends your picture already inside the pass, as "data:image/png;…")
+  const avatarUrl = p => p && typeof p.picture === "string" && p.picture.startsWith("data:image/") ? p.picture : "";
   function paintHeader() {
     if (!btn) return;
     if (pass) {
       btn.classList.add("in");
-      btn.innerHTML = `${pass.picture ? `<img src="${avatarUrl(pass).replace(/"/g, "")}" alt="" width="28" height="28">` : ""}<span></span>`;
+      btn.innerHTML = `${avatarUrl(pass) ? `<img alt="" width="28" height="28">` : ""}<span></span>`;
+      if (avatarUrl(pass)) btn.querySelector("img").src = avatarUrl(pass);
       btn.querySelector("span").textContent = pass.gamertag;
     } else {
       btn.classList.remove("in");
@@ -106,7 +110,8 @@
   /* ---------- the profile page ---------- */
   const out = $("#meOut"), inn = $("#meIn"), err = $("#meErr"), msg = $("#meMsg"), canvas = $("#meCanvas"), link = $("#meLink");
   let signingIn = false, year = new Date().getFullYear(), summary = null, loadedFor = null, busy = false, wantName = false;
-  function showError(key) { if (err) err.textContent = key ? t(key) : ""; }
+  // (detail: a short technical reason, e.g. Microsoft's "AADSTS…" code: it says what went wrong)
+  function showError(key, detail) { if (err) err.textContent = key ? t(key) + (detail ? ` (${detail})` : "") : ""; }
   function paint() {
     if (!out) return;
     out.hidden = !!pass; inn.hidden = !pass;
@@ -114,7 +119,7 @@
     $("#meSignIn span").textContent = t(signingIn ? "me.signing" : "me.signin");
     if (!pass) return;
     $("#meName").textContent = pass.gamertag;
-    const av = $("#meAvatar"); av.hidden = !pass.picture; if (pass.picture) av.src = avatarUrl(pass);
+    const av = $("#meAvatar"); av.hidden = !avatarUrl(pass); if (avatarUrl(pass)) av.src = avatarUrl(pass);
     [...$("#meYear").children].forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.v === year)));
     if (!summary || summary.year !== year) { canvas.hidden = true; return; }
     const empty = !summary.seconds;

@@ -8649,7 +8649,12 @@ void DrawExplore(ImDrawList* d, ImVec2 min, ImVec2 max, const gallery::Info& g, 
     const float maxScroll = std::max(0.0f, contentH - (max.y - top));
     if (ImGui::IsMouseHoveringRect(ImVec2(min.x, top), max)) g_scroll -= ImGui::GetIO().MouseWheel * S(90.0f);
     g_scroll = std::clamp(g_scroll, 0.0f, maxScroll);
-    d->PushClipRect(ImVec2(min.x - S(4.0f), top), ImVec2(max.x + S(4.0f), max.y), true);
+    // Clip the cards (what they draw AND where they can be clicked). ImGui's
+    // pop doesn't give the window back its own clip (it takes the draw list's),
+    // so it's saved and put back by hand: otherwise nothing outside the
+    // gallery (the dock, minimize, close...) could be clicked.
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImRect windowClip = window->ClipRect;
     ImGui::PushClipRect(ImVec2(min.x - S(4.0f), top), ImVec2(max.x + S(4.0f), max.y), true);
     for (std::size_t i = 0; i < g.styles.size(); ++i) {
         const gallery::Style& s = g.styles[i];
@@ -8715,7 +8720,7 @@ void DrawExplore(ImDrawList* d, ImVec2 min, ImVec2 max, const gallery::Info& g, 
         if (Button("##gal_more", ImVec2(min.x, y), T("gallery.more"), false, nullptr, !g.loading)) gallery::Load(g.sort, true);
     }
     ImGui::PopClipRect();
-    d->PopClipRect();
+    window->ClipRect = windowClip;
 }
 
 void DrawYours(ImDrawList* d, ImVec2 min, ImVec2 max, const gallery::Info& g) {

@@ -235,6 +235,7 @@ bool ReadThumbnail(const wss::IRandomAccessStreamReference& ref, std::vector<std
         return false;
     }
     const auto stream = open.GetResults();
+    if (!stream) return false;
     const auto size = static_cast<std::uint32_t>(std::min<std::uint64_t>(stream.Size(), 16u << 20));
     if (size == 0) {
         return false;
@@ -405,19 +406,25 @@ void ThreadMain() {
             if (session) {
                 t.present = true;
                 AppName(t.app, sizeof(t.app), session.SourceAppUserModelId());
+                // (An app can answer "nothing" for a moment, e.g. while it changes
+                // songs: every object is checked before it's used. Using an empty
+                // one isn't an exception "catch" can stop: it closes the program.)
                 const auto info = session.GetPlaybackInfo();
-                t.playing = info.PlaybackStatus() == wmc::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
-                const auto controls = info.Controls();
-                t.canPlayPause = controls.IsPlayPauseToggleEnabled() || controls.IsPlayEnabled() || controls.IsPauseEnabled();
-                t.canNext = controls.IsNextEnabled();
-                t.canPrevious = controls.IsPreviousEnabled();
-                t.canSeek = controls.IsPlaybackPositionEnabled();
-                t.canShuffle = controls.IsShuffleEnabled();
-                t.canRepeat = controls.IsRepeatEnabled();
-                if (const auto shuffle = info.IsShuffleActive()) t.shuffle = shuffle.Value();
-                if (const auto repeat = info.AutoRepeatMode()) {
-                    using Mode = winrt::Windows::Media::MediaPlaybackAutoRepeatMode;
-                    t.repeat = repeat.Value() == Mode::Track ? 1 : repeat.Value() == Mode::List ? 2 : 0;
+                if (info) {
+                    t.playing = info.PlaybackStatus() == wmc::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
+                    if (const auto controls = info.Controls()) {
+                        t.canPlayPause = controls.IsPlayPauseToggleEnabled() || controls.IsPlayEnabled() || controls.IsPauseEnabled();
+                        t.canNext = controls.IsNextEnabled();
+                        t.canPrevious = controls.IsPreviousEnabled();
+                        t.canSeek = controls.IsPlaybackPositionEnabled();
+                        t.canShuffle = controls.IsShuffleEnabled();
+                        t.canRepeat = controls.IsRepeatEnabled();
+                    }
+                    if (const auto shuffle = info.IsShuffleActive()) t.shuffle = shuffle.Value();
+                    if (const auto repeat = info.AutoRepeatMode()) {
+                        using Mode = winrt::Windows::Media::MediaPlaybackAutoRepeatMode;
+                        t.repeat = repeat.Value() == Mode::Track ? 1 : repeat.Value() == Mode::List ? 2 : 0;
+                    }
                 }
                 // The app's volume: looked up once a second (finding it walks the audio sessions).
                 if (perf::Now() >= nextVolume) {
@@ -430,24 +437,25 @@ void ThreadMain() {
                     }
                 }
                 t.volume = g_appVolume;
-                const auto timeline = session.GetTimelineProperties();
-                using seconds = std::chrono::duration<double>;
-                t.duration = std::chrono::duration_cast<seconds>(timeline.EndTime() - timeline.StartTime()).count();
-                double position = std::chrono::duration_cast<seconds>(timeline.Position()).count();
-                // The position is "as of LastUpdatedTime": add what played since.
-                if (t.playing) {
-                    const auto since = winrt::clock::now() - timeline.LastUpdatedTime();
-                    position += std::max(0.0, std::chrono::duration_cast<seconds>(since).count());
+                if (const auto timeline = session.GetTimelineProperties()) {
+                    using seconds = std::chrono::duration<double>;
+                    t.duration = std::chrono::duration_cast<seconds>(timeline.EndTime() - timeline.StartTime()).count();
+                    double position = std::chrono::duration_cast<seconds>(timeline.Position()).count();
+                    // The position is "as of LastUpdatedTime": add what played since.
+                    if (t.playing) {
+                        const auto since = winrt::clock::now() - timeline.LastUpdatedTime();
+                        position += std::max(0.0, std::chrono::duration_cast<seconds>(since).count());
+                    }
+                    t.position = t.duration > 0.0 ? std::clamp(position, 0.0, t.duration) : std::max(0.0, position);
                 }
-                t.position = t.duration > 0.0 ? std::clamp(position, 0.0, t.duration) : std::max(0.0, position);
 
                 // Title, artist, album and art: once a second is plenty.
                 const std::int64_t now = perf::Now();
                 if (now >= nextProps) {
                     nextProps = now + static_cast<std::int64_t>(perf::g_ticksPerSecond);
                     auto propsOp = session.TryGetMediaPropertiesAsync();
-                    if (Await(propsOp, 1500)) {
-                        const auto props = propsOp.GetResults();
+                    const auto props = Await(propsOp, 1500) ? propsOp.GetResults() : nullptr;
+                    if (props) {
                         CopyText(song.title, sizeof(song.title), props.Title());
                         CopyText(song.artist, sizeof(song.artist), props.Artist());
                         CopyText(song.album, sizeof(song.album), props.AlbumTitle());

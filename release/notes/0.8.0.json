@@ -1,0 +1,70 @@
+{
+  "notes": {
+    "en": [
+      {
+        "title": "Your styles, in your account",
+        "body": "Sign in with Microsoft and turn on Settings > Account > \"Save my styles and settings in my account\". Your Lyric Flow styles, Now Playing, the visualizer, the theme and the language are saved, and on a new PC or after reinstalling everything comes back. It's optional and off by default: Luma works the same without an account."
+      },
+      {
+        "title": "The style gallery",
+        "body": "Lyrics > Gallery: browse the Lyric Flow styles other people made, each one with its live preview, and install one with a click (it only changes how the lyrics look, never where they are). Publish your own styles from \"Yours\": your gamertag is shown only if you tick it. Anything that breaks the rules can be reported."
+      },
+      {
+        "title": "Your year in Luma",
+        "body": "Settings > Your year: your hours of music while playing, your top songs and artists, and a hill of blocks with one column per month. Save it as an image to share. It's counted on your PC while Minecraft is open (title, artist and minutes, nothing else); it can be turned off and deleted."
+      },
+      {
+        "title": "Your data",
+        "body": "Settings > Account shows what Luma's server keeps, lets you download it all and delete your Luma account with everything in it, right away."
+      },
+      {
+        "title": "Fixes",
+        "body": "Luma no longer closes when a music app changes songs at a bad moment (in the launcher and in the game)."
+      }
+    ],
+    "es": [
+      {
+        "title": "Tus estilos, en tu cuenta",
+        "body": "Inicia sesión con Microsoft y enciende Ajustes > Cuenta > \"Guardar mis estilos y ajustes en mi cuenta\". Se guardan tus estilos de Lyric Flow, el Now Playing, el visualizador, el tema y el idioma, y en una PC nueva o al reinstalar vuelve todo. Es opcional y viene apagado: Luma funciona igual sin cuenta."
+      },
+      {
+        "title": "La galería de estilos",
+        "body": "Letras > Galería: mira los estilos de Lyric Flow que hicieron otras personas, cada uno con su vista previa en vivo, e instala uno con un clic (solo cambia cómo se ven las letras, nunca dónde están). Publica los tuyos desde \"Los tuyos\": tu gamertag se muestra solo si lo marcas. Lo que rompa las reglas se puede reportar."
+      },
+      {
+        "title": "Tu año en Luma",
+        "body": "Ajustes > Tu año: tus horas de música mientras jugabas, tus canciones y artistas más escuchados y una colina de bloques con una columna por mes. Guárdalo como imagen para compartir. Se cuenta en tu PC mientras Minecraft está abierto (título, artista y minutos, nada más); se puede apagar y borrar."
+      },
+      {
+        "title": "Tus datos",
+        "body": "Ajustes > Cuenta muestra qué guarda el servidor de Luma, te deja descargarlo todo y borrar tu cuenta de Luma con todo lo que tiene, al instante."
+      },
+      {
+        "title": "Arreglos",
+        "body": "Luma ya no se cierra cuando una app de música cambia de canción en un mal momento (en el launcher y en el juego)."
+      }
+    ],
+    "pt": [
+      {
+        "title": "Seus estilos, na sua conta",
+        "body": "Entre com a Microsoft e ative Ajustes > Conta > \"Salvar meus estilos e ajustes na minha conta\". Seus estilos do Lyric Flow, o Now Playing, o visualizador, o tema e o idioma são salvos, e num PC novo ou ao reinstalar tudo volta. É opcional e vem desligado: o Luma funciona igual sem conta."
+      },
+      {
+        "title": "A galeria de estilos",
+        "body": "Letras > Galeria: veja os estilos do Lyric Flow que outras pessoas fizeram, cada um com sua prévia ao vivo, e instale um com um clique (só muda como as letras ficam, nunca onde estão). Publique os seus em \"Os seus\": seu gamertag aparece só se você marcar. O que quebrar as regras pode ser denunciado."
+      },
+      {
+        "title": "Seu ano no Luma",
+        "body": "Ajustes > Seu ano: suas horas de música enquanto jogava, suas músicas e artistas mais ouvidos e uma colina de blocos com uma coluna por mês. Salve como imagem para compartilhar. É contado no seu PC enquanto o Minecraft está aberto (título, artista e minutos, nada mais); pode ser desligado e apagado."
+      },
+      {
+        "title": "Seus dados",
+        "body": "Ajustes > Conta mostra o que o servidor do Luma guarda, deixa baixar tudo e apagar sua conta do Luma com tudo o que ela tem, na hora."
+      },
+      {
+        "title": "Correções",
+        "body": "O Luma não fecha mais quando um app de música troca de faixa num momento ruim (no launcher e no jogo)."
+      }
+    ]
+  }
+}

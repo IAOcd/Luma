@@ -13,6 +13,8 @@ Luma does **not** include anything that gives an advantage in multiplayer: no ki
 > - **Luma account (optional, since 0.8.0):** your styles and settings saved in your account, publishing in the gallery, and your year joined across your PCs. Off by default; Luma works the same without it.
 > - **Menu:** opens with **L**. **End** unloads Luma without closing the game.
 >
+> **New in 0.8.2:** *Your year* reaches your account within minutes, and your profile on Luma's website (sign in with Microsoft). The full notes are in `release/notes/0.8.2.json`.
+>
 > **New in 0.8.1:** share a link to *Your year*, the anonymous *Top in Luma* charts, and Luma's website at https://luma.gios-app.workers.dev (`site/`). The full notes are in `release/notes/0.8.1.json`.
 >
 > **New in 0.8.0:** optional Luma accounts (your styles and settings in your account), the style gallery, *Your year* as an image to share, and *Your data* to download or delete everything. The full notes are in `release/notes/0.8.0.json`.

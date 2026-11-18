@@ -1,0 +1,34 @@
+{
+  "notes": {
+    "en": [
+      {
+        "title": "Your year, up to date",
+        "body": "With \"Save my summary in my account\" on, the songs you hear now reach your account within a few minutes (before, it could take ten). Opening Settings > Your year sends what's pending first, and the card never shows emptier than what this PC counted."
+      },
+      {
+        "title": "Your profile on Luma's website",
+        "body": "Sign in at luma.gios-app.workers.dev with the same Microsoft account as the launcher to see your year, share it, count your songs in \"Top in Luma\", and download or delete your data."
+      }
+    ],
+    "es": [
+      {
+        "title": "Tu año, al día",
+        "body": "Con \"Guardar mi resumen en mi cuenta\" encendido, las canciones que escuchas llegan a tu cuenta en pocos minutos (antes podía tardar diez). Al abrir Ajustes > Tu año se sube primero lo pendiente, y la tarjeta nunca se ve más vacía que lo que contó esta PC."
+      },
+      {
+        "title": "Tu perfil en la web de Luma",
+        "body": "Inicia sesión en luma.gios-app.workers.dev con la misma cuenta de Microsoft del launcher para ver tu año, compartirlo, sumar tus canciones a \"Lo más escuchado en Luma\" y descargar o borrar tus datos."
+      }
+    ],
+    "pt": [
+      {
+        "title": "Seu ano, em dia",
+        "body": "Com \"Salvar meu resumo na minha conta\" ativado, as músicas que você ouve chegam à sua conta em poucos minutos (antes podia levar dez). Ao abrir Ajustes > Seu ano, o que está pendente sobe primeiro, e o cartão nunca fica mais vazio do que o que este PC contou."
+      },
+      {
+        "title": "Seu perfil no site do Luma",
+        "body": "Entre em luma.gios-app.workers.dev com a mesma conta Microsoft do launcher para ver seu ano, compartilhá-lo, somar suas músicas ao \"O mais ouvido no Luma\" e baixar ou apagar seus dados."
+      }
+    ]
+  }
+}

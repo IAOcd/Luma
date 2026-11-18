@@ -13,6 +13,8 @@ Luma **no** incluye nada que dé ventaja en multijugador: nada de killaura, fly,
 > - **Cuenta de Luma (opcional, desde la 0.8.0):** tus estilos y ajustes guardados en tu cuenta, publicar en la galería y tu año junto entre tus PCs. Viene apagada; Luma funciona igual sin ella.
 > - **Menú:** se abre con **L**. **Fin (End)** descarga Luma sin cerrar el juego.
 >
+> **Novedades de la 0.8.2:** *Tu año* llega a tu cuenta en minutos, y tu perfil en la web de Luma (iniciando sesión con Microsoft). Las notas completas están en `release/notes/0.8.2.json`.
+>
 > **Novedades de la 0.8.1:** compartir un enlace a *Tu año*, *Lo más escuchado en Luma* (anónimo) y la web de Luma en https://luma.gios-app.workers.dev (`site/`). Las notas completas están en `release/notes/0.8.1.json`.
 >
 > **Novedades de la 0.8.0:** cuentas de Luma opcionales (tus estilos y ajustes en tu cuenta), la galería de estilos, *Tu año* como imagen para compartir y *Tus datos* para descargar o borrar todo. Las notas completas están en `release/notes/0.8.0.json`.

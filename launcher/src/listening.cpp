@@ -203,6 +203,10 @@ Summary FromServer(const json& j, int year) {
             out.push_back({e.value("title", std::string()), e.value("artist", std::string()), e.value("seconds", 0.0), e.value("plays", 0)});
         }
     };
+    if (j.contains("share") && j["share"].is_object()) {
+        s.shareUrl = j["share"].value("url", std::string());
+        s.shareShowName = j["share"].value("showName", false);
+    }
     entries("topSongs", s.topSongs);
     entries("topArtists", s.topArtists);
     if (j.contains("months") && j["months"].is_array()) {
@@ -293,8 +297,10 @@ void Finish(const char* key, bool ok) {
     ++g_info.version;
 }
 
-enum class Job { None, DeleteCloud };
+enum class Job { None, DeleteCloud, Share, Unshare };
 Job g_job = Job::None;
+int g_jobYear = 0;
+bool g_jobShowName = false;
 
 // --- The thread -------------------------------------------------------------------------
 void Run() {
@@ -407,6 +413,42 @@ void Run() {
                     Save();
                 }
                 Finish(r.status == 200 ? "year.deleted_cloud" : FailKey(r.status), r.status == 200);
+            }
+        }
+        if (job == Job::Share || job == Job::Unshare) {
+            int year = 0;
+            bool showName = false;
+            {
+                std::lock_guard lock(g_mutex);
+                year = g_jobYear;
+                showName = g_jobShowName;
+            }
+            Reply r;
+            if (!pass.empty()) {
+                r = job == Job::Share ? Call(L"POST", L"/v1/me/wrapped/share", pass, json{{"year", year}, {"showName", showName}}.dump())
+                                      : Call(L"DELETE", L"/v1/me/wrapped/share?year=" + std::to_wstring(year), pass);
+            }
+            std::lock_guard lock(g_mutex);
+            g_info.shareBusy = false;
+            ++g_info.version;
+            if (pass.empty()) {
+                g_info.actionKey = "year.err_signed_out";
+                g_info.actionOk = false;
+            } else if (r.status == 200) {
+                const std::string url = job == Job::Share ? r.body.value("url", std::string()) : std::string();
+                if (g_cloudOk && g_cloud.year == year) {
+                    g_cloud.shareUrl = url;
+                    g_cloud.shareShowName = showName;
+                }
+                if (job == Job::Share) {
+                    g_info.linkUrl = url;
+                    ++g_info.linkVersion;
+                }
+                g_info.actionKey = job == Job::Share ? "year.link_copied" : "year.link_removed";
+                g_info.actionOk = true;
+            } else {
+                g_info.actionKey = r.body.value("error", std::string()) == "nothing_to_share" ? "year.err_nothing" : FailKey(r.status);
+                g_info.actionOk = false;
             }
         }
         bool upload = false;
@@ -529,6 +571,29 @@ void DeleteCloud() {
     {
         std::lock_guard lock(g_mutex);
         g_job = Job::DeleteCloud;
+    }
+    g_wake.notify_all();
+}
+
+void Share(int year, bool showName) {
+    {
+        std::lock_guard lock(g_mutex);
+        if (g_info.shareBusy) return;
+        g_info.shareBusy = true;
+        g_job = Job::Share;
+        g_jobYear = year;
+        g_jobShowName = showName;
+    }
+    g_wake.notify_all();
+}
+
+void Unshare(int year) {
+    {
+        std::lock_guard lock(g_mutex);
+        if (g_info.shareBusy) return;
+        g_info.shareBusy = true;
+        g_job = Job::Unshare;
+        g_jobYear = year;
     }
     g_wake.notify_all();
 }

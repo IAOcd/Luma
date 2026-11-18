@@ -223,6 +223,37 @@ void Unpublish(const std::string& id) {
     });
 }
 
+void LoadLinked(const std::string& id) {
+    {
+        std::lock_guard lock(g_mutex);
+        g_info.linkedId = id;
+        g_info.linkedLoading = true;
+        g_info.linkedErrorKey.clear();
+        g_info.linked = Style{};
+        ++g_info.version;
+    }
+    Queue([id] {
+        const Reply r = Call(L"GET", L"/v1/gallery/" + net::Widen(id), {}, false);
+        std::lock_guard lock(g_mutex);
+        if (g_info.linkedId != id) return;  // (another link came meanwhile)
+        g_info.linkedLoading = false;
+        ++g_info.version;
+        if (r.status == 200) {
+            g_info.linked = ParseStyle(r.body);
+        } else {
+            g_info.linkedErrorKey = ErrorKey(r);
+        }
+    });
+}
+
+void ClearLinked() {
+    std::lock_guard lock(g_mutex);
+    g_info.linkedId.clear();
+    g_info.linked = Style{};
+    g_info.linkedErrorKey.clear();
+    ++g_info.version;
+}
+
 void CountInstall(const std::string& id) {
     Queue([id] { Call(L"POST", L"/v1/gallery/" + net::Widen(id) + L"/install", "{}"); });
 }

@@ -40,6 +40,7 @@
     paintSung();
     requestAnimationFrame(() => { placePill(lang, pill, $("button[aria-pressed='true']", lang)); placeDock(); });
     if (save) { try { localStorage.setItem("luma-lang", code); } catch (e) {} }
+    document.dispatchEvent(new CustomEvent("luma:lang", { detail: { code } }));
   }
 
   lang.addEventListener("click", e => { const b = e.target.closest("button[data-lang]"); if (b) setLang(b.dataset.lang, true); });
@@ -54,9 +55,13 @@
     dockPill.style.opacity = "1";
     placePill(dock, dockPill, a);
   }
-  function go(id, how) {
-    if (!order.includes(id)) id = "home";
-    if (id === current) return;
+  function go(full, how) {
+    // "year/<code>" = the "year" page showing that shared summary
+    let [id, arg] = String(full || "").split("/");
+    if (!order.includes(id)) { id = "home"; arg = undefined; }
+    full = arg ? id + "/" + arg : id;
+    document.dispatchEvent(new CustomEvent("luma:view", { detail: { id, arg } }));
+    if (id === current) { if (how === "push") history.pushState(null, "", "#" + full); return; }
     const from = current ? $("#" + current) : null, to = $("#" + id);
     const dir = current && order.indexOf(id) < order.indexOf(current) ? -1 : 1;
     root.style.setProperty("--dir", dir);
@@ -72,8 +77,8 @@
     if (typeof lines !== "undefined" && lines.length) lines.forEach((L, k) => { L.to = shapeFor(id, k); });
     $$("a[data-go]", dock).forEach(a => { if (a.dataset.go === id) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
     placeDock();
-    if (how === "push") history.pushState(null, "", "#" + id);
-    else if (how === "replace") history.replaceState(null, "", "#" + id);
+    if (how === "push") history.pushState(null, "", "#" + full);
+    else if (how === "replace") history.replaceState(null, "", "#" + full);
   }
   $$(".view").forEach(v => { v.inert = true; v.setAttribute("aria-hidden", "true"); });
   document.addEventListener("click", e => {
@@ -269,7 +274,7 @@
   // Unas pocas curvas orgánicas detrás de todo. No reaccionan al mouse ni al scroll: solo "respiran"
   // muy despacio y toman otra forma al cambiar de sección. Se dibujan ~12 veces por segundo (casi gratis).
   const field = $("#field"), fx = field.getContext("2d");
-  const tint = { home: [233, 230, 223], game: [255, 176, 120], launcher: [240, 150, 205], faq: [175, 195, 240], download: [240, 232, 215] };
+  const tint = { home: [233, 230, 223], game: [255, 176, 120], launcher: [240, 150, 205], gallery: [200, 180, 255], faq: [175, 195, 240], download: [240, 232, 215], year: [233, 230, 223] };
   const SEG = 110, NP = 9;
   let lines = [], W = 0, H = 0, dpr = 1;
   function shapeFor(view, k) {

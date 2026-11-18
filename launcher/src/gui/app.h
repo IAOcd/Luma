@@ -31,4 +31,12 @@ void AppShutdown();
 // mover la ventana desde ahí.
 bool AppIsCaption(int x, int y);
 
+// A "luma://" link (from Luma's website, e.g. luma://style/<id> = "install
+// this gallery style"): it opens the right page. It comes on the command line,
+// or from a second launcher that hands it to this one (WM_COPYDATA).
+void AppOpenLink(const wchar_t* link);
+// The window class, to find an open launcher.
+inline constexpr const wchar_t* kWindowClass = L"LumaLauncherWindow";
+inline constexpr ULONG_PTR kLinkMessage = 0x4C554D41;  // "LUMA": the WM_COPYDATA that carries a link
+
 }  // namespace luma::launcher::gui

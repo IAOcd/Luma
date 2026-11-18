@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <cwchar>
+#include <string>
 
 #include "gui/app.h"
 #include "render/icons.h"
@@ -196,6 +197,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;  // que Alt no abra el menú invisible de la ventana
             }
             break;
+        case WM_COPYDATA: {  // a luma:// link from a second launcher
+            const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(lParam);
+            if (data != nullptr && data->dwData == kLinkMessage && data->lpData != nullptr && data->cbData >= sizeof(wchar_t) &&
+                data->cbData < 4096) {
+                std::wstring text(static_cast<const wchar_t*>(data->lpData), data->cbData / sizeof(wchar_t));
+                text.resize(wcsnlen(text.c_str(), text.size()));
+                AppOpenLink(text.c_str());
+                if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+                ShowWindow(hwnd, SW_SHOW);
+                SetForegroundWindow(hwnd);
+            }
+            return TRUE;
+        }
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
@@ -241,6 +255,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // imágenes de las noticias y las skins.
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
+    // A luma:// link (from the website) and a launcher already open: hand it
+    // the link and leave (only one launcher at a time shows it).
+    if (const wchar_t* link = std::wcsstr(GetCommandLineW(), L"luma://")) {
+        if (HWND other = FindWindowW(kWindowClass, nullptr)) {
+            std::wstring text(link);
+            while (!text.empty() && (text.back() == L'"' || text.back() == L' ')) text.pop_back();
+            COPYDATASTRUCT data{kLinkMessage, static_cast<DWORD>((text.size() + 1) * sizeof(wchar_t)), text.data()};
+            DWORD pid = 0;
+            GetWindowThreadProcessId(other, &pid);
+            AllowSetForegroundWindow(pid);
+            SendMessageW(other, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&data));
+            return 0;
+        }
+    }
+
     WNDCLASSEXW wc{sizeof(wc)};
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = WndProc;
@@ -248,7 +277,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));  // el ícono de luma.rc
     wc.hIconSm = wc.hIcon;
-    wc.lpszClassName = L"LumaLauncherWindow";
+    wc.lpszClassName = kWindowClass;
     RegisterClassExW(&wc);
 
     // Tamaño inicial según la escala de la pantalla principal, centrado.

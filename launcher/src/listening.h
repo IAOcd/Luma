@@ -42,6 +42,8 @@ struct Summary {
     std::vector<Entry> topSongs;    // up to 5
     std::vector<Entry> topArtists;  // up to 5
     double months[12] = {};    // seconds per month
+    std::string shareUrl;      // (from your account) its public link, "" = not shared
+    bool shareShowName = false;
 };
 
 struct Info {
@@ -54,6 +56,9 @@ struct Info {
     bool cloudLoading = false;
     std::string actionKey;     // the result of the last action, "" = none
     bool actionOk = true;
+    bool shareBusy = false;
+    std::string linkUrl;       // the link just made (the window copies it once)
+    int linkVersion = 0;       // goes up each time a link is made
     int version = 0;
 };
 
@@ -74,5 +79,10 @@ void RefreshCloud(int year);
 // Delete what this PC recorded / what your account has.
 void DeleteLocal();
 void DeleteCloud();
+// A public link to your year (from your account: "Save my summary in my
+// account" must be on). "showName" = your gamertag on the page. The link
+// stops working if you remove it, or delete what you listened to.
+void Share(int year, bool showName);
+void Unshare(int year);
 
 }  // namespace luma::launcher::listening

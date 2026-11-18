@@ -1,0 +1,11 @@
+# La web de Luma en Cloudflare Workers (solo archivos estáticos, plan gratis).
+# Publicar:  npx wrangler deploy --config site/wrangler.toml
+# Queda en https://luma.gios-app.workers.dev
+name = "luma"
+compatibility_date = "2026-10-01"
+workers_dev = true
+preview_urls = false
+
+[assets]
+directory = "."
+not_found_handling = "single-page-application"

@@ -38,3 +38,4 @@ server/
 
 # Lo que compila Rust (el reproductor de Spotify de Luma)
 launcher/player/target/
+site/.wrangler/

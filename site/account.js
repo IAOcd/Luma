@@ -81,11 +81,13 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw Object.assign(new Error("luma"), { code: data.error, detail: data.error || "luma " + res.status });
       savePass(data);
+      loadedFor = null;
     } catch (e) {
       console.warn("Luma sign-in:", e.detail || e.message);
       showError(e.code === "no_xbox_profile" ? "me.err_no_xbox" : e.code === "child_account" ? "me.err_child" : "me.err_generic", e.detail || e.message);
     }
     signingIn = false; paintHeader(); paint();
+    if (pass) load(true);
   }
   function go() { if (location.hash !== "#me") location.hash = "#me"; else document.dispatchEvent(new CustomEvent("luma:view", { detail: { id: "me" } })); }
 
@@ -121,7 +123,11 @@
     $("#meName").textContent = pass.gamertag;
     const av = $("#meAvatar"); av.hidden = !avatarUrl(pass); if (avatarUrl(pass)) av.src = avatarUrl(pass);
     [...$("#meYear").children].forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.v === year)));
-    if (!summary || summary.year !== year) { canvas.hidden = true; return; }
+    if (!summary || summary.year !== year) {
+      canvas.hidden = true; $("#meSave").hidden = true; $("#meUnshare").hidden = true; link.textContent = "";
+      [$("#meShare"), $("#meCharts"), $("#meShareName")].forEach(el => el.disabled = true);
+      return;
+    }
     const empty = !summary.seconds;
     canvas.hidden = empty;
     msg.textContent = empty ? t("me.empty") : "";

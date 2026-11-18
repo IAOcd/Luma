@@ -465,3 +465,4 @@ body[data-view="me"]::before{background:radial-gradient(120% 90% at 50% 45%,rgba
 @media (hover:hover){.me-signout:hover{color:var(--ivory)}}
 @media (max-width:860px),(max-height:620px){.me-in{grid-template-columns:1fr}#meCanvas{height:auto;width:min(100%,460px)}}
 .me-who img[hidden]{display:none}
+.btn:disabled{opacity:.45;pointer-events:none;box-shadow:none}

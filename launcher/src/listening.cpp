@@ -35,8 +35,9 @@ using Clock = std::chrono::steady_clock;
 constexpr double kHeardAfter = 30.0;                       // seconds of a song = one "play"
 constexpr auto kTick = std::chrono::seconds(5);
 constexpr auto kSaveEvery = std::chrono::seconds(60);
-constexpr auto kUploadEvery = std::chrono::minutes(10);
-constexpr auto kRetry = std::chrono::minutes(2);
+constexpr auto kUploadEvery = std::chrono::minutes(3);  // after sending: the next round
+constexpr auto kCheckAgain = std::chrono::minutes(1);   // nothing new yet: look again soon
+constexpr auto kRetry = std::chrono::minutes(2);        // it couldn't (no internet...)
 constexpr std::size_t kMaxItems = 20000;                   // (a safety limit for the file)
 
 struct Item {
@@ -241,8 +242,9 @@ const char* FailKey(int status) {
 }
 
 // Sends what changed since the last time (up to 200 songs per request).
-// Returns false if it couldn't.
-bool Upload(const std::string& pass) {
+enum class Sent { Something, Nothing, Failed };
+Sent Upload(const std::string& pass) {
+    bool any = false;
     for (int round = 0; round < 20; ++round) {
         json items = json::array();
         std::vector<std::pair<std::size_t, std::pair<long long, int>>> marks;
@@ -264,8 +266,9 @@ bool Upload(const std::string& pass) {
         if (r.status != 200) {
             g_info.uploadKey = FailKey(r.status);
             ++g_info.version;
-            return false;
+            return Sent::Failed;
         }
+        any = true;
         for (const auto& [i, sent] : marks) {
             if (i < g_items.size()) {
                 g_items[i].sentSeconds = sent.first;
@@ -278,7 +281,7 @@ bool Upload(const std::string& pass) {
     g_info.uploadKey.clear();
     g_info.lastUpload = static_cast<long long>(std::time(nullptr));
     ++g_info.version;
-    return true;
+    return any ? Sent::Something : Sent::Nothing;
 }
 
 void FetchCloud(const std::string& pass, int year) {
@@ -488,7 +491,8 @@ void Run() {
             }
         }
         if (upload && !pass.empty() && (uploadNow || now >= nextUpload)) {
-            nextUpload = now + (Upload(pass) ? kUploadEvery : kRetry);
+            const Sent sent = Upload(pass);
+            nextUpload = now + (sent == Sent::Something ? kUploadEvery : sent == Sent::Nothing ? kCheckAgain : kRetry);
             std::lock_guard lock(g_mutex);
             if (g_dirty) Save();
         }
@@ -573,6 +577,7 @@ void RefreshCloud(int year) {
         if (g_info.cloudLoading) return;
         g_info.cloudLoading = true;
         g_cloudWanted = year;
+        g_uploadNow = g_upload;  // (what this PC has that the account doesn't, first)
     }
     g_wake.notify_all();
 }

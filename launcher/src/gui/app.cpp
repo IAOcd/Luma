@@ -8255,7 +8255,20 @@ void DrawSettingsYear(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info
     }
     bool cloudOk = false;
     listening::Summary s = useCloud ? listening::Cloud(g_year, cloudOk) : listening::Summary{};
-    if (!cloudOk) s = listening::Local(g_year);
+    {
+        // Your account (all your PCs) unless it's behind this PC (what this PC
+        // counted hasn't gone up yet): then this PC's, so it's never emptier.
+        const listening::Summary local = listening::Local(g_year);
+        if (!cloudOk) {
+            s = local;
+        } else if (s.seconds + 1.0 < local.seconds) {
+            listening::Summary mine = local;
+            mine.shareUrl = s.shareUrl;          // (what only your account knows stays)
+            mine.shareShowName = s.shareShowName;
+            mine.inCharts = s.inCharts;
+            s = mine;
+        }
+    }
     // --- the card (left) ---
     const float cardH = std::min(max.y - min.y, S(600.0f));
     const float cardW = cardH * 0.8f;

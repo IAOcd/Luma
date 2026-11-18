@@ -13,6 +13,8 @@ Luma does **not** include anything that gives an advantage in multiplayer: no ki
 > - **Luma account (optional, since 0.8.0):** your styles and settings saved in your account, publishing in the gallery, and your year joined across your PCs. Off by default; Luma works the same without it.
 > - **Menu:** opens with **L**. **End** unloads Luma without closing the game.
 >
+> **New in 0.8.1:** share a link to *Your year*, the anonymous *Top in Luma* charts, and Luma's website at https://luma.gios-app.workers.dev (`site/`). The full notes are in `release/notes/0.8.1.json`.
+>
 > **New in 0.8.0:** optional Luma accounts (your styles and settings in your account), the style gallery, *Your year* as an image to share, and *Your data* to download or delete everything. The full notes are in `release/notes/0.8.0.json`.
 >
 > **New in 0.7.0:** the new launcher, Spotify inside it with Luma's own player, Lyric Flow drawn by the game with effects and ready-made styles, and Luma working alongside Flarial. The full notes are in `release/notes/0.7.0.json`.

@@ -8231,6 +8231,11 @@ bool SavePng(const listening::Summary& s, const fs::path& file) {
 void DrawSettingsYear(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc) {
     using namespace yearui;
     const Palette& p = P();
+    static bool marks = false;
+    if (!marks) {  // ("…" for long names and "—" for an empty list come from another font)
+        marks = true;
+        render::fontfallback::Need("\xE2\x80\xA6\xE2\x80\x94");
+    }
     const listening::Info li = listening::Get();
     const bool signedIn = acc.state == account::State::SignedIn && !account::LumaPass().empty();
     std::time_t clock = std::time(nullptr);

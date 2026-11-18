@@ -1,0 +1,46 @@
+{
+  "notes": {
+    "en": [
+      {
+        "title": "Share your year",
+        "body": "Settings > Your year > \"Share a link\": a link to your year that anyone can open on Luma's website, with your hours, top songs and artists. It's copied for you to paste anywhere. Your gamertag is shown only if you tick it, and \"Stop sharing\" turns it off. It needs \"Save my summary in my account\" on."
+      },
+      {
+        "title": "Top in Luma",
+        "body": "A new switch in Settings > Your year adds your songs to \"Top in Luma\", the most heard songs and artists on Luma's website. It's anonymous (only how many people heard each song), a song shows only when at least 3 people heard it, and it's off by default."
+      },
+      {
+        "title": "Luma's website",
+        "body": "luma.gios-app.workers.dev: see what Luma does, open a shared year, and check the most heard songs in Luma this month or this year."
+      }
+    ],
+    "es": [
+      {
+        "title": "Comparte tu año",
+        "body": "Ajustes > Tu año > \"Compartir un enlace\": un enlace a tu año que cualquiera puede abrir en la web de Luma, con tus horas y tus canciones y artistas más escuchados. Se copia para que lo pegues donde quieras. Tu gamertag aparece solo si lo marcas, y \"Dejar de compartir\" lo apaga. Necesita \"Guardar mi resumen en mi cuenta\" encendido."
+      },
+      {
+        "title": "Lo más escuchado en Luma",
+        "body": "Un interruptor nuevo en Ajustes > Tu año suma tus canciones a \"Lo más escuchado en Luma\", las canciones y artistas que más suenan en la web de Luma. Es anónimo (solo cuántas personas escucharon cada canción), una canción aparece solo cuando la escucharon al menos 3 personas, y viene apagado."
+      },
+      {
+        "title": "La web de Luma",
+        "body": "luma.gios-app.workers.dev: mira lo que hace Luma, abre un año compartido y revisa lo más escuchado en Luma este mes o este año."
+      }
+    ],
+    "pt": [
+      {
+        "title": "Compartilhe seu ano",
+        "body": "Ajustes > Seu ano > \"Compartilhar um link\": um link para o seu ano que qualquer pessoa pode abrir no site do Luma, com suas horas e suas músicas e artistas mais ouvidos. Ele é copiado para você colar onde quiser. Seu gamertag aparece só se você marcar, e \"Parar de compartilhar\" desliga. Precisa de \"Salvar meu resumo na minha conta\" ativado."
+      },
+      {
+        "title": "O mais ouvido no Luma",
+        "body": "Uma chave nova em Ajustes > Seu ano soma suas músicas ao \"O mais ouvido no Luma\", as músicas e artistas que mais tocam no site do Luma. É anônimo (só quantas pessoas ouviram cada música), uma música aparece só quando pelo menos 3 pessoas a ouviram, e vem desligado."
+      },
+      {
+        "title": "O site do Luma",
+        "body": "luma.gios-app.workers.dev: veja o que o Luma faz, abra um ano compartilhado e confira o mais ouvido no Luma neste mês ou neste ano."
+      }
+    ]
+  }
+}

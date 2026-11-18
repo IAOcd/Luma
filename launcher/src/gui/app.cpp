@@ -23,10 +23,12 @@
 #include "gui/app.h"
 
 #include <d3d11.h>
+#include <wincodec.h>
 #include <shellapi.h>
 #include <shlobj.h>
 
 #include <imgui.h>
+#include <imgui_impl_dx11.h>  // (to draw "your year" into a picture)
 #include <imgui_internal.h>  // ShadeVertsLinearColorGradientKeepAlpha (degradados)
 
 #include <algorithm>
@@ -51,6 +53,7 @@
 #include "account.h"
 #include "cloud_sync.h"
 #include "gallery.h"
+#include "listening.h"
 #include "smtc_bridge.h"
 #include "spotify_engine.h"
 #include "core/audio_viz.h"
@@ -7764,7 +7767,7 @@ void DrawSettings(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& ac
 //  glass column with the sections) and the chosen one on the right, right on
 //  the album's living background (no window over the stage).
 // =============================================================================
-int g_settingsTab = 0;      // 0 general, 1 music, 2 spotify, 3 account, 4 game, 5 about
+int g_settingsTab = 0;      // 0 general, 1 music, 2 spotify, 3 account, 4 game, 5 about, 6 your year
 float g_settingsTabIn = 1.0f;
 float g_settingsPill = 0.0f;  // where the lit row of the index is (it slides)
 
@@ -7900,6 +7903,379 @@ void DrawSettingsGame(ImDrawList* d, ImVec2 min, ImVec2 max, const LocalData& da
     if (max.y - y2 > S(120.0f)) DrawSettingsShortcuts(d, ImVec2(min.x, y2), ImVec2(max.x, std::min(max.y, y2 + S(170.0f))));
 }
 
+// =============================================================================
+//  "YOUR YEAR IN LUMA" (listening.h): what you listened to while playing.
+//  The card is drawn by one function for both the preview here and the
+//  picture you save (a PNG of 1080 x 1350, the size social networks like).
+// =============================================================================
+namespace yearui {
+
+int g_year = 0;
+double g_armedLocal = -100.0, g_armedCloud = -100.0;
+std::string g_saved;      // where the last picture was saved
+bool g_saveFailed = false;
+int g_cloudAskedYear = 0;
+int g_passVersion = -1;
+
+std::string FitText(ImFont* font, float size, float width, const std::string& text) {
+    if (font->CalcTextSizeA(size, FLT_MAX, 0.0f, text.c_str()).x <= width) return text;
+    std::string s = text;
+    const char* dots = "\xE2\x80\xA6";
+    while (!s.empty()) {
+        s.pop_back();
+        while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80) s.pop_back();
+        if (!s.empty() && static_cast<unsigned char>(s.back()) >= 0xC0) s.pop_back();
+        if (font->CalcTextSizeA(size, FLT_MAX, 0.0f, (s + dots).c_str()).x <= width) return s + dots;
+    }
+    return dots;
+}
+
+void Put(ImDrawList* d, ImFont* font, float size, ImVec2 pos, ImU32 color, const std::string& text) {
+    d->AddText(font, size, pos, color, text.c_str());
+}
+
+std::string Hours(double seconds) {
+    char out[48];
+    if (seconds < 3600.0) std::snprintf(out, sizeof(out), "%d min", static_cast<int>(seconds / 60.0));
+    else if (seconds < 36000.0) std::snprintf(out, sizeof(out), "%.1f h", seconds / 3600.0);
+    else std::snprintf(out, sizeof(out), "%d h", static_cast<int>(seconds / 3600.0 + 0.5));
+    return out;
+}
+
+// The card, in the rectangle a..b (4:5). Everything is measured in "u"
+// (1/540 of its width), so it looks the same small or big.
+void DrawCard(ImDrawList* d, ImVec2 a, ImVec2 b, const listening::Summary& s) {
+    const float W = b.x - a.x, u = W / 540.0f;
+    const ImU32 top = IM_COL32(18, 17, 34, 255), bottom = IM_COL32(52, 26, 74, 255);
+    d->AddRectFilledMultiColor(a, b, top, top, bottom, bottom);
+    // soft lights
+    for (int i = 0; i < 3; ++i) {
+        const ImVec2 c(a.x + W * (i == 0 ? 0.85f : i == 1 ? 0.10f : 0.55f), a.y + (b.y - a.y) * (i == 0 ? 0.08f : i == 1 ? 0.55f : 0.98f));
+        const ImU32 col = i == 0 ? IM_COL32(150, 110, 255, 14) : i == 1 ? IM_COL32(255, 120, 190, 9) : IM_COL32(90, 200, 255, 9);
+        for (int r = 14; r >= 1; --r) d->AddCircleFilled(c, u * 18.0f * static_cast<float>(r), col, 64);
+    }
+    const ImU32 white = IM_COL32(245, 242, 236, 255), dim = IM_COL32(245, 242, 236, 150), accent = IM_COL32(190, 160, 255, 255);
+    ImFont* bold = g_fonts.hero;
+    ImFont* semi = g_fonts.semibold;
+    ImFont* reg = g_fonts.regular;
+    const float x = a.x + u * 40.0f, w = W - u * 80.0f;
+    float y = a.y + u * 38.0f;
+    Put(d, semi, u * 17.0f, ImVec2(x, y), dim, "LUMA");
+    y += u * 26.0f;
+    char year[16];
+    std::snprintf(year, sizeof(year), "%d", s.year);
+    Put(d, bold, u * 74.0f, ImVec2(x - u * 3.0f, y), white, year);
+    y += u * 74.0f;
+    Put(d, semi, u * 22.0f, ImVec2(x, y), accent, T("year.card_title"));
+    y += u * 44.0f;
+    // the big number
+    Put(d, bold, u * 58.0f, ImVec2(x, y), white, Hours(s.seconds));
+    y += u * 60.0f;
+    Put(d, reg, u * 17.0f, ImVec2(x, y), dim, T("year.card_hours"));
+    y += u * 30.0f;
+    char line[160];
+    std::snprintf(line, sizeof(line), T("year.card_counts"), s.plays, s.songs, s.artists);
+    Put(d, semi, u * 17.0f, ImVec2(x, y), white, FitText(semi, u * 17.0f, w, line));
+    y += u * 38.0f;
+    // top songs and top artists, side by side
+    const float colW = (w - u * 24.0f) * 0.5f;
+    for (int col = 0; col < 2; ++col) {
+        const float cx = x + col * (colW + u * 24.0f);
+        float cy = y;
+        Put(d, semi, u * 15.0f, ImVec2(cx, cy), accent, T(col == 0 ? "year.card_songs" : "year.card_artists"));
+        cy += u * 26.0f;
+        const auto& list = col == 0 ? s.topSongs : s.topArtists;
+        if (list.empty()) Put(d, reg, u * 15.0f, ImVec2(cx, cy), dim, "\xE2\x80\x94");
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            char n[8];
+            std::snprintf(n, sizeof(n), "%zu", i + 1);
+            Put(d, bold, u * 22.0f, ImVec2(cx, cy - u * 2.0f), i == 0 ? accent : dim, n);
+            const float tx = cx + u * 26.0f, tw = colW - u * 26.0f;
+            const std::string main = col == 0 ? list[i].title : list[i].artist;
+            Put(d, semi, u * 16.0f, ImVec2(tx, cy), white, FitText(semi, u * 16.0f, tw, main));
+            const std::string sub = col == 0 ? (list[i].artist.empty() ? Hours(list[i].seconds) : list[i].artist) : Hours(list[i].seconds);
+            Put(d, reg, u * 13.0f, ImVec2(tx, cy + u * 20.0f), dim, FitText(reg, u * 13.0f, tw, sub));
+            cy += u * 40.0f;
+        }
+    }
+    // the months
+    const float barsTop = b.y - u * 118.0f, barsBottom = b.y - u * 62.0f;
+    double most = 0.0;
+    for (double m : s.months) most = std::max(most, m);
+    const float bw = w / 12.0f;
+    static const char* initials[3] = {"JFMAMJJASOND", "EFMAMJJASOND", "JFMAMJJASOND"};
+    const char* letters = initials[static_cast<int>(i18n::CurrentLanguage()) % 3];
+    for (int m = 0; m < 12; ++m) {
+        const float h = most > 0.0 ? static_cast<float>(s.months[m] / most) * (barsBottom - barsTop) : 0.0f;
+        const float bx = x + bw * m + bw * 0.18f;
+        d->AddRectFilled(ImVec2(bx, barsBottom - std::max(h, u * 3.0f)), ImVec2(bx + bw * 0.64f, barsBottom),
+                         s.months[m] == most && most > 0.0 ? accent : IM_COL32(245, 242, 236, 70), u * 4.0f);
+        const char letter[2] = {letters[m], 0};
+        const float lw = reg->CalcTextSizeA(u * 13.0f, FLT_MAX, 0.0f, letter).x;
+        Put(d, reg, u * 13.0f, ImVec2(bx + bw * 0.32f - lw * 0.5f, barsBottom + u * 6.0f), dim, letter);
+    }
+    Put(d, reg, u * 13.0f, ImVec2(x, b.y - u * 30.0f), dim, T(s.fromCloud ? "year.card_all_pcs" : "year.card_this_pc"));
+}
+
+// Draws the card into a picture and saves it as a PNG (with the GPU, the same
+// way the window is drawn; WIC writes the file).
+bool SavePng(const listening::Summary& s, const fs::path& file) {
+    constexpr int kW = 1080, kH = 1350;
+    if (g_device == nullptr) return false;
+    ID3D11DeviceContext* ctx = nullptr;
+    g_device->GetImmediateContext(&ctx);
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = kW;
+    desc.Height = kH;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ID3D11Texture2D* target = nullptr;
+    ID3D11RenderTargetView* rtv = nullptr;
+    ID3D11Texture2D* staging = nullptr;
+    bool ok = SUCCEEDED(g_device->CreateTexture2D(&desc, nullptr, &target)) &&
+              SUCCEEDED(g_device->CreateRenderTargetView(target, nullptr, &rtv));
+    if (ok) {
+        D3D11_TEXTURE2D_DESC sd = desc;
+        sd.Usage = D3D11_USAGE_STAGING;
+        sd.BindFlags = 0;
+        sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        ok = SUCCEEDED(g_device->CreateTexture2D(&sd, nullptr, &staging));
+    }
+    std::vector<std::uint8_t> pixels;
+    if (ok) {
+        // the card, as its own little list of drawings
+        ImDrawList list(ImGui::GetDrawListSharedData());
+        list._ResetForNewFrame();
+        list.PushTextureID(ImGui::GetIO().Fonts->TexID);
+        list.PushClipRect(ImVec2(0, 0), ImVec2(static_cast<float>(kW), static_cast<float>(kH)));
+        DrawCard(&list, ImVec2(0, 0), ImVec2(static_cast<float>(kW), static_cast<float>(kH)), s);
+        ImDrawData data;
+        data.Valid = true;
+        data.CmdLists.push_back(&list);
+        data.CmdListsCount = 1;
+        data.TotalVtxCount = list.VtxBuffer.Size;
+        data.TotalIdxCount = list.IdxBuffer.Size;
+        data.DisplayPos = ImVec2(0, 0);
+        data.DisplaySize = ImVec2(static_cast<float>(kW), static_cast<float>(kH));
+        data.FramebufferScale = ImVec2(1, 1);
+        ID3D11RenderTargetView* oldRtv = nullptr;
+        ID3D11DepthStencilView* oldDsv = nullptr;
+        ctx->OMGetRenderTargets(1, &oldRtv, &oldDsv);
+        const float clear[4] = {0, 0, 0, 1};
+        ctx->OMSetRenderTargets(1, &rtv, nullptr);
+        ctx->ClearRenderTargetView(rtv, clear);
+        ImGui_ImplDX11_RenderDrawData(&data);
+        ctx->OMSetRenderTargets(1, &oldRtv, oldDsv);
+        if (oldRtv) oldRtv->Release();
+        if (oldDsv) oldDsv->Release();
+        ctx->CopyResource(staging, target);
+        D3D11_MAPPED_SUBRESOURCE map{};
+        if (SUCCEEDED(ctx->Map(staging, 0, D3D11_MAP_READ, 0, &map))) {
+            pixels.resize(static_cast<std::size_t>(kW) * kH * 4);
+            for (int row = 0; row < kH; ++row) {
+                const std::uint8_t* src = static_cast<const std::uint8_t*>(map.pData) + static_cast<std::size_t>(row) * map.RowPitch;
+                std::uint8_t* dst = pixels.data() + static_cast<std::size_t>(row) * kW * 4;
+                for (int i = 0; i < kW; ++i) {  // RGBA -> BGRA (what the PNG writer takes), always opaque
+                    dst[i * 4 + 0] = src[i * 4 + 2];
+                    dst[i * 4 + 1] = src[i * 4 + 1];
+                    dst[i * 4 + 2] = src[i * 4 + 0];
+                    dst[i * 4 + 3] = 255;
+                }
+            }
+            ctx->Unmap(staging, 0);
+        } else {
+            ok = false;
+        }
+    }
+    if (staging) staging->Release();
+    if (rtv) rtv->Release();
+    if (target) target->Release();
+    if (ctx) ctx->Release();
+    if (!ok || pixels.empty()) return false;
+    // the PNG file
+    std::error_code ec;
+    fs::create_directories(file.parent_path(), ec);
+    IWICImagingFactory* factory = nullptr;
+    IWICStream* stream = nullptr;
+    IWICBitmapEncoder* encoder = nullptr;
+    IWICBitmapFrameEncode* frame = nullptr;
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
+    ok = SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+         SUCCEEDED(factory->CreateStream(&stream)) && SUCCEEDED(stream->InitializeFromFilename(file.c_str(), GENERIC_WRITE)) &&
+         SUCCEEDED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) &&
+         SUCCEEDED(encoder->Initialize(stream, WICBitmapEncoderNoCache)) && SUCCEEDED(encoder->CreateNewFrame(&frame, nullptr)) &&
+         SUCCEEDED(frame->Initialize(nullptr)) && SUCCEEDED(frame->SetSize(kW, kH)) && SUCCEEDED(frame->SetPixelFormat(&format)) &&
+         format == GUID_WICPixelFormat32bppBGRA &&
+         SUCCEEDED(frame->WritePixels(kH, kW * 4, static_cast<UINT>(pixels.size()), pixels.data())) && SUCCEEDED(frame->Commit()) &&
+         SUCCEEDED(encoder->Commit());
+    if (frame) frame->Release();
+    if (encoder) encoder->Release();
+    if (stream) stream->Release();
+    if (factory) factory->Release();
+    return ok;
+}
+
+}  // namespace yearui
+
+void DrawSettingsYear(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc) {
+    using namespace yearui;
+    const Palette& p = P();
+    const listening::Info li = listening::Get();
+    const bool signedIn = acc.state == account::State::SignedIn && !account::LumaPass().empty();
+    std::time_t clock = std::time(nullptr);
+    std::tm local{};
+    localtime_s(&local, &clock);
+    const int thisYear = local.tm_year + 1900;
+    if (g_year == 0) g_year = thisYear;
+    // Which summary: your account's (all your PCs) if you save it there, else this PC's.
+    const bool useCloud = li.upload && signedIn;
+    if (account::LumaPassVersion() != g_passVersion) {
+        g_passVersion = account::LumaPassVersion();
+        g_cloudAskedYear = 0;
+    }
+    if (useCloud && g_cloudAskedYear != g_year) {
+        g_cloudAskedYear = g_year;
+        listening::RefreshCloud(g_year);
+    }
+    bool cloudOk = false;
+    listening::Summary s = useCloud ? listening::Cloud(g_year, cloudOk) : listening::Summary{};
+    if (!cloudOk) s = listening::Local(g_year);
+    // --- the card (left) ---
+    const float cardH = std::min(max.y - min.y, S(600.0f));
+    const float cardW = cardH * 0.8f;
+    const ImVec2 ca(min.x, min.y), cb(min.x + cardW, min.y + cardH);
+    d->PushClipRect(ca, cb, true);
+    DrawCard(d, ca, cb, s);
+    d->PopClipRect();
+    d->AddRect(ca, cb, C(ImVec4(1, 1, 1, 1), 0.10f), 0.0f);
+    // --- the controls (right) ---
+    const ImVec2 ra(cb.x + S(kGap), min.y), rb(max.x, std::min(max.y, min.y + S(600.0f)));
+    if (rb.x - ra.x < S(260.0f)) return;
+    Card(d, ra, rb);
+    SectionTitle(d, ImVec2(ra.x + S(20.0f), ra.y + S(18.0f)), T("year.title"));
+    const float x = ra.x + S(22.0f), right = rb.x - S(22.0f), w = right - x;
+    // the year: < 2026 >
+    {
+        char text[16];
+        std::snprintf(text, sizeof(text), "%d", g_year);
+        const ImVec2 ts = TextSize(g_fonts.semibold, text);
+        const float cy = ra.y + S(28.0f);
+        if (IconToggle(d, "##year_next", ImVec2(right - S(12.0f), cy), icons::kChevronRight, S(15.0f), false, g_year < thisYear)) ++g_year;
+        Text(d, g_fonts.semibold, ImVec2(right - S(30.0f) - ts.x, cy - ts.y * 0.5f), C(p.text), text);
+        if (IconToggle(d, "##year_prev", ImVec2(right - S(48.0f) - ts.x, cy), icons::kBack, S(15.0f), false, g_year > 2025)) --g_year;
+    }
+    float y = ra.y + S(62.0f);
+    y += TextWrap(d, g_fonts.tiny, ImVec2(x, y), C(p.textDim), T("year.what"), w) + S(16.0f);
+    // record
+    {
+        bool on = li.recording;
+        const float h = SettingLabel(d, ImVec2(x, y), w - S(66.0f), T("year.record"), nullptr);
+        if (Toggle("##year_rec", ImVec2(right - S(46.0f), y + std::max(0.0f, (h - S(26.0f)) * 0.5f)), &on)) listening::SetRecording(on);
+        y += std::max(h, S(30.0f)) + S(4.0f);
+        std::string status;
+        if (!li.recording) status = T("year.rec_off");
+        else if (!li.gameRunning) status = T("year.rec_waiting");
+        else if (li.nowTitle.empty()) status = T("year.rec_silence");
+        else status = std::string(T("year.rec_now")) + " " + li.nowTitle;
+        Dot(d, ImVec2(x + S(7.0f), y + S(9.0f)), li.recording && li.gameRunning && !li.nowTitle.empty() ? p.success : p.textDim);
+        TextFit(d, g_fonts.regular, ImVec2(x + S(20.0f), y), C(p.text), status.c_str(), w - S(20.0f));
+        y += S(36.0f);
+    }
+    d->AddLine(ImVec2(x, y - S(6.0f)), ImVec2(right, y - S(6.0f)), C(p.border));
+    y += S(6.0f);
+    // save in my account
+    {
+        bool on = li.upload;
+        const float h = SettingLabel(d, ImVec2(x, y), w - S(66.0f), T("year.upload"), T(signedIn ? "year.upload_hint" : "sync.needs_sign_in"));
+        const ImVec2 tp(right - S(46.0f), y + std::max(0.0f, (h - S(26.0f)) * 0.5f));
+        if (signedIn || on) {
+            if (Toggle("##year_up", tp, &on)) {
+                listening::SetUpload(on);
+                g_cloudAskedYear = 0;
+            }
+        }
+        y += std::max(h, S(30.0f)) + S(6.0f);
+        if (li.upload && signedIn) {
+            const bool bad = !li.uploadKey.empty();
+            char text[160];
+            if (bad) std::snprintf(text, sizeof(text), "%s", T(li.uploadKey.c_str()));
+            else if (li.lastUpload == 0) std::snprintf(text, sizeof(text), "%s", T("sync.working"));
+            else std::snprintf(text, sizeof(text), "%s", T("year.uploaded"));
+            Dot(d, ImVec2(x + S(7.0f), y + S(9.0f)), bad ? p.warning : p.success);
+            TextFit(d, g_fonts.regular, ImVec2(x + S(20.0f), y), C(p.text), text, w - S(20.0f));
+            y += S(32.0f);
+        }
+    }
+    y += S(8.0f);
+    // the buttons
+    const double now = ImGui::GetTime();
+    float bx = x, bw = 0.0f;
+    if (Button("##year_png", ImVec2(bx, y), T("year.save_image"), true, &bw)) {
+        PWSTR raw = nullptr;
+        fs::path dir;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Pictures, 0, nullptr, &raw)) && raw) dir = fs::path(raw) / L"Luma";
+        CoTaskMemFree(raw);
+        if (dir.empty()) dir = DataDir();
+        const fs::path file = dir / (L"Luma " + std::to_wstring(g_year) + L".png");
+        g_saveFailed = !SavePng(s, file);
+        if (!g_saveFailed) {
+            const std::u8string u8 = file.u8string();
+            g_saved.assign(u8.begin(), u8.end());
+            const std::wstring args = L"/select,\"" + file.wstring() + L"\"";
+            ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+        }
+    }
+    bx += bw + S(10.0f);
+    const bool armedLocal = now - g_armedLocal < 5.0;
+    const char* localLabel = T(armedLocal ? "sync.delete_cloud_confirm" : "year.delete_local");
+    if (bx + TextSize(g_fonts.semibold, localLabel).x + S(32.0f) > right) {
+        bx = x;
+        y += S(46.0f);
+    }
+    if (Button("##year_dellocal", ImVec2(bx, y), localLabel, false, &bw)) {
+        if (armedLocal) {
+            listening::DeleteLocal();
+            g_armedLocal = -100.0;
+        } else {
+            g_armedLocal = now;
+        }
+    }
+    bx += bw + S(10.0f);
+    if (signedIn) {
+        const bool armedCloud = now - g_armedCloud < 5.0;
+        const char* cloudLabel = T(armedCloud ? "sync.delete_cloud_confirm" : "year.delete_cloud");
+        if (bx + TextSize(g_fonts.semibold, cloudLabel).x + S(32.0f) > right) {
+            bx = x;
+            y += S(46.0f);
+        }
+        if (Button("##year_delcloud", ImVec2(bx, y), cloudLabel, false, &bw)) {
+            if (armedCloud) {
+                listening::DeleteCloud();
+                g_armedCloud = -100.0;
+                g_cloudAskedYear = 0;
+            } else {
+                g_armedCloud = now;
+            }
+        }
+    }
+    y += S(50.0f);
+    // what happened
+    if (g_saveFailed || !g_saved.empty()) {
+        Dot(d, ImVec2(x + S(7.0f), y + S(9.0f)), g_saveFailed ? p.danger : p.success);
+        const std::string text = g_saveFailed ? std::string(T("year.save_failed")) : std::string(T("year.saved")) + "  " + g_saved;
+        TextFit(d, g_fonts.regular, ImVec2(x + S(20.0f), y), C(p.text), text.c_str(), w - S(20.0f));
+        y += S(28.0f);
+    }
+    if (!li.actionKey.empty()) {
+        Dot(d, ImVec2(x + S(7.0f), y + S(9.0f)), li.actionOk ? p.success : p.danger);
+        TextFit(d, g_fonts.regular, ImVec2(x + S(20.0f), y), C(p.text), T(li.actionKey.c_str()), w - S(20.0f));
+    }
+}
+
 void DrawSettingsAboutAll(ImDrawList* d, ImVec2 min, ImVec2 max) {
     const Palette& p = P();
     const float gap = S(kGap);
@@ -7963,10 +8339,11 @@ bool DrawSectionIndex(ImDrawList* d, ImVec2 na, ImVec2 nb, const char* title, co
 void DrawSettingsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const account::Info& acc, const LocalData& data) {
     // --- the index (left) ---
     const IndexEntry entries[] = {{kIconSliders, "settings.general"}, {icons::kMusic, "set.music"},  {nullptr, "nav.spotify"},
-                                  {icons::kPerson, "settings.account"}, {icons::kGamepad, "set.game"}, {icons::kInfo, "settings.about"}};
+                                  {icons::kPerson, "settings.account"}, {icons::kGamepad, "set.game"}, {icons::kInfo, "settings.about"},
+                                  {icons::kTrophy, "year.tab"}};
     const float navW = S(230.0f);
     const ImVec2 na = min, nb(min.x + navW, max.y);
-    if (DrawSectionIndex(d, na, nb, T("nav.settings"), entries, 6, &g_settingsTab, &g_settingsPill, "set")) g_settingsTabIn = 0.0f;
+    if (DrawSectionIndex(d, na, nb, T("nav.settings"), entries, 7, &g_settingsTab, &g_settingsPill, "set")) g_settingsTabIn = 0.0f;
     // --- the chosen section (right), coming in softly ---
     g_settingsTabIn = std::min(1.0f, g_settingsTabIn + Dt() * 6.0f);
     const float e = EaseOutCubic(g_settingsTabIn);
@@ -7982,6 +8359,7 @@ void DrawSettingsSection(ImDrawList* d, ImVec2 min, ImVec2 max, const account::I
             DrawSettingsCloud(d, ImVec2(ca.x, ca.y + S(240.0f) + S(kGap)), ImVec2(cb.x, cb.y), acc);
             break;
         case 4: DrawSettingsGame(d, ca, cb, data); break;
+        case 6: DrawSettingsYear(d, ca, cb, acc); break;
         default: DrawSettingsAboutAll(d, ca, cb); break;
     }
     d->PopClipRect();
@@ -8785,6 +9163,8 @@ void StatusThread() {
     while (!g_quit.load()) {
         LocalData data;
         data.game = QueryGameStatus();
+        static const bool pretendGame = std::wcsstr(GetCommandLineW(), L"--year-pretend-game") != nullptr;  // (for testing)
+        listening::SetGameRunning(data.game.running || pretendGame);
         const nlohmann::json profile = ReadJson(dir / L"profile.json");
         data.profileName = profile.value("name", std::string());
         data.gameDir = profile.value("gameDir", std::string());
@@ -8889,11 +9269,12 @@ void AppInit(HWND hwnd, float scale) {
         sp::StartRadio(it);
     }
     if (const wchar_t* lt = std::wcsstr(GetCommandLineW(), L"--lyr-tab=")) g_lyricsTab = std::clamp(static_cast<int>(lt[10] - L'0'), 0, 5);  // (for testing)
-    if (const wchar_t* st = std::wcsstr(GetCommandLineW(), L"--set-tab=")) g_settingsTab = std::clamp(static_cast<int>(st[10] - L'0'), 0, 5);  // (for testing)
+    if (const wchar_t* st = std::wcsstr(GetCommandLineW(), L"--set-tab=")) g_settingsTab = std::clamp(static_cast<int>(st[10] - L'0'), 0, 6);  // (for testing)
     if (std::wcsstr(GetCommandLineW(), L"--luma-play") != nullptr) sp::WithLumaDevice([](const std::string& id) { sp::ContinueOn(id); });  // (for testing)
     g_statusThread = std::thread(StatusThread);
     account::Init();
     cloudsync::Start();  // "save my styles in my account" (does nothing while it's off)
+    listening::Start();  // "your year in Luma": what plays while Minecraft is open
     updater::Start(g_autoUpdate, GetCommandLineW());
 }
 
@@ -9299,6 +9680,7 @@ void AppShutdown() {
     }
     cloudsync::Stop();
     gallery::Stop();
+    listening::Stop();
     account::Shutdown();
     updater::Shutdown();
     if (g_statusThread.joinable()) {
